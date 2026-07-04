@@ -1,0 +1,85 @@
+local Config = require("clanker.config")
+
+--- @class clanker.utils.Logger
+local Logger = {}
+
+function Logger.get_timestamp()
+  return os.date("%Y-%m-%d %H:%M:%S")
+end
+
+local function format_debug_message(...)
+  if not Config.debug then
+    return nil
+  end
+
+  local args = { ... }
+
+  if #args == 0 then
+    return nil
+  end
+
+  local info = debug.getinfo(3, "Sl")
+  local caller_source = info.source:match("@(.+)$") or "unknown"
+  local caller_module = caller_source:gsub("^.*/lua/", ""):gsub("%.lua$", ""):gsub("/", ".")
+
+  local timestamp = Logger.get_timestamp()
+  local log_parts = {
+    string.format("[%s] [%s:%d]", timestamp, caller_module, info.currentline),
+  }
+
+  for _, arg in ipairs(args) do
+    if type(arg) == "string" then
+      table.insert(log_parts, arg)
+    else
+      table.insert(log_parts, vim.inspect(arg))
+    end
+  end
+
+  return log_parts
+end
+
+--- @param msg string Content of the notification to show to the user.
+--- @param level vim.log.levels|nil One of the values from `vim.log.levels`. Defaults to WARN
+--- @param opts table|nil Optional parameters. Unused by default.
+function Logger.notify(msg, level, opts)
+  vim.schedule(function()
+    local ok, res = pcall(vim.notify, msg, level or vim.log.levels.WARN, opts or {})
+
+    if not ok then
+      print("Notification error: " .. tostring(res) .. " - Original message: " .. msg)
+    end
+  end)
+end
+
+--- Print a debug message that can be read by `:messages`
+function Logger.debug(...)
+  local formatted_message = format_debug_message(...)
+
+  if formatted_message then
+    print(unpack(formatted_message))
+  end
+end
+
+--- Append a debug message to a log file in the cache directory
+--- Usually at `~/.cache/nvim/clanker_debug.log` on Mac/Linux
+function Logger.debug_to_file(...)
+  local log_parts = format_debug_message(...)
+  if not log_parts then
+    return
+  end
+
+  local log_message = table.concat(log_parts, " ") .. "\n\n" .. string.rep("=", 5) .. "\n\n"
+
+  local cache_dir = vim.fn.stdpath("cache")
+  local log_file_path = cache_dir .. "/clanker_debug.log"
+
+  local file = io.open(log_file_path, "a")
+  if file then
+    file:write(log_message)
+    file:close()
+  else
+    Logger.notify("Failed to write to log file: " .. log_file_path)
+  end
+end
+
+return Logger
