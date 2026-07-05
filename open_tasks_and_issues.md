@@ -355,3 +355,48 @@ Canonical task list — keep ticked/updated as work lands.
   spec depends on them (`nix run .#test` green regardless), but the PINNED
   demo keeps the focus-highlight + horizontal-resize bugs until fibrous is
   committed + pushed + `nix flake update fibrous`.
+
+### Phase 2 — Shell/UX niceties (user-ordered, 2026-07-05)
+
+- [x] Animated "thinking" wave (2026-07-05, user request), red-green (suite
+  154 → 164). A 12-char traveling sine wave in the prompt's status row while
+  a turn is active, replacing the old `⟳ status…` spinner glyph.
+  - `view/wave.lua` (NEW, CLANKER-LOCAL like markdown/diff — props in, vnodes
+    out, no fibrous change so the pinned gap stays put). Drawn with Unicode-16
+    **block-octant** glyphs (2 cols × 4 rows per cell ⇒ 24 horizontal samples,
+    4 vertical levels across 12 chars); **braille** offered as a universal
+    fallback via the `set` prop. Glyph tables borrowed verbatim from
+    neominimap (~/src/neominimap.nvim); bit layout (from its
+    `map_point_to_flag`): left column = bits 0-3 (1,2,4,8 top→bottom), right =
+    bits 4-7 (16,32,64,128). Landmarks pinned in the spec (0=space, 255=█,
+    204=▄, 15=▌, 240=▐, 51=▀).
+  - THIN wave (user follow-up 2026-07-05): a single lit cell per column at the
+    height — a crest LINE, never filled below it (row q 0=bottom..3=top → one
+    bit per column; rising thin ramp = `▂𜴧𜴆🮂`). Every column carries a dot, so
+    there are no blanks.
+  - BOUNCING single crest (user follow-up 2026-07-05): dropped the repeating
+    traveling sine for ONE raised-cosine hump (`bump_row`, half-width SPREAD=6
+    sub-cols) whose centre bounces wall-to-wall — `centre = ½(1-cos φ)·(2W-1)`,
+    cosine-eased so it slows at the ends. `phase` now drives POSITION, not
+    spatial phase (0 = left end, π = right). Baseline row-0 dots elsewhere.
+    Specs pin the left/middle/right crest frames + the symmetric return
+    (φ=3π/2 == π/2).
+  - Colour-by-height (user's bonus ask): each dot coloured by its row via a
+    4-group dim-blue→bright-cyan ramp `Theme.WAVE_HL[1..4]` (row 0→group 1 …
+    row 3→group 4); all `default = true` so a user restyle wins.
+  - Pure `frame(phase)` returns the fibrous span list; the `Wave` component
+    drives it off a uv timer in `use_effect` (started while `active`, stopped
+    + closed on unmount / deactivate) bumping a `use_state` frame counter —
+    no new fibrous primitive needed. Specs pin the phase-0/½π/π frames, the
+    travel, the colour ramp, active/inactive render, real-timer animation, and
+    clean teardown.
+  - Wired in `prompt.lua`: the status row is now `ui.row{ Wave, status label }`
+    — the Wave stays MOUNTED always (only `active` toggles) and its width is
+    constant, so the input subwin below never moves or gets recreated as the
+    wave ticks. Verified live (TUI-in-terminal): three distinct animating
+    frames, thinking→generating word tracking, input win/buf STABLE across
+    animation while typing mid-turn, idle blanks the wave, no timer errors.
+- [ ] Background-session event surfacing (carried from the multi-session
+  work): a parked session hitting a permission request / finishing a turn is
+  invisible outside the modal's status column — needs a notify + attention
+  marker (e.g. a badge on modal rows + `vim.notify`).

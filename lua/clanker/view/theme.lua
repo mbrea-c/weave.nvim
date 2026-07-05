@@ -137,4 +137,20 @@ vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.normal, { link = "FloatBorder", defaul
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.auto, { fg = "#e0af68", default = true })
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.allow_edits, { fg = "#bb9af7", default = true })
 
+-- Thinking-wave colour ramp: one group per wave height 1..4 (height 0 is a
+-- blank cell, no highlight). A dim-blue → bright-cyan crest gradient so the
+-- animated wave reads as a rising swell; all `default = true` so a user
+-- restyle wins. Consumed by view/wave.lua as `Theme.WAVE_HL[height]`.
+--- @type table<integer, string>
+M.WAVE_HL = {
+  "ClankerWave1",
+  "ClankerWave2",
+  "ClankerWave3",
+  "ClankerWave4",
+}
+local WAVE_FG = { "#3d59a1", "#5a7fd0", "#7dcfff", "#b4f9f8" }
+for i, group in ipairs(M.WAVE_HL) do
+  vim.api.nvim_set_hl(0, group, { fg = WAVE_FG[i], default = true })
+end
+
 return M

@@ -9,6 +9,7 @@
 
 local ui = require("fibrous.inline.components")
 local Theme = require("clanker.view.theme")
+local Wave = require("clanker.view.wave")
 local use_store = require("clanker.view.use_store")
 
 local M = {}
@@ -88,13 +89,24 @@ function M.Prompt(ctx, props)
 
   -- The status row is ALWAYS rendered (blank when idle): fibrous reconciles
   -- positionally, so a row that comes and goes would move the text_input and
-  -- recreate its subwin — discarding whatever the user typed mid-turn.
+  -- recreate its subwin — discarding whatever the user typed mid-turn. The
+  -- animated wave stays mounted too (only its `active` prop toggles), so its
+  -- animation state survives a turn ending and starting again. Its width is
+  -- constant, so the input below never moves as the wave ticks.
+  local thinking = state.status ~= "idle"
   local children = {
     {
-      comp = ui.label,
-      props = {
-        text = state.status ~= "idle" and ("⟳ " .. state.status .. "…") or "",
-        style = { text_hl = "@comment" },
+      comp = ui.row,
+      props = {},
+      children = {
+        { comp = Wave.Wave, props = { active = thinking, width = 12 } },
+        {
+          comp = ui.label,
+          props = {
+            text = thinking and ("  " .. state.status .. "…") or "",
+            style = { text_hl = "@comment" },
+          },
+        },
       },
     },
   }

@@ -107,13 +107,23 @@ describe("view.prompt", function()
     local function text()
       return table.concat(vim.api.nvim_buf_get_lines(handle.bufnr, 0, -1, false), "\n")
     end
-    assert.falsy(text():find("⟳", 1, true))
+    -- the status line is the first row (above the input border)
+    local function status_line()
+      return vim.api.nvim_buf_get_lines(handle.bufnr, 0, 1, false)[1] or ""
+    end
+    assert.falsy(text():find("generating", 1, true))
 
     store:set_status("generating")
-    assert.truthy(text():find("⟳ generating…", 1, true))
+    -- the status word is shown, alongside the 12-cell animated wave (the wave
+    -- replaced the old ⟳ spinner glyph as the activity indicator)
+    assert.truthy(text():find("generating…", 1, true))
+    assert.is_true(vim.fn.strwidth(vim.trim(status_line())) >= 12)
 
     store:set_status("idle")
-    assert.falsy(text():find("⟳", 1, true))
+    assert.falsy(text():find("generating", 1, true))
+    -- idle collapses the status line to blank (the wave stays mounted but
+    -- inactive, rendering nothing)
+    assert.equal("", vim.trim(status_line()))
     handle.unmount()
   end)
 
