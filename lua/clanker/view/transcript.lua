@@ -8,6 +8,8 @@
 -- reactive/view/render.lua (transcript_lines).
 
 local ui = require("fibrous.inline.components")
+local Diff = require("clanker.view.diff")
+local Markdown = require("clanker.view.markdown")
 local Theme = require("clanker.view.theme")
 local use_store = require("clanker.view.use_store")
 
@@ -74,46 +76,6 @@ local function append_raw_block(children, label, value)
   end
 end
 
---- Append labels for an edit's diff as an always-visible, properly
---- INTERLEAVED unified diff. vim.diff gives minimal line-level hunks with
---- context and +/-/space gutters; each line maps to a Diff* highlight.
---- (Treesitter syntax layered over the code lines is R6.)
---- @param children table[] accumulator of component specs
---- @param diff { old: string[], new: string[] }
-local function append_diff_preview(children, diff)
-  local old_str = table.concat(diff.old or {}, "\n")
-  local new_str = table.concat(diff.new or {}, "\n")
-  local unified = vim.diff(old_str, new_str, { result_type = "unified", ctxlen = 3 })
-  if not unified or unified == "" then
-    return
-  end
-
-  local rendered = 0
-  for _, raw in ipairs(vim.split(unified, "\n")) do
-    -- Skip blank tail and the "\ No newline at end of file" marker.
-    if raw ~= "" and raw:sub(1, 1) ~= "\\" then
-      if rendered >= DIFF_PREVIEW_MAX_LINES then
-        children[#children + 1] = meta_line("    │ … diff truncated")
-        break
-      end
-      local c = raw:sub(1, 1)
-      local hl
-      if c == "@" then
-        hl = "@comment" -- @@ hunk header, dimmed
-      elseif c == "+" then
-        hl = "DiffAdd"
-      elseif c == "-" then
-        hl = "DiffDelete"
-      end
-      children[#children + 1] = {
-        comp = ui.label,
-        props = { text = { "    ", hl and { raw, hl = hl } or raw } },
-      }
-      rendered = rendered + 1
-    end
-  end
-end
-
 -- ── Entry components ─────────────────────────────────────────────────────────
 -- Each takes reference-stable props (the entry/block object out of the store,
 -- plus scalars), so `memo = true` mounting skips them whenever their slice of
@@ -151,11 +113,17 @@ function M.ThoughtEntry(_, props)
 end
 
 --- Agent prose renders FLUSH-LEFT (no marker/indent) so markdown block
---- elements (headings, lists, fenced code) parse at column 0 when the
---- highlighting component lands (R6).
---- @param props { entry: clanker.store.ChatEntry }
+--- elements (headings, lists, fenced code) parse at column 0, through the
+--- markdown component (R6): `live` while this entry is still streaming (no
+--- parse per tick), parsed once + cached when it settles; `conceal` follows
+--- the conceal_markdown pref. Both are scalars, so the memo bailout
+--- invalidates exactly when they flip.
+--- @param props { entry: clanker.store.ChatEntry, live: boolean, conceal: boolean }
 function M.AgentEntry(_, props)
-  return { comp = ui.paragraph, props = { text = props.entry.text } }
+  return {
+    comp = Markdown.Markdown,
+    props = { text = props.entry.text, live = props.live, conceal = props.conceal },
+  }
 end
 
 --- A prompt held while a turn is in flight, rendered dimmed with a marker so
@@ -211,7 +179,15 @@ function M.ToolCallEntry(_, props)
   -- The diff renders inline (not behind the expand toggle) so an edit shows
   -- what changed at a glance. Expand reveals the SECONDARY metadata below.
   if tc.diff and props.show_diff ~= false then
-    append_diff_preview(children, tc.diff)
+    children[#children + 1] = {
+      comp = Diff.Diff,
+      props = {
+        old = tc.diff.old,
+        new = tc.diff.new,
+        max_lines = DIFF_PREVIEW_MAX_LINES,
+        indent = "    ",
+      },
+    }
   end
 
   if props.expanded then
@@ -309,7 +285,7 @@ function M.Transcript(ctx, props)
     and state.permission.request.toolCall.toolCallId
 
   local children = {}
-  for _, entry in ipairs(state.entries) do
+  for i, entry in ipairs(state.entries) do
     if entry.kind == "tool_call" then
       local tc = state.tool_calls[entry.tool_call_id]
       if tc then
@@ -332,7 +308,17 @@ function M.Transcript(ctx, props)
         children[#children + 1] = { comp = M.ThoughtEntry, memo = true, props = { entry = entry } }
       end
     elseif entry.kind == "agent" then
-      children[#children + 1] = { comp = M.AgentEntry, memo = true, props = { entry = entry } }
+      children[#children + 1] = {
+        comp = M.AgentEntry,
+        memo = true,
+        props = {
+          entry = entry,
+          -- Only the timeline TAIL can still be streaming: an entry settles
+          -- for good the moment anything follows it or the turn goes idle.
+          live = i == #state.entries and state.status == "generating",
+          conceal = prefs.conceal_markdown == true,
+        },
+      }
     end
   end
 

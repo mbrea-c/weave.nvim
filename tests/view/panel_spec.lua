@@ -197,6 +197,19 @@ describe("view.panel shell", function()
     handle.close()
   end)
 
+  it(";;r reaches the restore-picker callback", function()
+    local restores = 0
+    local handle = open_panel({
+      on_restore_picker = function()
+        restores = restores + 1
+      end,
+    })
+    vim.api.nvim_set_current_win(handle.transcript.winid)
+    press(";;r")
+    assert.equal(1, restores)
+    handle.close()
+  end)
+
   it("follow keeps the transcript scrolled to the bottom while streaming", function()
     local handle, store, prefs = open_panel()
     for i = 1, 60 do

@@ -13,8 +13,8 @@ projection of it.
 
 Working panel. The protocol layer (`lua/clanker/acp/`) is carried over from
 agentic (working, battle-tested); store, bridge, view, and the panel shell
-are built test-first and green. Missing: session restore, markdown/diff
-treesitter highlighting. See `open_tasks_and_issues.md`.
+are built test-first and green, including session restore and treesitter
+markdown/diff rendering. See `open_tasks_and_issues.md`.
 
 ## Usage
 

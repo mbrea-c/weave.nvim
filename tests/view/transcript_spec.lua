@@ -117,6 +117,43 @@ describe("view.transcript entries", function()
     handle.unmount()
   end)
 
+  it("agent markdown: settled entries highlight+conceal, the streaming tail stays plain", function()
+    local store = SessionStore:new()
+    store:append_entry({ kind = "agent", text = "settled **bold** prose" })
+    -- A user entry breaks streaming coalescing, like a real next turn.
+    store:append_entry({ kind = "user", text = "next" })
+    local handle = mount_transcript(store)
+    -- Settled: parsed, and conceal_markdown (default on) strips the markers.
+    assert.equal("settled bold prose", trimmed(handle.bufnr)[1])
+    assert.equal(1, #marks_with(handle.bufnr, "@markup.strong.markdown_inline"))
+
+    -- A streaming tail renders plain — no parse per tick, markers visible.
+    store:set_status("generating")
+    store:append_streaming_text("agent", "streaming **loud**")
+    assert.equal("streaming **loud**", trimmed(handle.bufnr)[5])
+    assert.equal(1, #marks_with(handle.bufnr, "@markup.strong.markdown_inline"))
+
+    -- Turn end settles it: parsed and concealed like any other entry.
+    store:set_status("idle")
+    assert.equal("streaming loud", trimmed(handle.bufnr)[5])
+    assert.equal(2, #marks_with(handle.bufnr, "@markup.strong.markdown_inline"))
+    handle.unmount()
+  end)
+
+  it("toggling conceal_markdown re-renders settled prose, live", function()
+    local store = SessionStore:new()
+    store:append_entry({ kind = "agent", text = "some **bold** here" })
+    local prefs = Prefs:new()
+    local handle = mount_transcript(store, nil, prefs)
+    assert.equal("some bold here", trimmed(handle.bufnr)[1])
+
+    prefs:toggle("conceal_markdown")
+    assert.equal("some **bold** here", trimmed(handle.bufnr)[1])
+    -- Markers visible but still highlighted.
+    assert.equal(1, #marks_with(handle.bufnr, "@markup.strong.markdown_inline"))
+    handle.unmount()
+  end)
+
   it("renders queued prompts dimmed after the timeline", function()
     local store = SessionStore:new()
     store:append_streaming_text("agent", "busy")

@@ -9,8 +9,10 @@
 --     → store is the single source of truth    -- store → panel projections
 --     → submit/steer/cancel                    -- user (via the panel) → agent
 --
--- Session restore (load_session + the discovery picker) is deferred — it
--- needs the session_source port (tracker: R5 leftovers).
+-- Session restore is ACP-native only (session/list + session/load), matching
+-- upstream agentic's final shape: providers without listing support get a
+-- notify from the client's capability check — there is no local persistence
+-- fallback to fall back to.
 
 local AcpBridge = require("clanker.acp_bridge")
 local AgentInstance = require("clanker.acp.agent_instance")
@@ -39,6 +41,7 @@ local SessionStore = require("clanker.session_store")
 --- @field _get_instance fun(provider: string, on_ready: fun(client: table)): table|nil
 --- @field _turn_active boolean Whether a prompt turn is currently in flight
 --- @field _steer_text? string Prompt to resend once a steered turn ends as cancelled
+--- @field _restoring boolean Whether a session/load history replay is in flight
 --- @field _config { model?: clanker.session.ConfigKind, mode?: clanker.session.ConfigKind }
 local Session = {}
 Session.__index = Session
@@ -57,6 +60,7 @@ function Session:new(opts)
     _get_instance = opts.get_instance or AgentInstance.get_instance,
     _turn_active = false,
     _steer_text = nil,
+    _restoring = false,
     _config = {},
   }, Session)
 end
@@ -97,6 +101,9 @@ function Session:view_handlers()
     end,
     on_pick_mode = function()
       self:show_config_picker("mode")
+    end,
+    on_restore_picker = function()
+      self:show_restore_picker()
     end,
   }
 end
@@ -286,7 +293,13 @@ end
 --- @private
 --- @return table handlers clanker.acp.ClientHandlers
 function Session:_build_handlers()
-  return AcpBridge.build_handlers(self._store, {})
+  return AcpBridge.build_handlers(self._store, {
+    -- Read per-update: during a session/load replay the bridge appends the
+    -- historical text but skips the generating/thinking status flaps.
+    is_restoring = function()
+      return self._restoring
+    end,
+  })
 end
 
 --- Resolve the MCP servers to hand the agent at session creation. A
@@ -497,6 +510,128 @@ function Session:new_conversation()
       self._store:set_meta({ session_id = response.sessionId })
     end)
   end, self:_resolve_mcp_servers())
+end
+
+--- Replace the conversation with a saved ACP session (session/load). The
+--- provider replays the whole history through the ordinary update handlers
+--- DURING the request; `_restoring` keeps the replay from flapping the
+--- spinner (see acp_bridge). Like /new: the previous ACP session is
+--- cancelled and the store reset first, meta persists.
+--- @param session_id string
+function Session:restore(session_id)
+  if not self._client then
+    Logger.notify("Provider not ready yet — try again in a moment.", vim.log.levels.WARN)
+    return
+  end
+
+  if self._session_id then
+    self._client:cancel_session(self._session_id)
+  end
+  self._session_id = nil
+  self._turn_active = false
+  self._steer_text = nil
+  self._store:reset()
+  self._store:set_status("busy")
+  self._restoring = true
+
+  self._client:load_session(
+    session_id,
+    vim.fn.getcwd(),
+    self:_resolve_mcp_servers(),
+    self:_build_handlers(),
+    function(err, result)
+      vim.schedule(function()
+        self._restoring = false
+        self._store:set_status("idle")
+
+        if err then
+          self._store:append_entry({
+            kind = "agent",
+            text = "⚠️ Session restore failed: " .. (err.message or vim.inspect(err)),
+          })
+          return
+        end
+
+        -- session/load may return session config (models/modes) like
+        -- session/new does — recapture so the pickers track the restored
+        -- session, and republish the sidebar meta.
+        self._session_id = session_id
+        self:_capture_config(result or {})
+        self:_publish_meta()
+      end)
+    end
+  )
+end
+
+--- List the provider's saved sessions for this cwd (session/list) and
+--- restore the pick. A non-empty transcript asks before being clobbered.
+--- Providers without listing support answer with the client's capability
+--- error, surfaced as a notify.
+function Session:show_restore_picker()
+  if not self._client then
+    Logger.notify("Provider not ready yet — try again in a moment.", vim.log.levels.WARN)
+    return
+  end
+
+  self._client:list_sessions(vim.fn.getcwd(), function(result, err)
+    vim.schedule(function()
+      if err or not result then
+        Logger.notify(
+          "Failed to list sessions: " .. (err and err.message or "unknown error"),
+          vim.log.levels.WARN
+        )
+        return
+      end
+
+      local sessions = result.sessions or {}
+      if #sessions == 0 then
+        Logger.notify("No saved sessions found.", vim.log.levels.INFO)
+        return
+      end
+
+      local items = {}
+      for _, s in ipairs(sessions) do
+        local date = s.updatedAt and s.updatedAt:sub(1, 16):gsub("T", " ") or "unknown date"
+        items[#items + 1] = {
+          session_id = s.sessionId,
+          display = string.format("%s - %s", date, s.title or "(no title)"),
+        }
+      end
+
+      vim.ui.select(items, {
+        prompt = "Restore session:",
+        format_item = function(item)
+          return item.display
+        end,
+      }, function(choice)
+        if not choice then
+          return
+        end
+        self:_confirm_clobber(function()
+          self:restore(choice.session_id)
+        end)
+      end)
+    end)
+  end)
+end
+
+--- Run `on_confirmed` immediately when the transcript is empty; otherwise
+--- ask first — restore resets the store, discarding the conversation.
+--- @private
+--- @param on_confirmed fun()
+function Session:_confirm_clobber(on_confirmed)
+  if #self._store.state.entries == 0 then
+    return on_confirmed()
+  end
+
+  local discard = "Discard current conversation and restore"
+  vim.ui.select({ "Cancel", discard }, {
+    prompt = "The current conversation is not empty. Restore anyway?",
+  }, function(choice)
+    if choice == discard then
+      on_confirmed()
+    end
+  end)
 end
 
 return Session

@@ -50,6 +50,27 @@ local function fake_client(session_response)
     self.calls.set_mode[#self.calls.set_mode + 1] = id
     cb({}, nil)
   end
+  --- session/list: scripted via client.saved_sessions / client.list_err.
+  function client:list_sessions(cwd, callback)
+    self.calls.list_cwd = cwd
+    if self.list_err then
+      callback(nil, self.list_err)
+    else
+      callback({ sessions = self.saved_sessions or {} }, nil)
+    end
+  end
+  --- session/load: replays client.replay through the handlers (the provider
+  --- streams history as ordinary session updates DURING the request), then
+  --- completes with client.load_err / client.load_result.
+  function client:load_session(session_id, _cwd, _mcp, handlers, on_complete)
+    self.calls.loads = self.calls.loads or {}
+    self.calls.loads[#self.calls.loads + 1] = session_id
+    self.handlers = handlers
+    for _, update in ipairs(self.replay or {}) do
+      handlers.on_session_update(update)
+    end
+    on_complete(self.load_err, self.load_err == nil and (self.load_result or {}) or nil)
+  end
   return client
 end
 
@@ -220,6 +241,59 @@ describe("session permissions and /new", function()
     assert.equal(0, store.state.permission_count)
   end)
 
+  it("restore replaces the conversation: history replays without status flapping", function()
+    local session, client, store = started()
+    session:submit("stale prompt")
+    client:end_turn()
+    pump()
+
+    client.replay = {
+      { sessionUpdate = "user_message_chunk", content = { type = "text", text = "old question" } },
+      { sessionUpdate = "agent_message_chunk", content = { text = "old answer" } },
+    }
+    client.load_result = {
+      models = {
+        currentModelId = "opus",
+        availableModels = { { modelId = "opus", name = "Opus" } },
+      },
+    }
+    local statuses = {}
+    store:subscribe(function(state)
+      statuses[#statuses + 1] = state.status
+    end)
+
+    session:restore("old-1")
+    pump()
+
+    -- The stale transcript is gone; the replayed history IS the transcript.
+    assert.equal(2, #store.state.entries)
+    assert.equal("old question", store.state.entries[1].text)
+    assert.equal("old answer", store.state.entries[2].text)
+    -- The replay never flaps the spinner: no generating/thinking seen.
+    for _, s in ipairs(statuses) do
+      assert.is_true(s ~= "generating" and s ~= "thinking", "status flapped to " .. s)
+    end
+    assert.equal("idle", store.state.status)
+    -- The restored session is live: id adopted, config recaptured, usable.
+    assert.is_true(session:is_ready())
+    assert.equal("old-1", store.state.meta.session_id)
+    assert.equal("opus", store.state.meta.model)
+    session:submit("follow-up")
+    assert.same({ "stale prompt", "follow-up" }, client.calls.prompts)
+  end)
+
+  it("a failed restore lands in the transcript and leaves the session not-ready", function()
+    local session, client, store = started()
+    client.load_err = { message = "no such session" }
+
+    session:restore("gone")
+    pump()
+
+    local last = store.state.entries[#store.state.entries]
+    assert.truthy(last.text:find("no such session", 1, true))
+    assert.is_false(session:is_ready())
+  end)
+
   it("/new resets the store and creates a fresh session", function()
     local session, client, store = started()
     session:submit("hello")
@@ -232,5 +306,93 @@ describe("session permissions and /new", function()
     assert.same({}, store.state.entries)
     assert.equal("kept", store.state.meta.provider)
     assert.is_true(session:is_ready())
+  end)
+end)
+
+describe("session restore picker", function()
+  local real_select
+
+  before_each(function()
+    real_select = vim.ui.select
+  end)
+
+  after_each(function()
+    vim.ui.select = real_select
+  end)
+
+  --- Stub vim.ui.select: records each prompt's items and answers from
+  --- `answers` in call order (nil = dismiss).
+  --- @param answers (integer|nil)[] 1-based index to pick per select call
+  --- @return table[] prompts { prompt = string, items = any[] } per call
+  local function select_script(answers)
+    local prompts = {}
+    vim.ui.select = function(items, select_opts, on_choice)
+      prompts[#prompts + 1] = { prompt = select_opts.prompt, items = items, format = select_opts.format_item }
+      local pick = answers[#prompts]
+      on_choice(pick and items[pick] or nil)
+    end
+    return prompts
+  end
+
+  it("lists saved sessions and restores the pick", function()
+    local session, client = started()
+    client.saved_sessions = {
+      { sessionId = "old-1", title = "Fix the bug", updatedAt = "2026-07-04T10:30:00Z" },
+      { sessionId = "old-2", title = nil, updatedAt = nil },
+    }
+    local prompts = select_script({ 1 })
+
+    session:show_restore_picker()
+    pump()
+
+    assert.equal(1, #prompts)
+    assert.equal(2, #prompts[1].items)
+    assert.equal("2026-07-04 10:30 - Fix the bug", prompts[1].format(prompts[1].items[1]))
+    assert.equal("unknown date - (no title)", prompts[1].format(prompts[1].items[2]))
+    assert.same({ "old-1" }, client.calls.loads)
+  end)
+
+  it("a non-empty transcript needs confirmation — Cancel restores nothing", function()
+    local session, client = started()
+    session:submit("in progress")
+    client.saved_sessions = { { sessionId = "old-1", title = "t", updatedAt = "2026-07-04T10:30:00Z" } }
+    local prompts = select_script({ 1, 1 }) -- pick the session, then "Cancel"
+
+    session:show_restore_picker()
+    pump()
+
+    assert.equal(2, #prompts)
+    assert.equal("Cancel", prompts[2].items[1])
+    assert.is_nil(client.calls.loads)
+
+    -- Confirming does restore.
+    select_script({ 1, 2 })
+    session:show_restore_picker()
+    pump()
+    assert.same({ "old-1" }, client.calls.loads)
+  end)
+
+  it("no saved sessions → no picker", function()
+    local session, client = started()
+    client.saved_sessions = {}
+    local prompts = select_script({})
+
+    session:show_restore_picker()
+    pump()
+
+    assert.equal(0, #prompts)
+    assert.is_nil(client.calls.loads)
+  end)
+
+  it("a list error → no picker", function()
+    local session, client = started()
+    client.list_err = { message = "unsupported" }
+    local prompts = select_script({})
+
+    session:show_restore_picker()
+    pump()
+
+    assert.equal(0, #prompts)
+    assert.is_nil(client.calls.loads)
   end)
 end)

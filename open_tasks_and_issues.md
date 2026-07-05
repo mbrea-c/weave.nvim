@@ -197,16 +197,59 @@ Canonical task list — keep ticked/updated as work lands.
   wrapped at the panel row's remaining width and painted clipped. Sidebar
   specs reworked (+ standalone-section spec); suite 115/115; verified in the
   live demo.
-- [ ] BLOCKED on fibrous push (again): `nix flake check` runs against pinned
-  fibrous 215edfe, which predates the text_input `clear_on_submit`/`on_create`
-  hooks AND the whole multi-container `ui.container` primitive — prompt/panel/
-  init specs fail there. Working tree: 113/113. Unblock: push fibrous,
-  `nix flake update fibrous`, re-stage flake.lock.
+- [x] ~~BLOCKED on fibrous push (again)~~ (resolved 2026-07-05): fibrous
+  pushed (c8724b7 "fix: fix ignored width" — container + mount + layout
+  work), lock updated — `nix run .#test` against the PIN is 134/134. NB
+  fibrous's working tree has since grown Tab-navigation (uncommitted);
+  clanker doesn't depend on it yet.
+- [x] Session restore (2026-07-05), red-green (suite 115 → 122):
+  `Session:restore(id)` = /new-shaped teardown (cancel old session, reset
+  store, meta persists) + `client:load_session` — the provider REPLAYS the
+  history through the ordinary handlers DURING the request, with the bridge's
+  `is_restoring` predicate (now wired in `_build_handlers`) suppressing the
+  spinner flaps; on complete the session id is adopted, config recaptured
+  (session/load may return models/modes like session/new) and meta
+  republished. `Session:show_restore_picker()` = `client:list_sessions(cwd)`
+  → vim.ui.select ("date - title") → clobber confirmation when the transcript
+  is non-empty → restore. `;;r` panel chord → `on_restore_picker` (flows
+  through view_handlers). Demo agent grew canned list/load so ;;r is
+  dogfoodable. SCOPE: ACP-native only — the tracker's old "Kiro fs fallback"
+  idea was dropped: upstream agentic removed its local-persistence fallback
+  (47386a7's ChatHistory JSON store is gone from main), there is no
+  session_source.lua to port, and kiro-cli isn't installed here to
+  reverse-engineer a format; providers without `sessionCapabilities.list`
+  get the client's capability-check notify.
+- [x] R6. Markdown/diff components (2026-07-05), red-green (suite 122 → 134).
+  Built as CLANKER-LOCAL reusable components (user decision: don't widen the
+  pinned-flake gap; they're store/prefs/theme-free — props in, vnodes out —
+  so upstreaming into fibrous later is a file move):
+  - `view/markdown.lua`: `parse(text, {conceal})` → per-line fibrous span
+    lists via the detached STRING parser (no scratch buffers), full injection
+    stack (markdown → markdown_inline → fenced-code langs, trees applied
+    parent-first so deeper captures win); capture names become
+    "@<name>.<lang>" and nvim's dotted-group fallback resolves them. Conceal
+    is NOT extmark conceal: concealed bytes (from query `conceal` metadata /
+    @conceal captures) are OMITTED from the spans — no conceallevel anywhere,
+    wrap measures the visible text, fully-concealed lines (fence delimiters)
+    drop. GOTCHA: parse newline-terminated input — the bundled queries skip
+    the closing-fence conceal otherwise (normalized inside parse, line count
+    preserved). Code-block lines emit nowrap labels; prose wraps.
+    `Markdown` component: "parse on settle" — while `live`, plain paragraphs,
+    zero parsing; settled parses ONCE per (text, conceal), cached on a ref.
+  - `view/diff.lua`: the transcript's interleaved unified-diff preview
+    extracted into `Diff{old,new,max_lines,indent}` (vim.diff cached per
+    old/new pair; @@ headers dim, +/- → DiffAdd/DiffDelete). Syntax UNDER the
+    Diff* colors is out of scope: spans carry one hl per run — stacking would
+    need combined groups.
+  - Transcript wiring: AgentEntry renders through Markdown with
+    `live = (tail entry AND status generating)` and `conceal =
+    prefs.conceal_markdown` (both scalars — memo invalidates exactly on
+    flip); the conceal_markdown pref now has its effect. ToolCallEntry's diff
+    preview is the Diff component (existing specs pin identical output).
+  - Bench unchanged-or-better (N=1000: append 0.9ms, stream tick 0.7ms —
+    live tail never parses). Demo REPLY now streams real markdown (heading +
+    fence); fixed the demo chunker eating newlines (`%S+ ?` → `%S+%s*`) —
+    markdown block structure IS the whitespace. Verified live: injected
+    @keyword.lua etc. in the transcript container buffer.
 - [ ] R5 leftovers:
-  - Session restore: port session_source.lua (ACP session/list + Kiro fs
-    fallback), Session:restore + show_restore_picker (bridge already takes
-    is_restoring), ;;r binding.
-  - conceal_markdown is a stored pref with no effect yet — lands with R6.
   - Multi-session / registry (agentic's ARCHITECTURE-multisession) — later.
-- [ ] R6. Markdown/diff highlighting component (parse-on-settle, cached
-  spans).

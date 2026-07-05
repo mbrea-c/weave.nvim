@@ -6,9 +6,9 @@
 --
 --   show_thoughts    — render agent thought entries in the transcript
 --   show_diffs       — render edit tool-call diff previews
---   conceal_markdown — hide markdown markers in agent prose (lands with the
---                      markdown component, roadmap R6; the pref exists now so
---                      keymaps/sidebar don't churn later)
+--   conceal_markdown — hide markdown markers in settled agent prose (the
+--                      markdown component omits the concealed bytes from its
+--                      spans — no window conceallevel involved)
 --   follow           — keep the transcript scrolled to the bottom while
 --                      content streams in (panel-owned autoscroll)
 

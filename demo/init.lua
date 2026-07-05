@@ -7,7 +7,8 @@
 -- machinery is live — try:
 --   <CR>/<C-s> submit · <C-x> steer · <C-c> cancel · <CR>/za on a tool call
 --   zR/zM expand/collapse all · ;;t ;;d ;;c ;;f view prefs · ;;p permission
---   mode · ;;1..;;9 answer permissions · /new fresh conversation · :qa quits
+--   mode · ;;1..;;9 answer permissions · ;;r restore a saved session ·
+--   /new fresh conversation · :qa quits
 
 -- Resolve paths from this file's own location, not the cwd, so the nix app
 -- (`-u /nix/store/...-source/demo/init.lua`) works from anywhere.
@@ -33,9 +34,16 @@ local clanker = require("clanker")
 -- tool calls, a permission request on every second turn), then ends the turn.
 
 local REPLY = "Sure — I looked at the request and here is what I found. "
-  .. "The store drives every component you see: this prose is streaming "
-  .. "through the same code path a real ACP agent would use, one chunk per "
-  .. "tick, coalesced into a single transcript entry."
+  .. "The store drives **every** component you see: this prose is streaming "
+  .. "through the same code path a *real* ACP agent would use, one chunk per "
+  .. "tick, coalesced into a single transcript entry.\n\n"
+  .. "## Markdown, live\n\n"
+  .. "Once the turn settles this entry parses as markdown (`;;c` toggles "
+  .. "conceal):\n\n"
+  .. "```lua\n"
+  .. 'local spans = markdown.parse("**bold**")\n'
+  .. "return spans\n"
+  .. "```"
 
 local client = {
   state = "connected",
@@ -75,8 +83,9 @@ function client:send_prompt(_sid, _prompt, callback)
     })
   end)
 
-  -- Stream the reply word by word.
-  for word in REPLY:gmatch("%S+ ?") do
+  -- Stream the reply word by word, KEEPING the whitespace between chunks —
+  -- the newlines are markdown block structure.
+  for word in REPLY:gmatch("%S+%s*") do
     at(30, function()
       h.on_session_update({ sessionUpdate = "agent_message_chunk", content = { text = word } })
     end)
@@ -147,6 +156,32 @@ end
 
 function client:cancel_turn(_sid) end
 function client:cancel_session(_sid) end
+
+-- Two canned saved sessions so ;;r has something to pick from; loading one
+-- replays a short history through the normal handlers, like session/load.
+function client:list_sessions(_cwd, callback)
+  callback({
+    sessions = {
+      { sessionId = "saved-1", title = "Refactor the panel shell", updatedAt = "2026-07-04T18:12:00Z" },
+      { sessionId = "saved-2", title = "Chase the wheel-scroll bug", updatedAt = "2026-07-03T09:40:00Z" },
+    },
+  }, nil)
+end
+
+function client:load_session(session_id, _cwd, _mcp, handlers, on_complete)
+  self.handlers = handlers
+  handlers.on_session_update({
+    sessionUpdate = "user_message_chunk",
+    content = { type = "text", text = "What did we do in '" .. session_id .. "'?" },
+  })
+  handlers.on_session_update({
+    sessionUpdate = "agent_message_chunk",
+    content = { text = "This conversation was restored from disk — the provider replayed its history through the ordinary session updates, and the panel rendered it without spinning up the activity status." },
+  })
+  on_complete(nil, {
+    models = { currentModelId = "scripted", availableModels = { { modelId = "scripted", name = "Scripted" } } },
+  })
+end
 
 -- ── Open it ──────────────────────────────────────────────────────────────────
 
