@@ -98,7 +98,7 @@ end
 --- @field is_open fun(): boolean
 
 --- Open the panel.
---- @param opts { store: clanker.store.SessionStore, prefs: clanker.view.Prefs, on_submit?: fun(text: string), on_steer?: fun(text: string), on_cancel?: fun(), on_permission?: fun(index: integer), on_cycle_permission_mode?: fun(), on_pick_model?: fun(), on_pick_mode?: fun(), on_restore_picker?: fun(), width?: integer, sidebar_width?: integer, prompt_height?: integer }
+--- @param opts { store: clanker.store.SessionStore, prefs: clanker.view.Prefs, on_submit?: fun(text: string), on_steer?: fun(text: string), on_cancel?: fun(), on_permission?: fun(index: integer), on_cycle_permission_mode?: fun(), on_pick_model?: fun(), on_pick_mode?: fun(), on_restore_picker?: fun(), on_sessions?: fun(), width?: integer, sidebar_width?: integer, prompt_height?: integer }
 --- @return clanker.view.PanelHandle handle
 function M.open(opts)
   local store = opts.store
@@ -114,6 +114,7 @@ function M.open(opts)
   local on_pick_model = opts.on_pick_model or function() end
   local on_pick_mode = opts.on_pick_mode or function() end
   local on_restore_picker = opts.on_restore_picker or function() end
+  local on_sessions = opts.on_sessions or function() end
 
   local width = opts.width or DEFAULT_WIDTH
   -- The sidebar never eats more than half the panel.
@@ -156,13 +157,25 @@ function M.open(opts)
     end
     closing = true
     open = false
+    -- Focus etiquette: pull focus back to the origin window only when the
+    -- user is actually IN the panel. A close triggered from elsewhere — the
+    -- session modal's ✕, stop() reaching a panel in another tab — must not
+    -- steal focus from wherever the user is.
+    local cur = vim.api.nvim_get_current_win()
+    local cur_buf = vim.api.nvim_win_get_buf(cur)
+    local had_focus = cur == app.winid
+      or cur == app.host_winid
+      or cur == transcript.winid
+      or cur_buf == app.bufnr
+      or cur_buf == transcript.bufnr
+      or cur_buf == input_bufnr
     unsubscribe_store()
     unsubscribe_prefs()
     pcall(vim.api.nvim_del_augroup_by_id, group)
     -- One unmount tears the whole tree down, innermost first (fibrous walks
     -- any stranded focus out level by level).
     app.unmount()
-    if vim.api.nvim_win_is_valid(origin_win) then
+    if had_focus and vim.api.nvim_win_is_valid(origin_win) then
       pcall(vim.api.nvim_set_current_win, origin_win)
     end
   end
@@ -231,6 +244,7 @@ function M.open(opts)
     map(";;m", on_pick_model, "pick model")
     map(";;M", on_pick_mode, "pick mode")
     map(";;r", on_restore_picker, "restore a saved session")
+    map(";;s", on_sessions, "open the session modal")
     map("zR", function()
       store:set_all_expanded(true)
     end, "expand all tool calls")
@@ -285,7 +299,26 @@ function M.open(opts)
     end
   end
 
-  focus_prompt()
+  -- Opened from `-u init` (the demo, a user's config), a focus grab NOW gets
+  -- silently undone: startup re-enters the first window after init sourcing
+  -- with autocmds suppressed, stranding the prompt's _focus style ON with the
+  -- cursor elsewhere. Defer past startup — the grab then fires real
+  -- WinEnter/WinLeave and sticks.
+  if vim.v.vim_did_enter == 1 then
+    focus_prompt()
+  else
+    vim.api.nvim_create_autocmd("VimEnter", {
+      group = group,
+      once = true,
+      callback = function()
+        vim.schedule(function()
+          if open then
+            focus_prompt()
+          end
+        end)
+      end,
+    })
+  end
 
   return {
     bufnr = app.bufnr,

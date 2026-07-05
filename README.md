@@ -13,8 +13,10 @@ projection of it.
 
 Working panel. The protocol layer (`lua/clanker/acp/`) is carried over from
 agentic (working, battle-tested); store, bridge, view, and the panel shell
-are built test-first and green, including session restore and treesitter
-markdown/diff rendering. See `open_tasks_and_issues.md`.
+are built test-first and green, including session restore, treesitter
+markdown/diff rendering, and multi-session support (several sessions, on
+possibly different providers, selected per tabpage). See
+`open_tasks_and_issues.md`.
 
 ## Usage
 
@@ -26,7 +28,12 @@ require("clanker").setup({ --[[ config overrides ]] })
 In the panel: `<CR>`/`<C-s>` submit, `<C-x>` steer (interrupt + send),
 `<C-c>` cancel, `<CR>`/`za` on a tool call toggles it, `zR`/`zM` all,
 `;;t`/`;;d`/`;;c`/`;;f` view prefs, `;;p` permission mode, `;;m`/`;;M`
-model/mode pickers, `;;1`..`;;9` answer permissions, `/new` fresh session.
+model/mode pickers, `;;1`..`;;9` answer permissions, `;;r` restore a saved
+session in place, `;;s` (or `:Clanker sessions`) the session modal, `/new`
+fresh session. Sessions are editor-global and selected per tabpage: the
+modal lists every active session (rows are buttons — `<CR>` selects for
+this tab, `✕` closes the session everywhere), starts new ones on any
+configured provider, and activates saved sessions into fresh entries.
 The panel is ONE docked pane, one fibrous mount: the transcript is a
 `ui.container` (its own buffer in a natively-scrolling subwindow — `<CR>`
 enters it, `h/j/k/l` at the edges step back out, `<C-d>/<C-u>` page inside),
@@ -44,10 +51,12 @@ session keeps running; toggle reopens it).
       session_store.lua    plain-Lua state snapshots + subscribers (the SSOT)
       acp_bridge.lua       ACP callbacks → store mutations
       session.lua          one conversation: client, turns, queue/steer/cancel
-      init.lua             setup() + :Clanker toggle
+      registry.lua         active sessions (editor-global) + per-tab selection
+      init.lua             setup() + :Clanker toggle, panels per tabpage
     lua/clanker/view/      fibrous components: transcript, sidebar, prompt,
                            panel (one docked pane, one mount; the transcript
-                           is a fibrous ui.container), prefs, theme, use_store
+                           is a fibrous ui.container), session_modal (;;s),
+                           prefs, theme, use_store
     tests/                 headless specs — `make test`, or
                            `make test-file FILE=tests/acp/load_spec.lua`
     bench/                 headless benchmarks (`bench/*_bench.lua`)

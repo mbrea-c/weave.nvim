@@ -251,5 +251,107 @@ Canonical task list — keep ticked/updated as work lands.
     fence); fixed the demo chunker eating newlines (`%S+ ?` → `%S+%s*`) —
     markdown block structure IS the whitespace. Verified live: injected
     @keyword.lua etc. in the transcript container buffer.
-- [ ] R5 leftovers:
-  - Multi-session / registry (agentic's ARCHITECTURE-multisession) — later.
+- [x] R5 leftovers:
+  - ~~Multi-session / registry (agentic's ARCHITECTURE-multisession) —
+    later.~~ Done, see the providers & sessions entry below.
+- [x] Providers & sessions / multi-session (2026-07-05, user-directed
+  design), red-green (suite 134 → 150). The layers below init were already
+  multi-session-shaped (ACPClient routes per sessionId via `subscribers`,
+  AgentInstance keeps one process per provider, Session/store are
+  instance-scoped) — the work was bookkeeping + UI:
+  - `registry.lua` (NEW): the editor-GLOBAL list of active sessions
+    (`{key, session, prefs, provider}`, monotonic keys) + the PER-TABPAGE
+    selection map (user's model: selected-per-tab, active-globally).
+    Different entries may use different providers (user decision: yes —
+    it's free, processes are per-provider anyway). `add()` accepts
+    `restore = <saved id>` to activate a saved session into a FRESH entry
+    (vs ;;r's in-place restore) via the new `Session:start({restore})`,
+    which swaps session/load in for session/new after connect. `close()`
+    cancels+stops and clears every tab selection pointing at it;
+    `on_close` listeners survive `reset()` ON PURPOSE (init registers its
+    panel-teardown hook once at module load; suite spec-order must not be
+    able to sever it).
+  - init.lua rewired: the session/panel/prefs singleton became registry +
+    per-tab panel handles (each remembers its open geometry so a session
+    swap reopens at the same size). toggle/open bind the CURRENT tab's
+    selection (creating+selecting on first use); get_session() = the tab's
+    selection; stop() closes every session and the on_close hook takes all
+    its panels down (any tab). The get_instance injection handed to open()
+    is REMEMBERED and reused by the modal's new/load flows — the demo and
+    specs script the agent once and every later session stays scripted.
+  - `view/session_modal.lua` (NEW): floating fibrous mount (`;;s`, or
+    `:Clanker sessions`) — one row per active session (● = this tab's
+    selection; label = provider · first user message · status), rows are
+    fibrous BUTTONS so <CR> activation, hover and <Tab> cycling come from
+    the framework; per-row ✕ closes that session everywhere (modal
+    re-renders via set_props); `+ new session` → provider picker (● marks
+    the config default) → add+select+swap; `↺ load saved…` → provider pick
+    → session/list → pick → activate into a fresh entry. q/<Esc> close.
+    NB the <Tab> cycling needs fibrous's tab-navigation (committed locally
+    as d5568cb, not yet pushed/pinned; under the pin the modal also
+    rendered behind the transcript — see the modal-chrome entry and the
+    BLOCKED item below).
+  - Demo: the scripted client now keeps handlers PER session id (one client,
+    many sessions — replies must stream into the transcript that asked);
+    create_session mints demo-session-N. Verified live over --listen RPC:
+    modal renders, + new session swaps the panel, and a prompt in session 2
+    lands ONLY in session 2's store (session 1 stays at 0 entries).
+  - Not done (deliberate): background-session event surfacing — a parked
+    session hitting a permission request or finishing a turn is invisible
+    except in the modal's status column. Needs a notify + attention marker
+    design; folded into shell/UX niceties.
+- [x] Modal chrome + z-order fix (2026-07-05, user request), suite → 151.
+  The modal rendered BEHIND the transcript: fibrous stacked every float at
+  ≥50 (subwin levels 60+), so the panel's container floats covered the
+  modal's root. Fixed at the fibrous level (see its tracker): pane-anchored
+  mounts now stack low (root 10, +1/level) and float mounts root at nvim's
+  default 50 — genuine floats (ours or any plugin's) always clear the
+  panel. The modal now passes the new mount.floating opts:
+  `border = "rounded"` + `backdrop = true` (Snacks-style editor dim, a
+  fibrous-owned full-screen float at z=49). Verified live: stack is
+  panel 10 / subwins 11 / backdrop 49 / modal 50.
+- [x] Modal bug pair (2026-07-05, user reports), suite → 153:
+  - "Panel blanked out under the modal": the backdrop float (z=49, above
+    the panel's 10/11 stack) hid the panel — nvim's compositor hides
+    floats under a winblend float and blends against the base grid only
+    (full diagnosis in fibrous's tracker). First fix moved the backdrop
+    to z=5 (panel visible, undimmed); USER DECISION reverted: the modal
+    SHOULD obscure the panel rather than sit over a bright one, so the
+    backdrop is back at root-1 (49) and hiding the furniture is the
+    intended effect. Verified against the composed screen (demo inside a
+    :terminal of a headless host).
+  - "✕ in the modal moves focus to the main buffer": panel close()
+    unconditionally restored origin-window focus; the registry on_close
+    hook closes the panel while the user sits in the MODAL. close() now
+    restores origin focus only when focus is actually inside the panel
+    (win or buffer match — NB a bare vsplit of the focused prompt still
+    SHOWS a panel buffer, hence the buffer check AND the spec's enew).
+    Specs: panel_spec close-from-outside; init_spec modal-✕ keeps modal
+    focused + registry intact. Verified live.
+- [x] ~~BLOCKED on fibrous push (again)~~ (resolved 2026-07-05): the user
+  pushed tab-navigation (d5568cb) + the stacking policy and modal chrome
+  (e899700, 72494dd) mid-session; `nix run .#test` auto-bumped the lock to
+  72494dd and the suite is 153/153 against the pin.
+- [x] Mark-gravity inversion fix landed: committed as fibrous `dde1e2a`
+  ("fix: disappearing exmarks on resize"), pushed, and it IS the pinned rev
+  — `nix run .#test` green against it.
+- [x] Two follow-up UI bugs fixed after the user retested the demo
+  (2026-07-05, both in fibrous — see its tracker):
+  - Prompt showed as focused (blue border) on panel creation without the
+    cursor in it. subwin.lua drove `_focus` off buffer WinEnter/WinLeave,
+    but startup re-enters the first window with autocmds off after `-u init`
+    sourcing, stranding the accent ON. Fixed in fibrous (manager-level
+    WinEnter reconciliation) AND clanker (panel.lua now defers its focus
+    grab past VimEnter). Spec: panel_spec "opened during startup, the prompt
+    is genuinely focused after VimEnter" (drives a real child nvim).
+  - Incorrect extmarks on HORIZONTAL resize. The gravity fix re-placed marks
+    at canvas byte offsets, wrong for byte-divergent mirrored rows
+    (multibyte box-drawing content); a checkbox sharing rows with the moved
+    transcript-container box got its highlight misplaced. Fixed in fibrous
+    (`repaint_row_marks` now translates through display cells). clanker
+    suite 154/154 against the working tree.
+- [ ] SMALL fibrous-push gap: the two follow-up fixes above (subwin.lua +
+  style_state_spec + subwin_spec) are uncommitted in fibrous. No clanker
+  spec depends on them (`nix run .#test` green regardless), but the PINNED
+  demo keeps the focus-highlight + horizontal-resize bugs until fibrous is
+  committed + pushed + `nix flake update fibrous`.

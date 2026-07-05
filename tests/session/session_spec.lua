@@ -294,6 +294,29 @@ describe("session permissions and /new", function()
     assert.is_false(session:is_ready())
   end)
 
+  it("start with restore loads the saved session instead of creating one", function()
+    local client = fake_client()
+    client.replay = {
+      { sessionUpdate = "user_message_chunk", content = { type = "text", text = "old question" } },
+    }
+    local session = Session:new({
+      provider = "test-agent",
+      get_instance = function(_name, on_ready)
+        on_ready(client)
+        return client
+      end,
+    })
+    session:start({ restore = "saved-1" })
+    pump()
+
+    assert.is_nil(client.calls.create_sessions)
+    assert.same({ "saved-1" }, client.calls.loads)
+    local store = session:get_store()
+    assert.equal("old question", store.state.entries[1].text)
+    assert.equal("saved-1", store.state.meta.session_id)
+    assert.is_true(session:is_ready())
+  end)
+
   it("/new resets the store and creates a fresh session", function()
     local session, client, store = started()
     session:submit("hello")

@@ -8,6 +8,7 @@
 --   <CR>/<C-s> submit · <C-x> steer · <C-c> cancel · <CR>/za on a tool call
 --   zR/zM expand/collapse all · ;;t ;;d ;;c ;;f view prefs · ;;p permission
 --   mode · ;;1..;;9 answer permissions · ;;r restore a saved session ·
+--   ;;s the session modal (multiple sessions, per-tab selection) ·
 --   /new fresh conversation · :qa quits
 
 -- Resolve paths from this file's own location, not the cwd, so the nix app
@@ -49,12 +50,18 @@ local client = {
   state = "connected",
   agent_info = { name = "scripted-agent", version = "0.1" },
   _turn = 0,
+  _session_n = 0,
+  -- Handlers PER session id: the ;;s modal runs several sessions over this
+  -- one client, and each reply must stream into the transcript that asked.
+  _handlers = {},
 }
 
 function client:create_session(handlers, callback, _mcp)
-  self.handlers = handlers
+  self._session_n = self._session_n + 1
+  local sid = "demo-session-" .. self._session_n
+  self._handlers[sid] = handlers
   callback({
-    sessionId = "demo-session",
+    sessionId = sid,
     modes = { currentModeId = "demo", availableModes = { { id = "demo", name = "Demo" } } },
     models = { currentModelId = "scripted", availableModels = { { modelId = "scripted", name = "Scripted" } } },
   }, nil)
@@ -66,10 +73,10 @@ function client:create_session(handlers, callback, _mcp)
   end, 100)
 end
 
-function client:send_prompt(_sid, _prompt, callback)
+function client:send_prompt(sid, _prompt, callback)
   self._turn = self._turn + 1
   local turn = self._turn
-  local h = self.handlers
+  local h = self._handlers[sid]
   local t = 0
   local function at(ms, fn)
     t = t + ms
@@ -169,7 +176,7 @@ function client:list_sessions(_cwd, callback)
 end
 
 function client:load_session(session_id, _cwd, _mcp, handlers, on_complete)
-  self.handlers = handlers
+  self._handlers[session_id] = handlers
   handlers.on_session_update({
     sessionUpdate = "user_message_chunk",
     content = { type = "text", text = "What did we do in '" .. session_id .. "'?" },

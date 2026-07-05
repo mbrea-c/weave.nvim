@@ -114,14 +114,18 @@ function Session:cycle_permission_mode()
   Logger.notify("Permission mode: " .. (SessionStore.PERMISSION_MODE_LABEL[mode] or mode), vim.log.levels.INFO)
 end
 
---- Connect to the provider and create the ACP session. Status is "busy"
---- until the session is ready.
-function Session:start()
+--- Connect to the provider and create the ACP session — or, with
+--- opts.restore, LOAD that saved session instead (activating a saved
+--- conversation into a fresh Session: same connect, session/load in place of
+--- session/new). Status is "busy" until the session is ready.
+--- @param opts { restore?: string }|nil restore = saved ACP session id
+function Session:start(opts)
+  local restore = opts and opts.restore
   self._store:set_status("busy")
 
   local client = self._get_instance(self._provider_name, function(c)
     vim.schedule(function()
-      self:_on_client_ready(c)
+      self:_on_client_ready(c, restore)
     end)
   end)
 
@@ -139,7 +143,8 @@ end
 
 --- @private
 --- @param client table
-function Session:_on_client_ready(client)
+--- @param restore string|nil saved session id to load instead of creating
+function Session:_on_client_ready(client, restore)
   if client.state == "error" or client.state == "disconnected" then
     self._store:set_status("idle")
     self._store:append_entry({
@@ -147,6 +152,12 @@ function Session:_on_client_ready(client)
       text = "⚠️ Failed to connect to " .. self._provider_name .. ".",
     })
     return
+  end
+
+  -- Activating a saved session: _client is already set (start() assigned it
+  -- before this scheduled callback ran), so restore() has all it needs.
+  if restore then
+    return self:restore(restore)
   end
 
   client:create_session(self:_build_handlers(), function(response, err)

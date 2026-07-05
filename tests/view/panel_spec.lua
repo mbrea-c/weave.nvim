@@ -58,6 +58,83 @@ describe("view.panel shell", function()
     assert.equal(before_wins, #vim.api.nvim_list_wins())
   end)
 
+  it("close from OUTSIDE the panel leaves focus where it is", function()
+    local handle = open_panel()
+    -- a window that has nothing to do with the panel takes focus (like the
+    -- session modal's float when its ✕ closes a session); enew — a vsplit
+    -- of the focused prompt would still SHOW a panel buffer
+    vim.cmd("topleft vsplit | enew")
+    local outside = vim.api.nvim_get_current_win()
+
+    handle.close()
+    assert.equal(outside, vim.api.nvim_get_current_win())
+    vim.api.nvim_win_close(outside, true)
+  end)
+
+  it("opened during startup, the prompt is genuinely focused after VimEnter", function()
+    -- The bug: nvim's startup re-enters the first window AFTER `-u init`
+    -- sourcing with autocmds suppressed — a panel opened from init had
+    -- focused the prompt (WinEnter → _focus style ON), then focus was
+    -- yanked back with no WinLeave: blue border, cursor elsewhere. The
+    -- panel must defer its focus grab past startup. Only a real child
+    -- nvim exercises that startup window shuffle.
+    local clanker_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h:h")
+    -- fibrous is on package.path (not the rtp) in the test runner — locate its
+    -- root through the loaded module. :p absolutizes: the child nvim's cwd is
+    -- not guaranteed to match ours.
+    local mount_src = debug.getinfo(require("fibrous.inline.mount").floating, "S").source:sub(2)
+    local fibrous_root = vim.fn.fnamemodify(mount_src, ":p:h:h:h:h")
+    local result_file = vim.fn.tempname()
+    local init_file = vim.fn.tempname() .. ".lua"
+    local init = ([==[
+      vim.opt.rtp:prepend(%q)
+      vim.opt.rtp:prepend(%q)
+      local handle = require("clanker.view.panel").open({
+        store = require("clanker.session_store"):new(),
+        prefs = require("clanker.view.prefs"):new(),
+        width = 45,
+      })
+      vim.api.nvim_create_autocmd("VimEnter", {
+        callback = function()
+          vim.schedule(function()
+            local cur_buf = vim.api.nvim_win_get_buf(vim.api.nvim_get_current_win())
+            local marks = 0
+            for _, m in ipairs(vim.api.nvim_buf_get_extmarks(handle.bufnr, -1, 0, -1, { details = true })) do
+              if m[4].hl_group == "FibrousBorderFocus" then marks = marks + 1 end
+            end
+            local fd = assert(io.open(%q, "w"))
+            fd:write(vim.json.encode({
+              cur_is_prompt = vim.bo[cur_buf].completefunc
+                == "v:lua.require'clanker.view.prompt'.slash_complete",
+              focus_marks = marks,
+            }))
+            fd:close()
+            vim.cmd("qa!")
+          end)
+        end,
+      })
+      vim.defer_fn(function() vim.cmd("qa!") end, 5000) -- never hang the suite
+    ]==]):format(fibrous_root, clanker_root, result_file)
+    local fd = assert(io.open(init_file, "w"))
+    fd:write(init)
+    fd:close()
+
+    local out = vim.system({ vim.v.progpath, "--headless", "--clean", "-u", init_file }, {}):wait(10000)
+
+    local rf = assert(
+      io.open(result_file, "r"),
+      ("child nvim wrote no result (code=%s stderr=%s)"):format(tostring(out.code), tostring(out.stderr))
+    )
+    local result = vim.json.decode(rf:read("*a"))
+    rf:close()
+    os.remove(result_file)
+    os.remove(init_file)
+
+    -- the prompt holds the cursor, and the focus accent it shows is honest
+    assert.is_true(result.cur_is_prompt)
+    assert.is_true(result.focus_marks > 0)
+  end)
+
   it("closing the dock pane tears the whole panel down", function()
     local before = #vim.api.nvim_list_wins()
     local handle = open_panel()
@@ -194,6 +271,19 @@ describe("view.panel shell", function()
     press(";;m")
     press(";;M")
     assert.same({ "model", "mode" }, picked)
+    handle.close()
+  end)
+
+  it(";;s reaches the session-modal callback", function()
+    local opened = 0
+    local handle = open_panel({
+      on_sessions = function()
+        opened = opened + 1
+      end,
+    })
+    vim.api.nvim_set_current_win(handle.transcript.winid)
+    press(";;s")
+    assert.equal(1, opened)
     handle.close()
   end)
 
