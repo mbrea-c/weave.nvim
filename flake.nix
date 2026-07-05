@@ -27,14 +27,19 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
     in
     {
-      # The plugin itself, packaged the standard nixpkgs way. Consumers must
-      # also put fibrous on the runtimepath (it's a peer plugin, not vendored).
+      # The plugin itself, packaged the standard nixpkgs way. fibrous is its UI
+      # framework — a peer plugin, not vendored — declared as a `dependencies`
+      # so any plugin manager that flattens vim-plugin deps (home-manager's
+      # neovim module, nixvim, lazy-via-nixpkgs, …) pulls it onto the runtimepath
+      # automatically when you add weave. Consumers need only THIS input; they
+      # get weave's own pinned fibrous, no version skew.
       packages = forAllSystems (pkgs: rec {
         default = weave;
         weave = pkgs.vimUtils.buildVimPlugin {
           pname = "weave";
           version = self.shortRev or self.dirtyShortRev or "dev";
           src = self;
+          dependencies = [ fibrous.packages.${pkgs.stdenv.hostPlatform.system}.default ];
           # the real gate is the test suite (`nix flake check`); the generic
           # require-check chokes on modules that need a running UI
           doCheck = false;
