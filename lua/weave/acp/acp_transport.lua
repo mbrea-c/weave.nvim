@@ -1,0 +1,304 @@
+local Logger = require("weave.utils.logger")
+local uv = vim.uv or vim.loop
+
+--- @alias weave.acp.TransportType "stdio" | "tcp" | "websocket"
+
+--- @class weave.acp.ACPTransportModule
+local M = {}
+
+--- @class weave.acp.TransportCallbacks
+--- @field on_state_change fun(state: weave.acp.ClientConnectionState): nil The transport state like "connecting", "connected", "disconnected", "error"
+--- @field on_message fun(message: weave.acp.ResponseRaw): nil
+--- @field on_reconnect fun(): nil
+
+--- @class weave.acp.StdioTransportConfig
+--- @field command string Command to spawn agent
+--- @field args? string[] Arguments for agent command
+--- @field env? table<string, string|nil> Environment variables
+--- @field enable_reconnect? boolean Enable auto-reconnect
+--- @field max_reconnect_attempts? number Maximum reconnection attempts
+
+--- Some known messages the ACP providers write to stderr because it communicates via stdio
+--- These can be safely ignored, as they aren't errors, but logs
+local IGNORE_STDERR_PATTERNS = {
+  "Session not found",
+  "session/prompt",
+  "Spawning Claude Code process",
+  "does not appear in the file:",
+  "Experiments loaded", -- from Gemini
+  "No onPostToolUseHook found", -- from Claude
+  "You have exhausted your capacity on this model", -- from Gemini
+  "Spawning Claude Code:",
+  "[PreToolUseHook]",
+}
+
+--- `luanil` decodes JSON `null` as `nil`, not truthy `vim.NIL` userdata.
+--- @param line string
+--- @return boolean ok
+--- @return weave.acp.ResponseRaw|string decoded
+function M.decode_line(line)
+  return pcall(vim.json.decode, line, { luanil = { object = true, array = true } })
+end
+
+--- Create stdio transport for ACP communication
+--- @param config weave.acp.StdioTransportConfig
+--- @param callbacks weave.acp.TransportCallbacks
+--- @return weave.acp.ACPTransportInstance
+function M.create_stdio_transport(config, callbacks)
+  local reconnect_count = 0
+
+  --- @class weave.acp.ACPTransportInstance
+  local transport = {
+    --- @type uv.uv_pipe_t|nil
+    stdin = nil,
+    --- @type uv.uv_pipe_t|nil
+    stdout = nil,
+    --- @type uv.uv_process_t|nil
+    process = nil,
+    --- PID of the spawned child; also used as the negative argument to
+    --- uv.kill so we signal the whole process group on stop (POSIX).
+    --- @type integer|nil
+    pid = nil,
+  }
+
+  --- @param data string
+  function transport:send(data)
+    if self.stdin and not self.stdin:is_closing() then
+      self.stdin:write(data .. "\n")
+      return true
+    end
+    return false
+  end
+
+  function transport:start()
+    callbacks.on_state_change("connecting")
+
+    local stdin = uv.new_pipe(false)
+    local stdout = uv.new_pipe(false)
+    local stderr = uv.new_pipe(false)
+
+    if not stdin or not stdout or not stderr then
+      callbacks.on_state_change("error")
+      error("Failed to create pipes for ACP agent")
+    end
+
+    -- Capture stderr for better error reporting
+    local stderr_buffer = {}
+    local args = vim.deepcopy(config.args or {})
+    local env = config.env
+
+    -- Inherit full parent environment to support Nix, AWS Bedrock, proxies, custom CA bundles, etc.
+    -- uv.spawn replaces the entire environment, so we must explicitly include everything
+    local env_map = {}
+    for k, v in pairs(vim.fn.environ()) do
+      env_map[k] = v
+    end
+
+    -- Add default variables for ACP providers (overwrites parent if present)
+    env_map["NODE_NO_WARNINGS"] = "1"
+    env_map["IS_AI_TERMINAL"] = "1"
+
+    -- NOTE: do NOT inject $NVIM into the AGENT's environment. Kiro (and likely
+    -- its aim-sandbox wrapper) treats a set $NVIM as "I'm running inside a
+    -- Neovim :terminal" and exits cleanly (code 0) instead of serving the ACP
+    -- session — breaking session creation entirely. An MCP server that needs
+    -- $NVIM (e.g. the nvim-mcp shim) must receive it via its OWN McpServer.env
+    -- entry (EnvVariable[]), which reaches only that subprocess — see
+    -- Session:_resolve_mcp_servers. Verified: injecting $NVIM here disconnects
+    -- Kiro; passing it per-MCP-server works.
+
+    -- Apply user-provided env overrides/additions (overwrites defaults)
+    if env then
+      for k, v in pairs(env) do
+        env_map[k] = v
+      end
+    end
+
+    -- Serialize map to array format expected by libuv
+    local final_env = {}
+    for k, v in pairs(env_map) do
+      table.insert(final_env, k .. "=" .. v)
+    end
+
+    --- @diagnostic disable-next-line: missing-fields
+    local handle, pid = uv.spawn(config.command, {
+      args = args,
+      env = final_env,
+      stdio = { stdin, stdout, stderr },
+      -- detached = true makes the child a new session/process-group
+      -- leader (setsid). Required so transport:stop can signal the
+      -- whole group via uv.kill(-pid, ...) and reap wrappers that
+      -- don't forward signals (e.g. codex-acp.js spawnSync).
+      -- Windows has no process groups, so staying attached is
+      -- preferable (child inherits console and dies with the terminal).
+      detached = vim.fn.has("win32") == 0,
+    }, function(code, signal)
+      local cmd_str = config.command .. (#args > 0 and " " .. table.concat(args, " ") or "")
+
+      local exit_info = {
+        "ACP agent exited:",
+        "  Command: " .. cmd_str,
+        "  Exit code: " .. tostring(code),
+        "  Signal: " .. tostring(signal),
+      }
+
+      if code ~= 0 and #stderr_buffer > 0 then
+        table.insert(exit_info, "  Stderr output:")
+        for _, line in ipairs(stderr_buffer) do
+          table.insert(exit_info, "    " .. line)
+        end
+      end
+
+      Logger.debug(table.concat(exit_info, "\n"))
+
+      if code ~= 0 then
+        local error_msg = string.format("ACP agent '%s' failed (exit code %d)", config.command, code)
+
+        if #stderr_buffer > 0 then
+          error_msg = error_msg .. ":\n" .. table.concat(stderr_buffer, "\n")
+        end
+        Logger.notify(error_msg, vim.log.levels.ERROR)
+      end
+
+      callbacks.on_state_change("disconnected")
+
+      if self.process then
+        self.process:close()
+        self.process = nil
+      end
+
+      -- Handle reconnection if enabled
+      if config.enable_reconnect then
+        local max_attempts = config.max_reconnect_attempts or 3
+
+        if reconnect_count < max_attempts then
+          reconnect_count = reconnect_count + 1
+
+          vim.defer_fn(function()
+            callbacks.on_reconnect()
+          end, 2000)
+        end
+      end
+    end)
+
+    Logger.debug("Spawned ACP agent process with PID ", tostring(pid))
+
+    if not handle then
+      callbacks.on_state_change("error")
+      error("Failed to spawn ACP agent process")
+    end
+
+    self.process = handle
+    self.pid = tonumber(pid)
+    self.stdin = stdin
+    self.stdout = stdout
+
+    callbacks.on_state_change("connected")
+
+    local chunks = ""
+    stdout:read_start(function(err, data)
+      if err then
+        Logger.notify("ACP stdout error: " .. err, vim.log.levels.ERROR)
+        callbacks.on_state_change("error")
+        return
+      end
+
+      if data then
+        chunks = chunks .. data
+
+        -- Split on newlines and process complete JSON-RPC messages
+        local lines = vim.split(chunks, "\n", { plain = true })
+        chunks = lines[#lines]
+
+        for i = 1, #lines - 1 do
+          local line = vim.trim(lines[i])
+          if line ~= "" then
+            local ok, message = M.decode_line(line)
+            if ok then
+              --- @cast message weave.acp.ResponseRaw
+              callbacks.on_message(message)
+            else
+              Logger.notify("Failed to parse JSON-RPC message: " .. line)
+            end
+          end
+        end
+      end
+    end)
+
+    stderr:read_start(function(_, data)
+      if data then
+        -- Always capture stderr for error reporting
+        local trimmed = vim.trim(data)
+        if trimmed ~= "" then
+          table.insert(stderr_buffer, trimmed)
+        end
+
+        -- Only skip logging if matches ignore patterns
+        local should_ignore = false
+        for _, pattern in ipairs(IGNORE_STDERR_PATTERNS) do
+          if data:match(pattern) then
+            should_ignore = true
+            break
+          end
+        end
+
+        if not should_ignore then
+          vim.schedule(function()
+            Logger.debug("ACP stderr: ", data)
+          end)
+        end
+      end
+    end)
+  end
+
+  function transport:stop()
+    if self.process and not self.process:is_closing() then
+      local process = self.process
+      local pid = self.pid
+      self.process = nil
+      self.pid = nil
+
+      if not process then
+        return
+      end
+
+      -- Signal the whole process group (negative pid on POSIX) so
+      -- wrappers that don't forward signals (e.g. codex-acp.js
+      -- spawnSync) don't leave orphaned grandchildren. Fall back to
+      -- per-pid kill on Windows where process groups work differently.
+      local is_windows = vim.fn.has("win32") == 1
+      if pid and not is_windows then
+        pcall(uv.kill, -pid, 15)
+        pcall(uv.kill, -pid, 9)
+      else
+        pcall(function()
+          process:kill(15)
+        end)
+        pcall(function()
+          process:kill(9)
+        end)
+      end
+
+      -- Safe to close the handle here even though the spawn exit
+      -- callback may still fire; libuv tolerates close-after-exit and
+      -- the callback's own close path is guarded by `if self.process`.
+      process:close()
+    end
+
+    if self.stdin then
+      self.stdin:close()
+      self.stdin = nil
+    end
+
+    if self.stdout then
+      self.stdout:close()
+      self.stdout = nil
+    end
+
+    callbacks.on_state_change("disconnected")
+  end
+
+  return transport
+end
+
+return M

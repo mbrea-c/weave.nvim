@@ -4,7 +4,7 @@
 -- this spec. The client is injected (opts.get_instance) so everything runs
 -- against a scripted fake.
 
-local Session = require("clanker.session")
+local Session = require("weave.session")
 
 --- Pump the main loop so vim.schedule'd continuations run.
 local function pump()

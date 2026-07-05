@@ -5,7 +5,7 @@
 -- Prefs. Sessions may use DIFFERENT providers — the process-per-provider
 -- reuse lives below, in AgentInstance.
 
-local Registry = require("clanker.registry")
+local Registry = require("weave.registry")
 
 --- Pump the main loop so vim.schedule'd continuations run.
 local function pump()

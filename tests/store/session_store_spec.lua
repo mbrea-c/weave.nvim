@@ -11,7 +11,7 @@
 --   * the permission FIFO: response-bearing requests are queued, never
 --     overwritten — every respond closure is eventually called.
 
-local SessionStore = require("clanker.session_store")
+local SessionStore = require("weave.session_store")
 
 local function collecting(store)
   local seen = {}

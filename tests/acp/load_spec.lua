@@ -3,22 +3,22 @@
 -- headless nvim — and smoke-tests the pure payload builders. Protocol-level
 -- specs arrive with the store/bridge work.
 
-describe("clanker.acp module closure", function()
+describe("weave.acp module closure", function()
   it("every copied module loads", function()
     for _, mod in ipairs({
-      "clanker.config_default",
-      "clanker.config",
-      "clanker.utils.logger",
-      "clanker.utils.file_system",
-      "clanker.utils.list",
-      "clanker.utils.buf_helpers",
-      "clanker.acp.acp_client_types",
-      "clanker.acp.acp_payloads",
-      "clanker.acp.acp_transport",
-      "clanker.acp.acp_client",
-      "clanker.acp.agent_instance",
-      "clanker.acp.agent_models",
-      "clanker.acp.agent_modes",
+      "weave.config_default",
+      "weave.config",
+      "weave.utils.logger",
+      "weave.utils.file_system",
+      "weave.utils.list",
+      "weave.utils.buf_helpers",
+      "weave.acp.acp_client_types",
+      "weave.acp.acp_payloads",
+      "weave.acp.acp_transport",
+      "weave.acp.acp_client",
+      "weave.acp.agent_instance",
+      "weave.acp.agent_models",
+      "weave.acp.agent_modes",
     }) do
       local ok, err = pcall(require, mod)
       assert.is_true(ok, mod .. ": " .. tostring(err))
@@ -26,14 +26,14 @@ describe("clanker.acp module closure", function()
   end)
 
   it("the default config names a provider that exists in acp_providers", function()
-    local config = require("clanker.config")
+    local config = require("weave.config")
     assert.equal("string", type(config.provider))
     assert.equal("table", type(config.acp_providers[config.provider]))
     assert.equal("string", type(config.acp_providers[config.provider].command))
   end)
 
   it("payload builders produce ACP message chunks", function()
-    local payloads = require("clanker.acp.acp_payloads")
+    local payloads = require("weave.acp.acp_payloads")
     local msg = payloads.generate_user_message("hello")
     assert.equal("user_message_chunk", msg.sessionUpdate)
     assert.equal("text", msg.content.type)

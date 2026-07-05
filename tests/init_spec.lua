@@ -1,10 +1,10 @@
 -- The public entrypoint: setup() merges user config (in place — modules hold
--- references to the live Config table) and defines :Clanker; toggle()/open()/
+-- references to the live Config table) and defines :Weave; toggle()/open()/
 -- close() manage ONE session + panel. The session outlives the panel: closing
 -- the dock doesn't kill the conversation, reopening shows the same store.
 
-local clanker = require("clanker")
-local Config = require("clanker.config")
+local weave = require("weave")
+local Config = require("weave.config")
 
 local function fake_client()
   local client = { state = "connected", agent_info = { name = "fake" }, calls = { prompts = {} } }
@@ -59,92 +59,92 @@ local function activate(handle, row, col)
   press("<CR>")
 end
 
-describe("clanker entrypoint", function()
-  it("setup merges config in place and defines :Clanker", function()
+describe("weave entrypoint", function()
+  it("setup merges config in place and defines :Weave", function()
     local before = Config
-    clanker.setup({ debug = true })
+    weave.setup({ debug = true })
     assert.rawequal(before, Config)
     assert.is_true(Config.debug)
     Config.debug = false
-    assert.equal(2, vim.fn.exists(":Clanker"))
+    assert.equal(2, vim.fn.exists(":Weave"))
   end)
 
   it("toggle opens and closes the panel; the session survives", function()
     local client = fake_client()
     local before = #vim.api.nvim_list_wins()
 
-    clanker.toggle({ get_instance = function(_n, on_ready)
+    weave.toggle({ get_instance = function(_n, on_ready)
       on_ready(client)
       return client
     end, width = 45 })
     pump()
-    assert.is_true(clanker.is_open())
+    assert.is_true(weave.is_open())
 
-    local store = clanker.get_session():get_store()
+    local store = weave.get_session():get_store()
     store:append_entry({ kind = "agent", text = "persists" })
 
-    clanker.toggle()
+    weave.toggle()
     pump()
-    assert.is_false(clanker.is_open())
+    assert.is_false(weave.is_open())
     assert.equal(before, #vim.api.nvim_list_wins())
 
     -- reopen: same session, same store, transcript still there
-    clanker.toggle({ width = 45 })
+    weave.toggle({ width = 45 })
     pump()
-    assert.is_true(clanker.is_open())
-    assert.rawequal(store, clanker.get_session():get_store())
+    assert.is_true(weave.is_open())
+    assert.rawequal(store, weave.get_session():get_store())
 
     -- stop() is the full shutdown: panel closed AND session dropped
-    clanker.stop()
+    weave.stop()
     pump()
-    assert.is_false(clanker.is_open())
-    assert.is_nil(clanker.get_session())
+    assert.is_false(weave.is_open())
+    assert.is_nil(weave.get_session())
   end)
 
   it("panels and selected sessions are per tabpage; stop closes everything", function()
-    local Registry = require("clanker.registry")
+    local Registry = require("weave.registry")
     local get_instance = function(_n, on_ready)
       local c = fake_client()
       on_ready(c)
       return c
     end
 
-    clanker.open({ get_instance = get_instance, width = 45 })
+    weave.open({ get_instance = get_instance, width = 45 })
     pump()
-    local first = clanker.get_session()
-    assert.is_true(clanker.is_open())
+    local first = weave.get_session()
+    assert.is_true(weave.is_open())
 
     -- a fresh tab has no panel and no selected session
     vim.cmd.tabnew()
-    assert.is_false(clanker.is_open())
-    assert.is_nil(clanker.get_session())
+    assert.is_false(weave.is_open())
+    assert.is_nil(weave.get_session())
 
     -- opening here starts a SECOND session, selected for this tab only
-    clanker.open({ get_instance = get_instance, width = 45 })
+    weave.open({ get_instance = get_instance, width = 45 })
     pump()
-    local second = clanker.get_session()
+    local second = weave.get_session()
     assert.is_true(second ~= nil)
     assert.is_true(second ~= first)
     assert.equal(2, #Registry.list())
 
     -- back in tab 1: its panel is still open, bound to the original session
     vim.cmd.tabnext(1)
-    assert.is_true(clanker.is_open())
-    assert.rawequal(first, clanker.get_session())
+    assert.is_true(weave.is_open())
+    assert.rawequal(first, weave.get_session())
 
     -- stop() closes every session and every panel, in every tab
-    clanker.stop()
+    weave.stop()
     pump()
-    assert.is_false(clanker.is_open())
+    assert.is_false(weave.is_open())
     assert.same({}, Registry.list())
-    assert.is_nil(clanker.get_session())
+    assert.is_nil(weave.get_session())
     vim.cmd.tabonly()
     pump()
   end)
 
   it("a prompt submitted in the panel reaches the agent", function()
     local client = fake_client()
-    clanker.open({ get_instance = function(_n, on_ready)
+    weave.open({ get_instance = function(_n, on_ready)
       on_ready(client)
       return client
     end, width = 45 })
@@ -153,51 +153,51 @@ describe("clanker entrypoint", function()
     press("iship it")
     press("<Esc><CR>")
     assert.same({ "ship it" }, client.calls.prompts)
-    clanker.stop()
+    weave.stop()
     pump()
   end)
 
   it("the session modal swaps the tab's panel to the picked session", function()
-    local Registry = require("clanker.registry")
+    local Registry = require("weave.registry")
     local get = function(_n, on_ready)
       local c = fake_client()
       on_ready(c)
       return c
     end
 
-    clanker.open({ get_instance = get, width = 45 })
+    weave.open({ get_instance = get, width = 45 })
     pump()
-    local first = clanker.get_session()
+    local first = weave.get_session()
     first:submit("alpha question")
 
     local b = Registry.add({ get_instance = get })
     pump()
 
-    local modal = clanker.sessions()
+    local modal = weave.sessions()
     activate(modal, locate(modal.bufnr, "(no messages yet)"))
     pump()
 
-    assert.rawequal(b.session, clanker.get_session())
-    assert.is_true(clanker.is_open())
-    clanker.stop()
+    assert.rawequal(b.session, weave.get_session())
+    assert.is_true(weave.is_open())
+    weave.stop()
     pump()
   end)
 
   it("closing the panel-bound session from the modal keeps the modal focused", function()
-    local Registry = require("clanker.registry")
+    local Registry = require("weave.registry")
     local get = function(_n, on_ready)
       local c = fake_client()
       on_ready(c)
       return c
     end
 
-    clanker.open({ get_instance = get, width = 45 })
+    weave.open({ get_instance = get, width = 45 })
     pump()
-    clanker.get_session():submit("alpha question")
+    weave.get_session():submit("alpha question")
     Registry.add({ get_instance = get })
     pump()
 
-    local modal = clanker.sessions()
+    local modal = weave.sessions()
     local row = locate(modal.bufnr, "alpha question")
     local line = vim.api.nvim_buf_get_lines(modal.bufnr, row - 1, row, false)[1]
     activate(modal, row, line:find("✕", 1, true) - 1)
@@ -205,23 +205,23 @@ describe("clanker entrypoint", function()
 
     -- the session (and its panel) are gone, but the modal kept the focus
     assert.equal(1, #Registry.list())
-    assert.is_false(clanker.is_open())
+    assert.is_false(weave.is_open())
     assert.is_true(modal.is_open())
     assert.equal(modal.winid, vim.api.nvim_get_current_win())
 
     modal.close()
-    clanker.stop()
+    weave.stop()
     pump()
   end)
 
   it("the new-session flow starts a session on the picked provider", function()
-    local Registry = require("clanker.registry")
+    local Registry = require("weave.registry")
     local get = function(_n, on_ready)
       local c = fake_client()
       on_ready(c)
       return c
     end
-    clanker.open({ get_instance = get, width = 45 })
+    weave.open({ get_instance = get, width = 45 })
     pump()
 
     local real_select = vim.ui.select
@@ -236,7 +236,7 @@ describe("clanker entrypoint", function()
 
     -- No injection here: sessions() must reuse the get_instance that open()
     -- was given (the demo relies on this — its agent is fully scripted).
-    local modal = clanker.sessions()
+    local modal = weave.sessions()
     activate(modal, locate(modal.bufnr, "new session"))
     pump()
     vim.ui.select = real_select
@@ -245,14 +245,14 @@ describe("clanker entrypoint", function()
     local entry = Registry.selected()
     assert.equal("gemini-acp", entry.provider)
     assert.is_true(entry.session:is_ready())
-    assert.rawequal(entry.session, clanker.get_session())
-    assert.is_true(clanker.is_open())
-    clanker.stop()
+    assert.rawequal(entry.session, weave.get_session())
+    assert.is_true(weave.is_open())
+    weave.stop()
     pump()
   end)
 
   it("the load-saved flow activates a saved session on the picked provider", function()
-    local Registry = require("clanker.registry")
+    local Registry = require("weave.registry")
     local client = fake_client()
     client.saved_sessions = {
       { sessionId = "old-9", title = "Old work", updatedAt = "2026-07-01T10:00:00Z" },
@@ -277,7 +277,7 @@ describe("clanker entrypoint", function()
       cb(nil)
     end
 
-    local modal = clanker.sessions({ get_instance = get })
+    local modal = weave.sessions({ get_instance = get })
     activate(modal, locate(modal.bufnr, "load saved"))
     pump()
     vim.ui.select = real_select
@@ -286,8 +286,8 @@ describe("clanker entrypoint", function()
     assert.is_not_nil(entry)
     assert.equal("codex-acp", entry.provider)
     assert.same({ "old-9" }, client.calls.loads)
-    assert.is_true(clanker.is_open())
-    clanker.stop()
+    assert.is_true(weave.is_open())
+    weave.stop()
     pump()
   end)
 end)

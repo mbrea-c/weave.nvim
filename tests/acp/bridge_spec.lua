@@ -1,10 +1,10 @@
--- The ACP bridge (roadmap R3): builds the clanker.acp.ClientHandlers table
+-- The ACP bridge (roadmap R3): builds the weave.acp.ClientHandlers table
 -- that ACPClient expects, routing every protocol callback into SessionStore
 -- mutations. Ported from agentic's reactive/acp_bridge.lua — its routing
 -- logic is this spec.
 
-local AcpBridge = require("clanker.acp_bridge")
-local SessionStore = require("clanker.session_store")
+local AcpBridge = require("weave.acp_bridge")
+local SessionStore = require("weave.session_store")
 
 local function setup(opts)
   local store = SessionStore:new()

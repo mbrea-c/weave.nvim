@@ -2,7 +2,7 @@
 --   make bench            (nvim --headless -u NONE -i NONE -l bench/run.lua)
 --   nix run .#bench       (same, against the flake snapshot + pinned fibrous)
 --
--- Discovers and runs every bench/*_bench.lua with clanker and fibrous on the
+-- Discovers and runs every bench/*_bench.lua with weave and fibrous on the
 -- module path. Scenario files own their measurement loops (mirror fibrous's
 -- bench(name, iters, fn) shape); BENCH_N is the conventional size knob.
 

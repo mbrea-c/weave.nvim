@@ -5,9 +5,9 @@
 -- fibrous owns everything window-shaped (the container's interaction layer
 -- drives tool-call toggles inside the transcript).
 
-local SessionStore = require("clanker.session_store")
-local Prefs = require("clanker.view.prefs")
-local panel = require("clanker.view.panel")
+local SessionStore = require("weave.session_store")
+local Prefs = require("weave.view.prefs")
+local panel = require("weave.view.panel")
 
 local function press(key)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), "xt", false)
@@ -78,7 +78,7 @@ describe("view.panel shell", function()
     -- yanked back with no WinLeave: blue border, cursor elsewhere. The
     -- panel must defer its focus grab past startup. Only a real child
     -- nvim exercises that startup window shuffle.
-    local clanker_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h:h")
+    local weave_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h:h")
     -- fibrous is on package.path (not the rtp) in the test runner — locate its
     -- root through the loaded module. :p absolutizes: the child nvim's cwd is
     -- not guaranteed to match ours.
@@ -89,9 +89,9 @@ describe("view.panel shell", function()
     local init = ([==[
       vim.opt.rtp:prepend(%q)
       vim.opt.rtp:prepend(%q)
-      local handle = require("clanker.view.panel").open({
-        store = require("clanker.session_store"):new(),
-        prefs = require("clanker.view.prefs"):new(),
+      local handle = require("weave.view.panel").open({
+        store = require("weave.session_store"):new(),
+        prefs = require("weave.view.prefs"):new(),
         width = 45,
       })
       vim.api.nvim_create_autocmd("VimEnter", {
@@ -105,7 +105,7 @@ describe("view.panel shell", function()
             local fd = assert(io.open(%q, "w"))
             fd:write(vim.json.encode({
               cur_is_prompt = vim.bo[cur_buf].completefunc
-                == "v:lua.require'clanker.view.prompt'.slash_complete",
+                == "v:lua.require'weave.view.prompt'.slash_complete",
               focus_marks = marks,
             }))
             fd:close()
@@ -114,7 +114,7 @@ describe("view.panel shell", function()
         end,
       })
       vim.defer_fn(function() vim.cmd("qa!") end, 5000) -- never hang the suite
-    ]==]):format(fibrous_root, clanker_root, result_file)
+    ]==]):format(fibrous_root, weave_root, result_file)
     local fd = assert(io.open(init_file, "w"))
     fd:write(init)
     fd:close()

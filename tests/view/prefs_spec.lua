@@ -3,7 +3,7 @@
 -- `.state` snapshots reassigned per mutation + subscribe/notify — so the
 -- view's use_store hook works on it unchanged.
 
-local Prefs = require("clanker.view.prefs")
+local Prefs = require("weave.view.prefs")
 
 describe("view prefs", function()
   it("starts with everything on", function()

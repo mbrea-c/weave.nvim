@@ -5,10 +5,10 @@
 
 local mount = require("fibrous.inline.mount")
 
-local SessionStore = require("clanker.session_store")
-local Prefs = require("clanker.view.prefs")
-local sidebar = require("clanker.view.sidebar")
-local Theme = require("clanker.view.theme")
+local SessionStore = require("weave.session_store")
+local Prefs = require("weave.view.prefs")
+local sidebar = require("weave.view.sidebar")
+local Theme = require("weave.view.theme")
 
 local function trimmed(bufnr)
   local out = {}

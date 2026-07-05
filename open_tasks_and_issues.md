@@ -31,13 +31,13 @@ Canonical task list — keep ticked/updated as work lands.
 - **Panel dock**: fibrous `mount.split()` (native split pane + covering
   float, resize-synced). **Prompt**: `ui.text_input` subwin. **Tool-call
   fold**: conditional render on store `expanded` — no real folds to lose.
-- **Module namespace**: `clanker` (rename is a mechanical sed once the plugin
+- **Module namespace**: `weave` (rename is a mechanical sed once the plugin
   name lands).
 
 ## Roadmap
 
 - [x] R1. Scaffold (2026-07-04): ACP layer + utils copied from agentic with
-  `agentic` → `clanker` rename — acp_client / acp_transport /
+  `agentic` → `weave` rename — acp_client / acp_transport /
   acp_client_types / acp_payloads / agent_instance / agent_models /
   agent_modes + logger / file_system / list / buf_helpers. Minimal config
   (debug + provider + acp_providers + mcp_servers only; ALL view config left
@@ -60,7 +60,7 @@ Canonical task list — keep ticked/updated as work lands.
   store copy works). tests/run.lua now puts fibrous on package.path
   (FIBROUS_PATH or sibling) — the R4 prerequisite, done early. Verified:
   `nix run .#test` 3/3, `nix flake check` green, demo renders headless.
-- [x] R2. Store (2026-07-04): `lua/clanker/session_store.lua`, red-green
+- [x] R2. Store (2026-07-04): `lua/weave/session_store.lua`, red-green
   (33 specs in tests/store/session_store_spec.lua). Plain snapshots: every
   mutation funnels through `_commit(mutate)` — shallow-copy state, reassign
   changed fields with fresh tables, swap, notify — so "one mutation, one
@@ -72,7 +72,7 @@ Canonical task list — keep ticked/updated as work lands.
   source-aware set_plan (acp > tool), stateful kiro task commands, prompt
   queue, meta merge (persists across reset). Left out per scope: `hint`
   (R5 sidebar) and `commands` (slash-command completion — prompt work).
-- [x] R3. Bridge (2026-07-04): `lua/clanker/acp_bridge.lua`, red-green (13
+- [x] R3. Bridge (2026-07-04): `lua/weave/acp_bridge.lua`, red-green (13
   specs in tests/acp/bridge_spec.lua — agentic's routing logic IS the spec).
   Handlers: session updates (message/thought streaming + status, user chunks,
   authoritative acp plan, restore suppresses status but not text), tool calls
@@ -82,7 +82,7 @@ Canonical task list — keep ticked/updated as work lands.
   the queue; respond answers ONLY the agent — no double-pop), on_error →
   transcript entry. `available_commands_update` logs as unhandled until the
   prompt's slash-command completion lands (R5; store has no `commands` yet).
-- [x] R4. Transcript view (2026-07-04): `lua/clanker/view/{theme,use_store,
+- [x] R4. Transcript view (2026-07-04): `lua/weave/view/{theme,use_store,
   transcript}.lua`, red-green (15 specs in tests/view/transcript_spec.lua,
   green on first pass). Per-entry components — UserEntry (❯ prefix, blue
   italic), ThoughtEntry ([thinking] block), AgentEntry (flush-left for the
@@ -119,12 +119,12 @@ Canonical task list — keep ticked/updated as work lands.
     prop (hooks must be unconditional): thought entries filtered, diff
     preview gated via a scalar `show_diff` ToolCallEntry prop (memo-correct).
   - `view/sidebar.lua`: Session meta, the four pref checkboxes (ui.checkbox),
-    Hint, Tasks (STATUS_ICON + ClankerTaskDone strikethrough via derived-fg
+    Hint, Tasks (STATUS_ICON + WeaveTaskDone strikethrough via derived-fg
     groups), Permissions (mode label + head request + numbered options).
   - `view/prompt.lua`: text_input with clear_on_submit, empty-submit no-op,
     <C-x> steer map + slash-command completion (completefunc off a
     buffer-local mirror, auto-trigger on leading `/`) wired in on_create,
-    border colour tracks permission mode (ClankerPromptBorder*), status row
+    border colour tracks permission mode (WeavePromptBorder*), status row
     ALWAYS rendered (blank when idle) — a row that comes and goes would move
     the input positionally and recreate the subwin, discarding typed text
     (caught by spec).
@@ -141,7 +141,7 @@ Canonical task list — keep ticked/updated as work lands.
     config pickers, submit (queue mid-turn), steer (cancel-then-resend),
     cancel (drop queue + drain permissions), respond_permission,
     turn end (steer > queue drain, hint rotation, error entries), /new.
-  - `init.lua`: setup() merges Config IN PLACE + :Clanker; open/close/toggle/
+  - `init.lua`: setup() merges Config IN PLACE + :Weave; open/close/toggle/
     stop; the session outlives the panel (reopen binds the same store).
   - demo/init.lua rewritten: the real panel against a scripted agent
     (streaming prose/thoughts, tool calls, an edit + permission request every
@@ -182,7 +182,7 @@ Canonical task list — keep ticked/updated as work lands.
   - **`<C-w>l` selected the blank pane behind the panel** and **the root
     canvas could scroll into blank space** — both fixed in fibrous mount.lua
     (pane focus forwarding + fixed-mode view pinning; see fibrous tracker,
-    suite 301/0). No clanker code involved. Suite 114/114.
+    suite 301/0). No weave code involved. Suite 114/114.
 - [x] Sidebar made idiomatic + task-list restyle (2026-07-04, user request):
   every section is now a SELF-CONTAINED component (Session/Prefs/Hint/Tasks/
   PermissionsSection — each owns its header, rows and use_store subscription;
@@ -201,7 +201,7 @@ Canonical task list — keep ticked/updated as work lands.
   pushed (c8724b7 "fix: fix ignored width" — container + mount + layout
   work), lock updated — `nix run .#test` against the PIN is 134/134. NB
   fibrous's working tree has since grown Tab-navigation (uncommitted);
-  clanker doesn't depend on it yet.
+  weave doesn't depend on it yet.
 - [x] Session restore (2026-07-05), red-green (suite 115 → 122):
   `Session:restore(id)` = /new-shaped teardown (cancel old session, reset
   store, meta persists) + `client:load_session` — the provider REPLAYS the
@@ -220,7 +220,7 @@ Canonical task list — keep ticked/updated as work lands.
   reverse-engineer a format; providers without `sessionCapabilities.list`
   get the client's capability-check notify.
 - [x] R6. Markdown/diff components (2026-07-05), red-green (suite 122 → 134).
-  Built as CLANKER-LOCAL reusable components (user decision: don't widen the
+  Built as WEAVE-LOCAL reusable components (user decision: don't widen the
   pinned-flake gap; they're store/prefs/theme-free — props in, vnodes out —
   so upstreaming into fibrous later is a file move):
   - `view/markdown.lua`: `parse(text, {conceal})` → per-line fibrous span
@@ -280,7 +280,7 @@ Canonical task list — keep ticked/updated as work lands.
     is REMEMBERED and reused by the modal's new/load flows — the demo and
     specs script the agent once and every later session stays scripted.
   - `view/session_modal.lua` (NEW): floating fibrous mount (`;;s`, or
-    `:Clanker sessions`) — one row per active session (● = this tab's
+    `:Weave sessions`) — one row per active session (● = this tab's
     selection; label = provider · first user message · status), rows are
     fibrous BUTTONS so <CR> activation, hover and <Tab> cycling come from
     the framework; per-row ✕ closes that session everywhere (modal
@@ -341,17 +341,17 @@ Canonical task list — keep ticked/updated as work lands.
     cursor in it. subwin.lua drove `_focus` off buffer WinEnter/WinLeave,
     but startup re-enters the first window with autocmds off after `-u init`
     sourcing, stranding the accent ON. Fixed in fibrous (manager-level
-    WinEnter reconciliation) AND clanker (panel.lua now defers its focus
+    WinEnter reconciliation) AND weave (panel.lua now defers its focus
     grab past VimEnter). Spec: panel_spec "opened during startup, the prompt
     is genuinely focused after VimEnter" (drives a real child nvim).
   - Incorrect extmarks on HORIZONTAL resize. The gravity fix re-placed marks
     at canvas byte offsets, wrong for byte-divergent mirrored rows
     (multibyte box-drawing content); a checkbox sharing rows with the moved
     transcript-container box got its highlight misplaced. Fixed in fibrous
-    (`repaint_row_marks` now translates through display cells). clanker
+    (`repaint_row_marks` now translates through display cells). weave
     suite 154/154 against the working tree.
 - [ ] SMALL fibrous-push gap: the two follow-up fixes above (subwin.lua +
-  style_state_spec + subwin_spec) are uncommitted in fibrous. No clanker
+  style_state_spec + subwin_spec) are uncommitted in fibrous. No weave
   spec depends on them (`nix run .#test` green regardless), but the PINNED
   demo keeps the focus-highlight + horizontal-resize bugs until fibrous is
   committed + pushed + `nix flake update fibrous`.
@@ -361,7 +361,7 @@ Canonical task list — keep ticked/updated as work lands.
 - [x] Animated "thinking" wave (2026-07-05, user request), red-green (suite
   154 → 164). A 12-char traveling sine wave in the prompt's status row while
   a turn is active, replacing the old `⟳ status…` spinner glyph.
-  - `view/wave.lua` (NEW, CLANKER-LOCAL like markdown/diff — props in, vnodes
+  - `view/wave.lua` (NEW, WEAVE-LOCAL like markdown/diff — props in, vnodes
     out, no fibrous change so the pinned gap stays put). Drawn with Unicode-16
     **block-octant** glyphs (2 cols × 4 rows per cell ⇒ 24 horizontal samples,
     4 vertical levels across 12 chars); **braille** offered as a universal
@@ -396,6 +396,19 @@ Canonical task list — keep ticked/updated as work lands.
     wave ticks. Verified live (TUI-in-terminal): three distinct animating
     frames, thinking→generating word tracking, input win/buf STABLE across
     animation while typing mid-turn, idle blanks the wave, no timer errors.
+- [x] Demo agent now BLOCKS on a permission like a real ACP provider
+  (2026-07-05, user-reported). The scripted `send_prompt` fired `end_turn` on
+  a fixed timer regardless of the pending permission, so the demo (a) "kept
+  going" through an unanswered request and (b) could strand the activity
+  indicator at "generating": answering late completed the tool AFTER the turn
+  ended, and the bridge's terminal-status handler flips status back to
+  generating with no following end_turn to clear it (acp_bridge.lua:121-123).
+  Both are demo-faithfulness issues — real providers answer the permission
+  DURING the turn and end it after the tool completes. Fix (demo/init.lua):
+  the even-turn permission callback now drives the continuation (tool result,
+  a closing note, plan finish, then `end_turn`); no fixed end_turn while a
+  request is pending. Verified live: turn waits (status idle, permission
+  pending), then answering → tool completed → brief generating → idle.
 - [ ] Background-session event surfacing (carried from the multi-session
   work): a parked session hitting a permission request / finishing a turn is
   invisible outside the modal's status column — needs a notify + attention

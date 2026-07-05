@@ -6,9 +6,9 @@
 
 local mount = require("fibrous.inline.mount")
 
-local SessionStore = require("clanker.session_store")
-local prompt = require("clanker.view.prompt")
-local Theme = require("clanker.view.theme")
+local SessionStore = require("weave.session_store")
+local prompt = require("weave.view.prompt")
+local Theme = require("weave.view.theme")
 
 local function subwin_of(handle)
   for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -166,15 +166,15 @@ describe("view.prompt", function()
     -- seeded at mount with the store's list (always includes /new) …
     local words = vim.tbl_map(function(item)
       return item.word
-    end, vim.b[bufnr].clanker_slash_commands)
+    end, vim.b[bufnr].weave_slash_commands)
     assert.same({ "new" }, words)
-    assert.equal("v:lua.require'clanker.view.prompt'.slash_complete", vim.bo[bufnr].completefunc)
+    assert.equal("v:lua.require'weave.view.prompt'.slash_complete", vim.bo[bufnr].completefunc)
 
     -- … and kept in sync with command updates
     store:set_commands({ { name = "plan", description = "Make a plan" } })
     words = vim.tbl_map(function(item)
       return item.word
-    end, vim.b[bufnr].clanker_slash_commands)
+    end, vim.b[bufnr].weave_slash_commands)
     assert.same({ "plan", "new" }, words)
     handle.unmount()
   end)

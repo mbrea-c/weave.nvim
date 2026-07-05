@@ -4,7 +4,7 @@
 -- the ToolCallEntry spec pins the transcript-side wiring.
 
 local mount = require("fibrous.inline.mount")
-local diff = require("clanker.view.diff")
+local diff = require("weave.view.diff")
 
 local function trimmed(bufnr)
   local out = {}

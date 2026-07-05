@@ -1,5 +1,5 @@
 {
-  description = "clanker — an ACP (Agent Client Protocol) client for Neovim, built on fibrous";
+  description = "weave — an ACP (Agent Client Protocol) client for Neovim, built on fibrous";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -30,9 +30,9 @@
       # The plugin itself, packaged the standard nixpkgs way. Consumers must
       # also put fibrous on the runtimepath (it's a peer plugin, not vendored).
       packages = forAllSystems (pkgs: rec {
-        default = clanker;
-        clanker = pkgs.vimUtils.buildVimPlugin {
-          pname = "clanker";
+        default = weave;
+        weave = pkgs.vimUtils.buildVimPlugin {
+          pname = "weave";
           version = self.shortRev or self.dirtyShortRev or "dev";
           src = self;
           # the real gate is the test suite (`nix flake check`); the generic
@@ -63,17 +63,17 @@
         in
         rec {
           default = demo;
-          test = app "clanker-test" ''
+          test = app "weave-test" ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             cd ${self}
             exec nvim --headless -u NONE -i NONE -l tests/run.lua "$@"
           '';
-          bench = app "clanker-bench" ''
+          bench = app "weave-bench" ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             cd ${self}
             exec nvim --headless -u NONE -i NONE -l bench/run.lua "$@"
           '';
-          demo = app "clanker-demo" ''
+          demo = app "weave-demo" ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             exec nvim --clean -u ${self}/demo/init.lua
           '';
@@ -99,7 +99,7 @@
       # the PINNED fibrous.
       checks = forAllSystems (pkgs: {
         tests =
-          pkgs.runCommandLocal "clanker-tests"
+          pkgs.runCommandLocal "weave-tests"
             {
               nativeBuildInputs = [
                 pkgs.neovim

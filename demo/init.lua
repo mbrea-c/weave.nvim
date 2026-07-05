@@ -1,5 +1,5 @@
 -- Demo entry point: a clean Neovim (`nvim --clean -u demo/init.lua`, or
--- `make demo` / `nix run .#demo`) with clanker and fibrous on the path.
+-- `make demo` / `nix run .#demo`) with weave and fibrous on the path.
 --
 -- Opens the real panel (roadmap R5) against a SCRIPTED agent: every prompt
 -- you submit streams a thought + a prose reply, runs a tool call, and every
@@ -27,7 +27,7 @@ package.path = table.concat({
   package.path,
 }, ";")
 
-local clanker = require("clanker")
+local weave = require("weave")
 
 -- ── The scripted agent ───────────────────────────────────────────────────────
 -- A fake ACP client: create_session hands us the bridge handlers, and each
@@ -116,8 +116,18 @@ function client:send_prompt(sid, _prompt, callback)
     })
   end)
 
+  local function end_turn()
+    callback({ stopReason = "end_turn" }, nil)
+  end
+
   if turn % 2 == 0 then
-    -- Every second turn: an edit that needs permission.
+    -- Every second turn: an edit that needs permission. Like a real ACP
+    -- provider, the agent BLOCKS on the request — the rest of the turn (the
+    -- tool result, the closing note, the plan finish, and end_turn) only
+    -- happens once the user answers. Firing end_turn on a fixed timer instead
+    -- (not waiting) is what made the demo "keep going" through a pending
+    -- permission and could strand the activity indicator at "generating" when
+    -- a late answer completed the tool after the turn had already ended.
     at(300, function()
       h.on_tool_call({
         tool_call_id = "edit-" .. turn,
@@ -127,6 +137,14 @@ function client:send_prompt(sid, _prompt, callback)
         diff = {
           old = { "local width = 80", "local height = 20" },
           new = { "local width = 100", "local height = 24" },
+        },
+      })
+      h.on_session_update({
+        sessionUpdate = "plan",
+        entries = {
+          { content = "inspect the request", status = "completed" },
+          { content = "apply the edit", status = "in_progress" },
+          { content = "report back", status = "pending" },
         },
       })
       h.on_request_permission({
@@ -142,23 +160,28 @@ function client:send_prompt(sid, _prompt, callback)
           tool_call_id = "edit-" .. turn,
           status = allowed and "completed" or "failed",
         })
+        -- The agent resumes only after the answer: a closing note, the plan
+        -- finalised, then the turn ends.
+        vim.defer_fn(function()
+          h.on_session_update({
+            sessionUpdate = "agent_message_chunk",
+            content = { text = allowed and "\n\nDone — the edit is applied." or "\n\nUnderstood — I left that file untouched." },
+          })
+          h.on_session_update({
+            sessionUpdate = "plan",
+            entries = {
+              { content = "inspect the request", status = "completed" },
+              { content = "apply the edit", status = allowed and "completed" or "failed" },
+              { content = "report back", status = "completed" },
+            },
+          })
+          vim.defer_fn(end_turn, 300)
+        end, 250)
       end)
     end)
-    at(200, function()
-      h.on_session_update({
-        sessionUpdate = "plan",
-        entries = {
-          { content = "inspect the request", status = "completed" },
-          { content = "apply the edit", status = "in_progress" },
-          { content = "report back", status = "pending" },
-        },
-      })
-    end)
+  else
+    at(800, end_turn)
   end
-
-  at(800, function()
-    callback({ stopReason = "end_turn" }, nil)
-  end)
 end
 
 function client:cancel_turn(_sid) end
@@ -192,8 +215,8 @@ end
 
 -- ── Open it ──────────────────────────────────────────────────────────────────
 
-clanker.setup({})
-clanker.open({
+weave.setup({})
+weave.open({
   get_instance = function(_name, on_ready)
     on_ready(client)
     return client

@@ -8,7 +8,7 @@
 -- entries parse once when they settle, never per flush ("parse on settle").
 
 local mount = require("fibrous.inline.mount")
-local markdown = require("clanker.view.markdown")
+local markdown = require("weave.view.markdown")
 
 local SAMPLE = table.concat({
   "# Title",

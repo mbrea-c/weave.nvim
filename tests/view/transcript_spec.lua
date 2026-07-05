@@ -8,10 +8,10 @@ local mount = require("fibrous.inline.mount")
 local runtime = require("fibrous.reactive.runtime")
 local inline_host = require("fibrous.inline.host")
 
-local SessionStore = require("clanker.session_store")
-local Prefs = require("clanker.view.prefs")
-local transcript = require("clanker.view.transcript")
-local Theme = require("clanker.view.theme")
+local SessionStore = require("weave.session_store")
+local Prefs = require("weave.view.prefs")
+local transcript = require("weave.view.transcript")
+local Theme = require("weave.view.theme")
 
 local function trimmed(bufnr)
   local out = {}

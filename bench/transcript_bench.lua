@@ -8,9 +8,9 @@ local uv = vim.uv or vim.loop
 
 local runtime = require("fibrous.reactive.runtime")
 local inline_host = require("fibrous.inline.host")
-local SessionStore = require("clanker.session_store")
-local Prefs = require("clanker.view.prefs")
-local transcript = require("clanker.view.transcript")
+local SessionStore = require("weave.session_store")
+local Prefs = require("weave.view.prefs")
+local transcript = require("weave.view.transcript")
 
 local function bench(name, iters, fn)
   fn(0) -- warmup (JIT + caches)

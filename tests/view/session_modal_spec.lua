@@ -3,8 +3,8 @@
 -- to close a session, and new/load-saved actions. Rows are fibrous buttons,
 -- so <CR> activation, hover, and <Tab> cycling all come from the framework.
 
-local Registry = require("clanker.registry")
-local SessionModal = require("clanker.view.session_modal")
+local Registry = require("weave.registry")
+local SessionModal = require("weave.view.session_modal")
 
 local function pump()
   vim.wait(50, function()

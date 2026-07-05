@@ -6,7 +6,7 @@
 -- drives `frame` off a timer.
 
 local mount = require("fibrous.inline.mount")
-local wave = require("clanker.view.wave")
+local wave = require("weave.view.wave")
 
 -- Concatenated text of a frame's spans (each span is a string or {text, hl}).
 local function frame_text(spans)
