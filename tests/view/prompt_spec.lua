@@ -114,16 +114,16 @@ describe("view.prompt", function()
     assert.falsy(text():find("generating", 1, true))
 
     store:set_status("generating")
-    -- the status word is shown, alongside the 12-cell animated wave (the wave
-    -- replaced the old ⟳ spinner glyph as the activity indicator)
+    -- the status word is spliced into the CENTRE of the water indicator (which
+    -- replaced the old bouncing wave as the activity indicator)
     assert.truthy(text():find("generating…", 1, true))
     assert.is_true(vim.fn.strwidth(vim.trim(status_line())) >= 12)
 
     store:set_status("idle")
+    -- the label goes when idle, but the water line stays (a flat, still-clickable
+    -- rest line — it no longer collapses to blank)
     assert.falsy(text():find("generating", 1, true))
-    -- idle collapses the status line to blank (the wave stays mounted but
-    -- inactive, rendering nothing)
-    assert.equal("", vim.trim(status_line()))
+    assert.is_true(vim.trim(status_line()) ~= "")
     handle.unmount()
   end)
 

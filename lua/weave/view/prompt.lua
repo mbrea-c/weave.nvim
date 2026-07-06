@@ -9,7 +9,7 @@
 
 local ui = require("fibrous.inline.components")
 local Theme = require("weave.view.theme")
-local Wave = require("weave.view.wave")
+local Water = require("weave.view.water")
 local use_store = require("weave.view.use_store")
 
 local M = {}
@@ -87,26 +87,20 @@ function M.Prompt(ctx, props)
     end
   end
 
-  -- The status row is ALWAYS rendered (blank when idle): fibrous reconciles
-  -- positionally, so a row that comes and goes would move the text_input and
-  -- recreate its subwin — discarding whatever the user typed mid-turn. The
-  -- animated wave stays mounted too (only its `active` prop toggles), so its
-  -- animation state survives a turn ending and starting again. Its width is
-  -- constant, so the input below never moves as the wave ticks.
-  local thinking = state.status ~= "idle"
+  -- The status row is ALWAYS rendered: the water indicator stays mounted (only
+  -- its `status` prop changes), so a turn ending and starting again keeps its
+  -- sim/colour state, AND — because fibrous reconciles positionally — the
+  -- text_input below never moves or gets its subwin recreated (which would
+  -- discard mid-turn input). Its width is constant, so the input never shifts as
+  -- the water ripples. The status word is spliced into the centre of the water;
+  -- when idle there's no label and the water settles to a flat blue line (still
+  -- clickable — <CR>/click drops a ripple).
   local children = {
     {
-      comp = ui.row,
-      props = {},
-      children = {
-        { comp = Wave.Wave, props = { active = thinking, width = 12 } },
-        {
-          comp = ui.label,
-          props = {
-            text = thinking and ("  " .. state.status .. "…") or "",
-            style = { text_hl = "@comment" },
-          },
-        },
+      comp = Water.Water,
+      props = {
+        status = state.status,
+        label = state.status ~= "idle" and (state.status .. "…") or nil,
       },
     },
   }

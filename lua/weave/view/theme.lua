@@ -137,20 +137,28 @@ vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.normal, { link = "FloatBorder", defaul
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.auto, { fg = "#e0af68", default = true })
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.allow_edits, { fg = "#bb9af7", default = true })
 
--- Thinking-wave colour ramp: one group per wave height 1..4 (height 0 is a
--- blank cell, no highlight). A dim-blue → bright-cyan crest gradient so the
--- animated wave reads as a rising swell; all `default = true` so a user
--- restyle wins. Consumed by view/wave.lua as `Theme.WAVE_HL[height]`.
+-- Busy-water indicator. The height ramp is four groups (WeaveWater1..4, dim →
+-- bright by fill height) plus a label group; UNLIKE the other groups these are
+-- ANIMATED — view/water.lua rewrites their fg every frame while the sim runs,
+-- fading between the per-state base colours below. So they're seeded here (no
+-- `default`, since the component owns them) and the palette is exposed for
+-- restyling. Consumed as `Theme.WATER_HL[height]` / `Theme.WATER_LABEL_HL`.
 --- @type table<integer, string>
-M.WAVE_HL = {
-  "WeaveWave1",
-  "WeaveWave2",
-  "WeaveWave3",
-  "WeaveWave4",
+M.WATER_HL = { "WeaveWater1", "WeaveWater2", "WeaveWater3", "WeaveWater4" }
+M.WATER_LABEL_HL = "WeaveWaterLabel"
+
+-- The colour the water fades TOWARD in each activity state (blue idle → yellow
+-- thinking → red generating; busy is the pre-stream warm-up). `{r,g,b}` 0-255.
+--- @type table<string, integer[]>
+M.WATER_STATE_FG = {
+  idle = { 0x5a, 0x7f, 0xd0 }, -- #5a7fd0 blue
+  thinking = { 0xe0, 0xaf, 0x68 }, -- #e0af68 yellow
+  generating = { 0xf7, 0x76, 0x8e }, -- #f7768e red
+  busy = { 0xff, 0x9e, 0x64 }, -- #ff9e64 orange
 }
-local WAVE_FG = { "#3d59a1", "#5a7fd0", "#7dcfff", "#b4f9f8" }
-for i, group in ipairs(M.WAVE_HL) do
-  vim.api.nvim_set_hl(0, group, { fg = WAVE_FG[i], default = true })
+for _, group in ipairs(M.WATER_HL) do
+  vim.api.nvim_set_hl(0, group, { fg = "#5a7fd0" })
 end
+vim.api.nvim_set_hl(0, M.WATER_LABEL_HL, { fg = "#5a7fd0", bold = true })
 
 return M
