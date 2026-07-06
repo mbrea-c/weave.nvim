@@ -144,11 +144,19 @@ function M.PermissionsSection(ctx, props)
 end
 
 --- Pure composition — every section subscribes to its own store slice.
---- @param props { store: weave.store.SessionStore, prefs: weave.view.Prefs }
+--- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.view.Prefs }
 function M.Sidebar(_, props)
   return {
     comp = ui.col,
-    props = { gap = 1, style = { padding = { x = 1 } } },
+    props = {
+      gap = 1,
+      width = props.sidebar_width,
+      style = {
+        padding = { x = 1 },
+        border = {
+          left = true,
+        },
+    }},
     children = {
       { comp = M.SessionSection, props = { store = props.store } },
       { comp = M.PrefsSection, props = { prefs = props.prefs } },

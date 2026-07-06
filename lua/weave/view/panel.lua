@@ -78,11 +78,8 @@ local function Panel(_, props)
         },
       },
       {
-        comp = ui.col,
-        props = { width = props.sidebar_width },
-        children = {
-          { comp = Sidebar, props = { store = props.store, prefs = props.prefs } },
-        },
+        comp = Sidebar,
+        props = { sidebar_width = props.sidebar_width, store = props.store, prefs = props.prefs }
       },
     },
   }

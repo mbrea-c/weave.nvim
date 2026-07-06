@@ -78,6 +78,14 @@
             cd ${self}
             exec nvim --headless -u NONE -i NONE -l bench/run.lua "$@"
           '';
+          # Terminal-draw throughput (bytes to a real pty per frame — the tmux+ssh
+          # cost, highlight repaints included) via fibrous's shared harness. Spawns
+          # child nvim TUIs; kept separate from the CPU benches.
+          bench-term = app "weave-bench-term" ''
+            export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
+            cd ${self}
+            exec nvim --headless -u NONE -i NONE -l bench/term.lua "$@"
+          '';
           demo = app "weave-demo" ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             exec nvim --clean -u ${self}/demo/init.lua

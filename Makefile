@@ -24,6 +24,16 @@ test-file:
 bench:
 	BENCH_N=$(BENCH_N) $(NVIM_BIN) --headless -u NONE -i NONE -l bench/run.lua
 
+# Terminal-draw throughput on fibrous's shared harness: bytes nvim's TUI pushes
+# at a real pty per frame (the tmux+ssh cost, highlight repaints included) — the
+# number behind the water-indicator flicker. Separate target: it spawns child
+# nvim TUIs and is slower than the CPU benches.
+#   make bench-term            # 80x24 pty, 60 frames
+#   make bench-term BENCH_FRAMES=120
+.PHONY: bench-term
+bench-term:
+	$(NVIM_BIN) --headless -u NONE -i NONE -l bench/term.lua
+
 # The demo UI in a clean interactive Neovim (q to quit)
 .PHONY: demo
 demo:

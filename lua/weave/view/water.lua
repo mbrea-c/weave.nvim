@@ -16,8 +16,12 @@
 --   new/disturb/step/     the sim: O(sub-columns) per tick, propagates, reflects
 --     energy/levels         off the ends, decays, settles to rest.
 --   frame(levels, opts)   levels → a fibrous span list, label spliced centre.
---   lerp_rgb/shades/      colour easing + the per-height shade ramp.
---     apply_colors
+--   lerp_rgb/shades       colour easing + the per-height shade ramp.
+--   palette(rgb)          the colour groups for `rgb`, created ONCE and cached —
+--                         the fade animates by REFERENCING different palette
+--                         groups from the rendered spans (a targeted line
+--                         repaint), never by redefining a fixed group with
+--                         nvim_set_hl (which invalidates the whole screen).
 --   Water(ctx, props)     drives the sim off a self-stopping uv timer (zero CPU
 --                         once idle AND settled AND the colour has arrived).
 
@@ -28,8 +32,9 @@ local uv = vim.uv or vim.loop
 
 local M = {}
 
--- Height-ramp + label groups (animated by apply_colors); re-exported so the
--- frame and specs address them by height.
+-- Default height-ramp + label groups: frame() uses them when no palette is
+-- passed (standalone / specs). The live component passes palette groups instead
+-- (see M.palette) so the colour animates without redefining these.
 M.HL = Theme.WATER_HL
 M.LABEL_HL = Theme.WATER_LABEL_HL
 
@@ -170,20 +175,24 @@ end
 --- Render a levels array (2*width sub-columns, each 0..ROWS) as a fibrous span
 --- list of `width` cells: each cell filled to its two sub-columns' levels and
 --- coloured by the taller one. `opts.label` is spliced, centred, over the water.
+--- `opts.hl` (4 height-shade group names) + `opts.label_hl` override the default
+--- groups — the component passes a palette here so the colour rides the span refs.
 --- @param levels integer[]
---- @param opts? { width?: integer, set?: string, label?: string, label_hl?: string }
+--- @param opts? { width?: integer, set?: string, label?: string, hl?: string[], label_hl?: string }
 --- @return table spans
 function M.frame(levels, opts)
   opts = opts or {}
   local width = opts.width or 12
   local set = opts.set or "octant"
+  local hl = opts.hl or M.HL
+  local label_hl = opts.label_hl or M.LABEL_HL
   local spans = {}
   for i = 0, width - 1 do
     local sl = levels[2 * i + 1] or REST_S
     local sr = levels[2 * i + 2] or REST_S
     -- colour by the taller surface: row 0..3 → height group 1..4.
     local level = math.max(sl, sr) + 1
-    spans[#spans + 1] = { M.glyph(M.dot(sl) + M.dot(sr) * 16, set), hl = M.HL[level] }
+    spans[#spans + 1] = { M.glyph(M.dot(sl) + M.dot(sr) * 16, set), hl = hl[level] }
   end
 
   if opts.label and opts.label ~= "" then
@@ -195,7 +204,7 @@ function M.frame(levels, opts)
     for j = 1, #chars do
       local cell = start + j
       if cell >= 1 and cell <= width then
-        spans[cell] = { vim.fn.list2str({ chars[j] }), hl = opts.label_hl or M.LABEL_HL }
+        spans[cell] = { vim.fn.list2str({ chars[j] }), hl = label_hl }
       end
     end
   end
@@ -238,25 +247,69 @@ local function hexstr(c)
   return string.format("#%02x%02x%02x", c[1], c[2], c[3])
 end
 
---- Repaint the animated water groups (height ramp + label) to the shade ramp of
---- `rgb`. Called every frame while the sim runs — the extmarks that reference
---- the groups re-resolve, so the colour animates without re-splicing.
+-- RGB quantisation for the palette key. Redefining a highlight group costs a
+-- whole-screen redraw, so the fade must NOT do it per frame. Instead each colour
+-- gets its own groups, created ONCE and cached; the fade animates by pointing the
+-- rendered spans at a different colour's groups (a targeted one-line repaint).
+-- Quantising bounds the cache and makes colours recur across fades — after a few
+-- transitions every step is a cache hit, so no set_hl happens at all. 8 is fine
+-- for a one-row indicator (≈32 levels/channel; the ease already steps discretely).
+local PALETTE_STEP = 8
+
+local palette_cache = {}
+
+local function quantize(c)
+  local q = math.floor(c / PALETTE_STEP + 0.5) * PALETTE_STEP
+  return math.max(0, math.min(255, q))
+end
+
+--- The highlight groups for colour `rgb`: a 4-entry height-shade ramp plus the
+--- label group, created once (the only set_hl this module does) and cached by the
+--- quantised colour. Referencing these from frame() is how the colour animates —
+--- no fixed group is ever redefined, so no frame triggers a whole-screen redraw.
 --- @param rgb integer[]
-function M.apply_colors(rgb)
-  local sh = M.shades(rgb)
-  for i = 1, 4 do
-    vim.api.nvim_set_hl(0, M.HL[i], { fg = hexstr(sh[i]) })
+--- @return { shades: string[], label: string }
+function M.palette(rgb)
+  local key = ("%02x%02x%02x"):format(quantize(rgb[1]), quantize(rgb[2]), quantize(rgb[3]))
+  local entry = palette_cache[key]
+  if entry then
+    return entry
   end
-  vim.api.nvim_set_hl(0, M.LABEL_HL, { fg = hexstr(rgb), bold = true })
+  local base = { tonumber(key:sub(1, 2), 16), tonumber(key:sub(3, 4), 16), tonumber(key:sub(5, 6), 16) }
+  local sh = M.shades(base)
+  local shades = {}
+  for i = 1, 4 do
+    local g = "WeaveWaterP_" .. key .. "_" .. i
+    vim.api.nvim_set_hl(0, g, { fg = hexstr(sh[i]) })
+    shades[i] = g
+  end
+  local label = "WeaveWaterPL_" .. key
+  vim.api.nvim_set_hl(0, label, { fg = "#" .. key, bold = true })
+  entry = { shades = shades, label = label }
+  palette_cache[key] = entry
+  return entry
 end
 
 -- ── Component ────────────────────────────────────────────────────────────────
 
 local STATE_FG = Theme.WATER_STATE_FG
 local EPS = 1e-3 -- energy below which the water counts as settled
-local COLOR_EASE = 0.08 -- per-frame lerp toward the target colour
+local COLOR_EASE = 0.08 -- per-frame-equivalent lerp toward the target colour
+local COLOR_FPS = 8 -- the fade's own update rate (see color_every)
 local INJECT_EVERY = 4 -- frames between centre agitations while busy
 local IMPULSE = 1.6
+
+--- Frames between colour updates so the fade runs at ~COLOR_FPS whatever the
+--- sim's fps is. Even with the palette (a colour step is a targeted one-row
+--- repaint, not a set_hl), re-colouring the whole row every frame is wasted wire
+--- traffic: the ripples need 30fps, the fade doesn't, and easing it in a handful
+--- of steps looks identical while cutting how often the row re-colours by
+--- fps/COLOR_FPS. Never 0 (it's a modulo divisor).
+--- @param fps integer
+--- @return integer
+function M.color_every(fps)
+  return math.max(1, math.floor((fps or 30) / COLOR_FPS + 0.5))
+end
 
 local function color_of(status)
   return STATE_FG[status] or STATE_FG.busy
@@ -317,13 +370,22 @@ function M.Water(ctx, props)
           M.disturb(st.sim, c, IMPULSE * (0.6 + math.random() * 0.6))
         end
         M.step(st.sim)
-        st.color = M.lerp_rgb(st.color, st.target, COLOR_EASE)
-        M.apply_colors(st.color)
-        tick.set(st.frame)
+        -- Ease the colour at ~COLOR_FPS, not every sim frame. Nothing is set_hl'd
+        -- here: st.color feeds M.palette in the render below, so a colour change is
+        -- a targeted one-line repaint (new palette groups referenced), not a
+        -- whole-screen redraw. Pacing still helps — it's how often that one line
+        -- re-colours. The per-update step is compounded to keep the fade duration.
+        local color_every = M.color_every(fps)
+        if st.frame % color_every == 0 then
+          local step = 1 - (1 - COLOR_EASE) ^ color_every
+          st.color = M.lerp_rgb(st.color, st.target, step)
+        end
         if not busy and M.energy(st.sim) < EPS and near_color(st.color, st.target) then
-          st.color = vim.deepcopy(st.target)
-          M.apply_colors(st.color)
+          st.color = vim.deepcopy(st.target) -- land the exact target on the final frame
+          tick.set(st.frame)
           stop_timer()
+        else
+          tick.set(st.frame) -- render re-reads st.color → palette → colour rides the spans
         end
       end)
     )
@@ -347,17 +409,20 @@ function M.Water(ctx, props)
       end,
       -- fill: generated from the FINAL column width — spans the full prompt and
       -- re-sizes on resize. The sim grows/shrinks to match (ripples reset on a
-      -- resize, which is fine).
+      -- resize, which is fine). The current colour's palette groups are referenced
+      -- here, so easing st.color re-colours the row via the spans — no set_hl.
       fill = function(w)
         w = math.max(w, 1)
         if st.sim.width ~= w then
           st.sim = M.new(w)
         end
+        local pal = M.palette(st.color)
         return M.frame(M.levels(st.sim), {
           width = w,
           set = props.set,
           label = st.label,
-          label_hl = M.LABEL_HL,
+          hl = pal.shades,
+          label_hl = pal.label,
         })
       end,
     },

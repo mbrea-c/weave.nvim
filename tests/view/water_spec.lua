@@ -130,6 +130,31 @@ describe("view.water colour", function()
       assert.is_true(shades[i][3] < shades[i + 1][3]) -- brighter each step
     end
   end)
+
+  it("color_every paces the fade at ~COLOR_FPS regardless of the sim's fps", function()
+    -- Re-colouring the whole row every frame is wasted wire traffic (the palette
+    -- makes it a targeted repaint, but still a repaint). The ripples need 30fps;
+    -- the colour fade does not — updating it every Nth frame runs the fade at
+    -- ~COLOR_FPS and cuts how often the row re-colours by that factor.
+    assert.equal(4, water.color_every(30)) -- 30/8 ≈ 4
+    assert.equal(2, water.color_every(15))
+    assert.equal(1, water.color_every(8))
+    assert.equal(1, water.color_every(4)) -- never 0 (would divide-by-zero the modulo)
+  end)
+
+  it("palette creates a colour's groups once and caches by quantised colour", function()
+    -- The fade animates by REFERENCING different palette groups from the spans,
+    -- never redefining a fixed group (which would whole-screen-redraw every
+    -- frame). So each colour's groups are built once and reused: a repeat colour —
+    -- or one within a quantisation step — returns the SAME cached groups (no new
+    -- set_hl), while a clearly different colour gets its own.
+    local a = water.palette({ 40, 80, 200 })
+    assert.equal(4, #a.shades)
+    assert.truthy(a.label)
+    assert.equal(a, water.palette({ 40, 80, 200 })) -- exact repeat → cached entry
+    assert.equal(a, water.palette({ 41, 79, 201 })) -- within a step → same entry
+    assert.is_true(a.shades[1] ~= water.palette({ 210, 40, 40 }).shades[1]) -- far colour → new groups
+  end)
 end)
 
 describe("view.water component", function()
