@@ -16,7 +16,8 @@
 local mount = require("fibrous.inline.mount")
 local ui = require("fibrous.inline.components")
 
-local Transcript = require("weave.view.transcript").Transcript
+local TranscriptView = require("weave.view.transcript")
+local Transcript = TranscriptView.Transcript
 local Prompt = require("weave.view.prompt").Prompt
 local Sidebar = require("weave.view.sidebar").Sidebar
 
@@ -60,7 +61,10 @@ local function Panel(_, props)
         children = {
           {
             comp = ui.container,
-            props = { grow = 1, on_create = props.on_transcript_create },
+            -- Vertical-only: the transcript wraps to its width and never scrolls
+            -- sideways, so a stray horizontal scroll (visual mode reaching a
+            -- padded line's trailing newline) can't drift the content right.
+            props = { grow = 1, scroll_x = false, on_create = props.on_transcript_create },
             children = {
               { comp = Transcript, props = { store = props.store, prefs = props.prefs } },
             },
@@ -141,6 +145,10 @@ function M.open(opts)
   }, {
     split = { direction = "vertical", position = "right", size = width },
     mode = "fixed",
+    -- Route the transcript's peek key to components' on_key handlers: over any
+    -- entry it opens that entry's raw source in the peek modal (separate from
+    -- <CR>/tool-call activation, and no hover, since it keys off on_key not role).
+    keys = { TranscriptView.PEEK_KEY },
   })
 
   local group = vim.api.nvim_create_augroup("WeavePanel_" .. app.host_winid, { clear = true })

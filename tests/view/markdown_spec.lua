@@ -75,10 +75,10 @@ describe("view.markdown parse", function()
     assert.equal("@number.lua", hl_of(lines[6], "1"))
   end)
 
-  it("code lines are nowrap; prose lines wrap", function()
+  it("code lines char-wrap; prose lines word-wrap", function()
     local lines = markdown.parse(SAMPLE)
-    assert.is_false(lines[3].nowrap)
-    assert.is_true(lines[6].nowrap)
+    assert.equal(true, lines[3].wrap) -- prose: word wrap
+    assert.equal("char", lines[6].wrap) -- code: char wrap (readable, indentation kept)
   end)
 
   it("conceal omits markup bytes and drops fully-concealed lines", function()
@@ -118,11 +118,11 @@ describe("view.markdown parse", function()
     assert.equal("| Bob       | 30  |", line_text(lines[4]))
     assert.equal("| Alexandra | 5   |", line_text(lines[5]))
     assert.equal("after", line_text(lines[6]))
-    -- aligned rows must not wrap, or the columns reflow apart; prose still wraps
-    assert.is_false(lines[1].nowrap)
-    assert.is_true(lines[2].nowrap)
-    assert.is_true(lines[5].nowrap)
-    assert.is_false(lines[6].nowrap)
+    -- aligned rows must NOT wrap (false), or the columns reflow apart; prose word-wraps
+    assert.equal(true, lines[1].wrap)
+    assert.equal(false, lines[2].wrap)
+    assert.equal(false, lines[5].wrap)
+    assert.equal(true, lines[6].wrap)
   end)
 end)
 

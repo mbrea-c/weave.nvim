@@ -191,7 +191,16 @@ function M.parse(text, opts)
     -- delimiters) disappears; genuine blank lines stay.
     local dropped = opts.conceal and #line > 0 and #spans == 0
     if not dropped then
-      out[#out + 1] = { spans = spans, nowrap = nowrap_rows[row] or table_rows[row] or false }
+      -- Wrap mode per line: TABLES stay nowrap (their columns reflow apart if
+      -- they wrap); CODE char-wraps (kept readable without truncation, indentation
+      -- preserved — word wrap would mangle it); prose word-wraps.
+      local wrap = true
+      if table_rows[row] then
+        wrap = false
+      elseif nowrap_rows[row] then
+        wrap = "char"
+      end
+      out[#out + 1] = { spans = spans, wrap = wrap }
     end
   end
   return out
@@ -201,7 +210,7 @@ end
 --- enough for every stream tick); once settled, parses ONCE per
 --- (text, conceal) and caches on a ref.
 --- @param ctx table
---- @param props { text: string, live?: boolean, conceal?: boolean, style?: table }
+--- @param props { text: string, live?: boolean, conceal?: boolean, style?: table, on_key?: table<string, fun()> }
 function M.Markdown(ctx, props)
   local cache = ctx.use_ref()
   local text = props.text or ""
@@ -224,14 +233,16 @@ function M.Markdown(ctx, props)
     end
     for _, line in ipairs(cache.lines) do
       local node_text = #line.spans > 0 and line.spans or ""
-      children[#children + 1] = {
-        comp = line.nowrap and ui.label or ui.paragraph,
-        props = { text = node_text },
-      }
+      -- ui.text carries the per-line wrap mode directly (false = nowrap table,
+      -- "char" = code, true = word-wrapped prose).
+      children[#children + 1] = { comp = ui.text, props = { text = node_text, wrap = line.wrap } }
     end
   end
 
-  return { comp = ui.col, props = { style = props.style }, children = children }
+  -- on_key rides the root col: a routed key (weave's peek) anywhere over the
+  -- rendered markdown reaches its handler (fibrous keys these off on_key, so no
+  -- role/hover needed).
+  return { comp = ui.col, props = { style = props.style, on_key = props.on_key }, children = children }
 end
 
 return M

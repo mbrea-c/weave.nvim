@@ -10,10 +10,28 @@
 local ui = require("fibrous.inline.components")
 local Diff = require("weave.view.diff")
 local Markdown = require("weave.view.markdown")
+local Peek = require("weave.view.peek")
 local Theme = require("weave.view.theme")
 local use_store = require("weave.view.use_store")
 
 local M = {}
+
+-- The key that opens an entry's raw source in the peek modal. Weave's choice —
+-- fibrous just routes declared keys to the on_key handler of the component under
+-- the cursor; the panel mount declares this key, the entries below handle it.
+M.PEEK_KEY = "K"
+
+--- An `on_key` map (fibrous component keybinding) that opens `entry`'s raw source
+--- in the peek modal.
+--- @param entry weave.store.ChatEntry
+--- @return table<string, fun()>
+local function peek_keys(entry)
+  return {
+    [M.PEEK_KEY] = function()
+      Peek.open(entry.text, entry.kind)
+    end,
+  }
+end
 
 --- Collapse any newlines in agent-supplied single-line text (titles, kinds).
 --- Multi-line CONTENT goes through paragraphs, which handle "\n"; headers are
@@ -85,7 +103,7 @@ end
 function M.UserEntry(_, props)
   return {
     comp = ui.row,
-    props = {},
+    props = { on_key = peek_keys(props.entry) },
     children = {
       { comp = ui.label, props = { text = "❯ ", style = { text_hl = Theme.USER_MSG_HL } } },
       { comp = ui.paragraph, props = { text = props.entry.text, style = { text_hl = Theme.USER_MSG_HL } } },
@@ -97,7 +115,7 @@ end
 function M.ThoughtEntry(_, props)
   return {
     comp = ui.col,
-    props = {},
+    props = { on_key = peek_keys(props.entry) },
     children = {
       { comp = ui.label, props = { text = "[thinking]", style = { text_hl = Theme.THINKING_TAG_HL } } },
       {
@@ -122,7 +140,12 @@ end
 function M.AgentEntry(_, props)
   return {
     comp = Markdown.Markdown,
-    props = { text = props.entry.text, live = props.live, conceal = props.conceal },
+    props = {
+      text = props.entry.text,
+      live = props.live,
+      conceal = props.conceal,
+      on_key = peek_keys(props.entry),
+    },
   }
 end
 
