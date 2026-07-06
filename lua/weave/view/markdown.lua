@@ -21,6 +21,7 @@
 -- never parses.
 
 local ui = require("fibrous.inline.components")
+local md_table = require("weave.view.markdown_table")
 
 local M = {}
 
@@ -64,6 +65,15 @@ function M.parse(text, opts)
   end
   local src_lines = vim.split(text, "\n", { plain = true })
   table.remove(src_lines)
+
+  -- Align GFM tables first: a pure-text transform to still-valid markdown, so
+  -- the treesitter pass highlights the padded cells and conceal still applies.
+  -- `table_rows[i]` flags the aligned table lines, rendered nowrap below (their
+  -- columns reflow apart if they wrap). Row count is preserved, so the capture
+  -- → src_line mapping stays 1:1.
+  local table_rows
+  src_lines, table_rows = md_table.format_lines(src_lines, opts.conceal)
+  text = table.concat(src_lines, "\n") .. "\n"
 
   local ok, parser = pcall(vim.treesitter.get_string_parser, text, "markdown")
   if not ok or not parser then
@@ -181,7 +191,7 @@ function M.parse(text, opts)
     -- delimiters) disappears; genuine blank lines stay.
     local dropped = opts.conceal and #line > 0 and #spans == 0
     if not dropped then
-      out[#out + 1] = { spans = spans, nowrap = nowrap_rows[row] or false }
+      out[#out + 1] = { spans = spans, nowrap = nowrap_rows[row] or table_rows[row] or false }
     end
   end
   return out

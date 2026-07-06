@@ -44,7 +44,22 @@ local REPLY = "Sure — I looked at the request and here is what I found. "
   .. "```lua\n"
   .. 'local spans = markdown.parse("**bold**")\n'
   .. "return spans\n"
-  .. "```"
+  .. "```\n\n"
+  .. "## Tables\n\n"
+  .. "Claude emits ragged pipe-tables; on settle they align (alignment colons "
+  .. "honored, `**markup**` measured by its visible width):\n\n"
+  .. "| Component | Role | LOC |\n"
+  .. "| :-- | :--: | --: |\n"
+  .. "| store | single **source of truth** | 210 |\n"
+  .. "| transcript | renders entries | 1400 |\n"
+  .. "| markdown | tables & `code` | 570 |\n\n"
+  .. "And a wide one, past the panel width, to exercise nowrap — the columns "
+  .. "must stay put, not reflow:\n\n"
+  .. "| Module | Responsibility | Lines | Owner | Notes |\n"
+  .. "| --- | --- | ---: | --- | --- |\n"
+  .. "| markdown_table.lua | GFM pipe-table alignment as a pure-text transform | 340 | weave | ported from agentic, plain-Lua testable |\n"
+  .. "| markdown.lua | treesitter highlight + conceal + table wiring | 230 | weave | parse on settle, cached per (text, conceal) |\n"
+  .. "| transcript.lua | per-entry components in a scroll container | 400 | weave | memoized entries, follow-scroll, nowrap tables |\n"
 
 local client = {
   state = "connected",

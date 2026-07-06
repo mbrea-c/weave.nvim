@@ -100,6 +100,30 @@ describe("view.markdown parse", function()
     assert.equal("", line_text(lines[2]))
     assert.equal("b", line_text(lines[3]))
   end)
+
+  it("aligns ragged GFM tables and marks their rows nowrap", function()
+    local src = table.concat({
+      "before",
+      "| Name | Age |",
+      "|---|---|",
+      "| Bob | 30 |",
+      "| Alexandra | 5 |",
+      "after",
+    }, "\n")
+    local lines = markdown.parse(src)
+    assert.equal(6, #lines)
+    assert.equal("before", line_text(lines[1]))
+    assert.equal("| Name      | Age |", line_text(lines[2]))
+    assert.equal("| --------- | --- |", line_text(lines[3]))
+    assert.equal("| Bob       | 30  |", line_text(lines[4]))
+    assert.equal("| Alexandra | 5   |", line_text(lines[5]))
+    assert.equal("after", line_text(lines[6]))
+    -- aligned rows must not wrap, or the columns reflow apart; prose still wraps
+    assert.is_false(lines[1].nowrap)
+    assert.is_true(lines[2].nowrap)
+    assert.is_true(lines[5].nowrap)
+    assert.is_false(lines[6].nowrap)
+  end)
 end)
 
 describe("view.markdown component", function()
