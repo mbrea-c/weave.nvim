@@ -18,6 +18,7 @@ local AcpBridge = require("weave.acp_bridge")
 local AgentInstance = require("weave.acp.agent_instance")
 local Config = require("weave.config")
 local Logger = require("weave.utils.logger")
+local SessionSource = require("weave.session_source")
 local SessionStore = require("weave.session_store")
 
 --- A selectable session option (model or mode), normalised across the Kiro
@@ -576,27 +577,20 @@ end
 
 --- List the provider's saved sessions for this cwd (session/list) and
 --- restore the pick. A non-empty transcript asks before being clobbered.
---- Providers without listing support answer with the client's capability
---- error, surfaced as a notify.
+--- Discovery is provider-aware — ACP session/list, or a filesystem fallback for
+--- providers (Kiro) that support loadSession but NOT listing — via
+--- SessionSource, which normalises both and never errors (an empty result just
+--- means nothing is restorable for this cwd).
 function Session:show_restore_picker()
   if not self._client then
     Logger.notify("Provider not ready yet — try again in a moment.", vim.log.levels.WARN)
     return
   end
 
-  self._client:list_sessions(vim.fn.getcwd(), function(result, err)
+  SessionSource.list(self._client, self._provider_name, vim.fn.getcwd(), function(sessions)
     vim.schedule(function()
-      if err or not result then
-        Logger.notify(
-          "Failed to list sessions: " .. (err and err.message or "unknown error"),
-          vim.log.levels.WARN
-        )
-        return
-      end
-
-      local sessions = result.sessions or {}
       if #sessions == 0 then
-        Logger.notify("No saved sessions found.", vim.log.levels.INFO)
+        Logger.notify("No restorable sessions found for this directory.", vim.log.levels.INFO)
         return
       end
 

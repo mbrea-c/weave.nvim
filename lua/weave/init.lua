@@ -11,6 +11,7 @@ local Logger = require("weave.utils.logger")
 local Panel = require("weave.view.panel")
 local Registry = require("weave.registry")
 local SessionModal = require("weave.view.session_modal")
+local SessionSource = require("weave.session_source")
 
 local M = {}
 
@@ -103,16 +104,11 @@ local function load_saved_flow(get_instance)
     local get = get_instance or AgentInstance.get_instance
     get(provider, function(client)
       vim.schedule(function()
-        client:list_sessions(vim.fn.getcwd(), function(result, err)
+        -- Provider-aware discovery (ACP session/list, or the Kiro filesystem
+        -- fallback for providers that support loadSession but not listing);
+        -- normalised and never-erroring — see SessionSource.
+        SessionSource.list(client, provider, vim.fn.getcwd(), function(sessions)
           vim.schedule(function()
-            if err or not result then
-              Logger.notify(
-                "Failed to list sessions: " .. (err and err.message or "unknown error"),
-                vim.log.levels.WARN
-              )
-              return
-            end
-            local sessions = result.sessions or {}
             if #sessions == 0 then
               Logger.notify("No saved sessions found.", vim.log.levels.INFO)
               return

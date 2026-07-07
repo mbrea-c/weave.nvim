@@ -18,6 +18,10 @@ local function fake_client(session_response)
   local client = {
     state = "connected",
     agent_info = { name = "fake-agent", version = "1.0" },
+    -- advertises ACP session listing, so SessionSource routes discovery through
+    -- session/list (real listing providers set this; Kiro doesn't — see
+    -- session_source_spec for the filesystem fallback)
+    agent_capabilities = { sessionCapabilities = { list = true } },
     calls = { prompts = {}, cancel_turns = 0, cancel_sessions = 0, set_model = {}, set_mode = {} },
     _prompt_cbs = {},
   }

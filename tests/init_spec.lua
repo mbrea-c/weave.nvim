@@ -7,7 +7,15 @@ local weave = require("weave")
 local Config = require("weave.config")
 
 local function fake_client()
-  local client = { state = "connected", agent_info = { name = "fake" }, calls = { prompts = {} } }
+  -- agent_capabilities advertises ACP session listing so SessionSource routes
+  -- discovery through session/list (Kiro's filesystem fallback is covered in
+  -- session_source_spec).
+  local client = {
+    state = "connected",
+    agent_info = { name = "fake" },
+    agent_capabilities = { sessionCapabilities = { list = true } },
+    calls = { prompts = {} },
+  }
   function client:create_session(handlers, callback, _mcp)
     self.handlers = handlers
     callback({ sessionId = "s1" }, nil)
