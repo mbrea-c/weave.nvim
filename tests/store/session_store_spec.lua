@@ -248,6 +248,22 @@ describe("session_store status and meta", function()
     store:set_meta({ model = "claude-fable-5" })
     assert.same({ provider = "Claude Agent ACP", model = "claude-fable-5" }, store.state.meta)
   end)
+
+  it("set_usage replaces the usage snapshot; reset clears it", function()
+    local store = SessionStore:new()
+    assert.is_nil(store.state.usage)
+    store:set_usage({ used = 7837, size = 200000, cost = { amount = 0.42, currency = "USD" } })
+    assert.equal(7837, store.state.usage.used)
+    assert.equal(200000, store.state.usage.size)
+    assert.equal(0.42, store.state.usage.cost.amount)
+    -- replaced wholesale (not merged) by the next usage_update
+    store:set_usage({ used = 9000, size = 200000 })
+    assert.equal(9000, store.state.usage.used)
+    assert.is_nil(store.state.usage.cost)
+    -- a fresh conversation forgets it
+    store:reset()
+    assert.is_nil(store.state.usage)
+  end)
 end)
 
 describe("session_store permission queue", function()

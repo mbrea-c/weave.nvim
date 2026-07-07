@@ -42,6 +42,7 @@
 --- @field permission_mode weave.store.PermissionMode How incoming permission requests are answered
 --- @field hint string Rotating UI hint shown in the sidebar (rotated each turn)
 --- @field commands table[] Slash-command completion items (always includes /new)
+--- @field usage weave.store.Usage|nil Session usage (context tokens + cost) from usage_update; nil until first reported
 
 --- @class weave.store.SessionMeta
 --- @field provider? string Provider display name (e.g. "Kiro ACP")
@@ -49,6 +50,11 @@
 --- @field model? string Current model id
 --- @field mode? string Current mode / agent id
 --- @field session_id? string
+
+--- @class weave.store.Usage
+--- @field used? integer Context tokens used
+--- @field size? integer Context window size (total tokens)
+--- @field cost? { amount: number, currency: string } Session cost so far, when the agent reports it
 
 --- @class weave.store.PendingPermission
 --- @field request table The ACP session/request_permission params
@@ -242,6 +248,7 @@ function SessionStore:new()
       permission_mode = "normal",
       hint = random_hint(),
       commands = to_completion_items({}),
+      usage = nil,
     },
     _subscribers = {},
     _permission_queue = {},
@@ -476,6 +483,15 @@ function SessionStore:set_meta(meta)
   end)
 end
 
+--- Replace the session usage snapshot (from ACP usage_update). Replaced
+--- wholesale, not merged — each usage_update carries the full current totals.
+--- @param usage weave.store.Usage
+function SessionStore:set_usage(usage)
+  self:_commit(function(draft)
+    draft.usage = usage
+  end)
+end
+
 --- Mirror the head of the permission queue into the snapshot so the view
 --- shows the current request + a "1 of N" count. Every queue mutation ends by
 --- calling this. See the queue-pattern note above.
@@ -647,6 +663,7 @@ function SessionStore:reset()
     draft.queued = {}
     -- a fresh session re-announces its commands; back to just /new meanwhile
     draft.commands = to_completion_items({})
+    draft.usage = nil -- forget the previous conversation's token/cost tally
   end)
   -- Cancel + clear pending permissions so the agent isn't left waiting; this
   -- also resets state.permission / permission_count via _publish.

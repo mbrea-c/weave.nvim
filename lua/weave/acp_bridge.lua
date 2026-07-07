@@ -66,8 +66,16 @@ local function apply_session_update(store, update, restoring)
   elseif kind == "available_commands_update" then
     -- Feeds the prompt's slash-command completion (normalised in the store).
     store:set_commands(update.availableCommands)
+  elseif kind == "usage_update" then
+    -- Context tokens used / window size + cost — config-plane (the sidebar's
+    -- Usage section), not transcript. tonumber tolerates vim.NIL/absent fields.
+    store:set_usage({
+      used = tonumber(update.used),
+      size = tonumber(update.size),
+      cost = type(update.cost) == "table" and update.cost or nil,
+    })
   else
-    -- mode/model/usage/info updates are config-plane, not transcript.
+    -- mode/model/info updates are config-plane, not transcript.
     Logger.debug("acp_bridge: unhandled session update '" .. tostring(kind) .. "'")
   end
 end

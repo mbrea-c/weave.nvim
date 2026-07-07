@@ -23,6 +23,30 @@ local function dim(text)
   return { comp = ui.label, props = { text = text, style = { text_hl = "@comment" } } }
 end
 
+--- Group an integer with thousands separators: 200000 → "200,000".
+--- @param n number
+--- @return string
+local function commas(n)
+  local s = tostring(math.floor(n + 0.5))
+  local k
+  repeat
+    s, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+  until k == 0
+  return s
+end
+
+--- Format a session cost, USD as "$x.xx" (up to 4 decimals, trailing zeros
+--- trimmed to ≥2), other currencies as "x.xxxx CUR".
+--- @param cost { amount: number, currency?: string }
+--- @return string
+local function fmt_cost(cost)
+  local amount = (string.format("%.4f", cost.amount):gsub("(%.%d%d)0+$", "%1"))
+  if (cost.currency or "USD") == "USD" then
+    return "Cost: $" .. amount
+  end
+  return "Cost: " .. amount .. " " .. cost.currency
+end
+
 --- Session metadata (provider/agent/model/mode), or a connecting placeholder
 --- before the first set_meta.
 --- @param ctx table
@@ -39,6 +63,36 @@ function M.SessionSection(ctx, props)
   end
   if #rows == 1 then
     rows[2] = dim("(connecting…)")
+  end
+  return { comp = ui.col, props = {}, children = rows }
+end
+
+--- Session usage: context tokens used / window size with a percent, and the
+--- running cost when the agent charges for the turn (ACP usage_update). A free
+--- or subscription model reports cost 0, so the cost line is omitted then.
+--- @param ctx table
+--- @param props { store: weave.store.SessionStore }
+function M.UsageSection(ctx, props)
+  local state = use_store(ctx, props.store)
+  local usage = state.usage
+  local rows = { header("Usage") }
+  if usage then
+    if usage.used and usage.size and usage.size > 0 then
+      local pct = math.floor(usage.used / usage.size * 100 + 0.5)
+      rows[#rows + 1] = {
+        comp = ui.label,
+        props = { text = string.format("Context: %s / %s (%d%%)", commas(usage.used), commas(usage.size), pct) },
+      }
+    elseif usage.used then
+      rows[#rows + 1] = { comp = ui.label, props = { text = "Tokens: " .. commas(usage.used) } }
+    end
+    local cost = usage.cost
+    if type(cost) == "table" and type(cost.amount) == "number" and cost.amount > 0 then
+      rows[#rows + 1] = { comp = ui.label, props = { text = fmt_cost(cost) } }
+    end
+  end
+  if #rows == 1 then
+    rows[2] = dim("(no usage yet)")
   end
   return { comp = ui.col, props = {}, children = rows }
 end
@@ -159,6 +213,7 @@ function M.Sidebar(_, props)
     }},
     children = {
       { comp = M.SessionSection, props = { store = props.store } },
+      { comp = M.UsageSection, props = { store = props.store } },
       { comp = M.PrefsSection, props = { prefs = props.prefs } },
       { comp = M.HintSection, props = { store = props.store } },
       { comp = M.TasksSection, props = { store = props.store } },

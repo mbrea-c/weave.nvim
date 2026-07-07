@@ -71,6 +71,21 @@ describe("acp_bridge session updates", function()
     assert.same({ "plan", "new" }, words)
   end)
 
+  it("routes usage_update into the store's usage snapshot", function()
+    local store, handlers = setup()
+    handlers.on_session_update({
+      sessionUpdate = "usage_update",
+      used = 7837,
+      size = 200000,
+      cost = { amount = 0, currency = "USD" },
+    })
+    assert.equal(7837, store.state.usage.used)
+    assert.equal(200000, store.state.usage.size)
+    assert.equal("USD", store.state.usage.cost.currency)
+    -- config-plane, not transcript
+    assert.same({}, store.state.entries)
+  end)
+
   it("ignores unknown update kinds without error", function()
     local store, handlers = setup()
     assert.has_no_error(function()

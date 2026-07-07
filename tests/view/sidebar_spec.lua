@@ -71,11 +71,30 @@ describe("view.sidebar", function()
     assert.truthy(text:find("[x] Show edit diffs", 1, true))
     assert.truthy(text:find("[x] Prettify markdown", 1, true))
     assert.truthy(text:find("[x] Follow streaming", 1, true))
+    assert.truthy(text:find("Usage", 1, true))
+    assert.truthy(text:find("(no usage yet)", 1, true))
     assert.truthy(text:find("Hint", 1, true))
     assert.truthy(text:find("Tasks", 1, true))
     assert.truthy(text:find("(no tasks)", 1, true))
     assert.truthy(text:find("Permissions", 1, true))
     assert.truthy(text:find("Mode: Normal (ask)  (;;p)", 1, true))
+    handle.unmount()
+  end)
+
+  it("projects usage live: context used/total with percent, and cost when charged", function()
+    local store = SessionStore:new()
+    local handle = mount_sidebar(store)
+
+    store:set_usage({ used = 7837, size = 200000, cost = { amount = 0.42, currency = "USD" } })
+    local text = text_of(handle.bufnr)
+    assert.truthy(text:find("7,837 / 200,000", 1, true)) -- thousands-separated
+    assert.truthy(text:find("(4%)", 1, true)) -- 7837/200000 ≈ 3.9% → 4%
+    assert.truthy(text:find("$0.42", 1, true))
+    assert.falsy(text:find("(no usage yet)", 1, true))
+
+    -- a zero cost (free/subscription model) shows no cost line, just context
+    store:set_usage({ used = 100, size = 200000, cost = { amount = 0, currency = "USD" } })
+    assert.falsy(text_of(handle.bufnr):find("Cost:", 1, true))
     handle.unmount()
   end)
 
