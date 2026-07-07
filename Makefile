@@ -34,6 +34,16 @@ bench:
 bench-term:
 	$(NVIM_BIN) --headless -u NONE -i NONE -l bench/term.lua
 
+# Realistic FULL-PANEL pty draw: the real panel (transcript + sidebar + water +
+# prompt) against a scripted async agent, submitting prompts while streaming.
+# The composed-screen number the isolated benches miss; BENCH_TRANSCRIPT seeds a
+# long session so the per-turn cost is measured at scale.
+#   make bench-panel-term
+#   BENCH_PROMPTS=5 BENCH_TURN_MS=3500 BENCH_TRANSCRIPT=400 make bench-panel-term
+.PHONY: bench-panel-term
+bench-panel-term:
+	$(NVIM_BIN) --headless -u NONE -i NONE -l bench/panel_term.lua
+
 # The demo UI in a clean interactive Neovim (q to quit)
 .PHONY: demo
 demo:

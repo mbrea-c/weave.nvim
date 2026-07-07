@@ -86,6 +86,14 @@
             cd ${self}
             exec nvim --headless -u NONE -i NONE -l bench/term.lua "$@"
           '';
+          # Realistic full-panel pty draw: the real panel against a scripted async
+          # agent, prompts streaming — the composed-screen cost the isolated benches
+          # miss. BENCH_TRANSCRIPT seeds a long session to measure per-turn at scale.
+          bench-panel-term = app "weave-bench-panel-term" ''
+            export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
+            cd ${self}
+            exec nvim --headless -u NONE -i NONE -l bench/panel_term.lua "$@"
+          '';
           demo = app "weave-demo" ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             exec nvim --clean -u ${self}/demo/init.lua
