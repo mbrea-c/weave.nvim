@@ -492,3 +492,82 @@ describe("session_store slash commands", function()
     assert.equal("new", store.state.commands[1].word)
   end)
 end)
+
+describe("session_store transcript window", function()
+  -- Bulk-append n user entries; returns the store.
+  local function with_entries(n)
+    local store = SessionStore:new()
+    for i = 1, n do
+      store:append_entry({ kind = "user", text = "e" .. i })
+    end
+    return store
+  end
+
+  local K = SessionStore.WINDOW
+
+  it("exposes a positive window constant", function()
+    assert.is_true(type(K) == "number" and K > 0)
+  end)
+
+  it("starts windowed at the first entry", function()
+    assert.equal(1, SessionStore:new().state.window_start)
+  end)
+
+  it("follow_window keeps only the last WINDOW entries when following past K", function()
+    local store = with_entries(K + 10)
+    store:follow_window()
+    -- oldest rendered index = total - K + 1
+    assert.equal(11, store.state.window_start)
+    assert.equal(K, #store.state.entries - store.state.window_start + 1)
+  end)
+
+  it("follow_window is a no-op (no collapse, no notify) at or below K entries", function()
+    local store = with_entries(5)
+    local seen, unsub = collecting(store)
+    store:follow_window()
+    assert.equal(1, store.state.window_start)
+    assert.equal(0, #seen)
+    unsub()
+  end)
+
+  it("follow_window only moves forward and doesn't renotify when already tight", function()
+    local store = with_entries(K + 10)
+    store:follow_window()
+    local seen, unsub = collecting(store)
+    store:follow_window()
+    assert.equal(11, store.state.window_start)
+    assert.equal(0, #seen)
+    unsub()
+  end)
+
+  it("reveal_older steps back by WINDOW and clamps at 1", function()
+    local store = with_entries(3 * K)
+    store:follow_window() -- window_start = 2K + 1
+    assert.equal(2 * K + 1, store.state.window_start)
+    store:reveal_older()
+    assert.equal(K + 1, store.state.window_start)
+    store:reveal_older()
+    assert.equal(1, store.state.window_start)
+    -- clamped: another reveal changes nothing and doesn't notify
+    local seen, unsub = collecting(store)
+    store:reveal_older()
+    assert.equal(1, store.state.window_start)
+    assert.equal(0, #seen)
+    unsub()
+  end)
+
+  it("reset returns the window to the first entry", function()
+    local store = with_entries(3 * K)
+    store:follow_window()
+    assert.is_true(store.state.window_start > 1)
+    store:reset()
+    assert.equal(1, store.state.window_start)
+  end)
+
+  it("window mutations keep entry objects reference-stable (the memo contract)", function()
+    local store = with_entries(K + 5)
+    local before = store.state.entries[K + 5]
+    store:follow_window()
+    assert.rawequal(before, store.state.entries[K + 5])
+  end)
+end)

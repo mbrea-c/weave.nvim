@@ -307,13 +307,38 @@ function M.Transcript(ctx, props)
     and state.permission.request.toolCall
     and state.permission.request.toolCall.toolCallId
 
+  -- Tail window: render only entries[window_start .. #entries] (the store caps
+  -- this on a huge session; the panel slides it while following). Older entries
+  -- collapse behind an expander so relayout/resize cost stays bounded — see
+  -- SessionStore.WINDOW / open_tasks_and_issues.md.
+  local window_start = state.window_start or 1
   local children = {}
-  for i, entry in ipairs(state.entries) do
+
+  if window_start > 1 then
+    local older = window_start - 1
+    children[#children + 1] = {
+      comp = ui.button,
+      props = {
+        theme = false, -- bare row, no button chrome (like the tool-call header)
+        label = { { string.format("▸ %d older messages", older), hl = "@comment" } },
+        on_press = function()
+          store:reveal_older()
+        end,
+      },
+    }
+  end
+
+  for i = window_start, #state.entries do
+    local entry = state.entries[i]
     if entry.kind == "tool_call" then
       local tc = state.tool_calls[entry.tool_call_id]
       if tc then
         children[#children + 1] = {
           comp = M.ToolCallEntry,
+          -- `key` = the entry's stable identity, so fibrous's cursor anchor keeps
+          -- the reader's place on THIS entry across a resize/thinking-toggle
+          -- relayout (positional reconciliation reuses fibers by index).
+          key = entry,
           memo = true,
           props = {
             store = store,
@@ -325,14 +350,15 @@ function M.Transcript(ctx, props)
         }
       end
     elseif entry.kind == "user" then
-      children[#children + 1] = { comp = M.UserEntry, memo = true, props = { entry = entry } }
+      children[#children + 1] = { comp = M.UserEntry, key = entry, memo = true, props = { entry = entry } }
     elseif entry.kind == "thought" then
       if prefs.show_thoughts then
-        children[#children + 1] = { comp = M.ThoughtEntry, memo = true, props = { entry = entry } }
+        children[#children + 1] = { comp = M.ThoughtEntry, key = entry, memo = true, props = { entry = entry } }
       end
     elseif entry.kind == "agent" then
       children[#children + 1] = {
         comp = M.AgentEntry,
+        key = entry,
         memo = true,
         props = {
           entry = entry,

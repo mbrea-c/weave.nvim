@@ -347,3 +347,33 @@ describe("view.panel shell", function()
     handle.close()
   end)
 end)
+
+describe("view.panel tail window", function()
+  local K = SessionStore.WINDOW
+
+  it("following slides the window so only the last WINDOW entries render", function()
+    local handle, store, prefs = open_panel()
+    assert.is_true(prefs.state.follow) -- default
+    for i = 1, K + 20 do
+      store:append_entry({ kind = "agent", text = "line " .. i })
+    end
+    -- the panel advances window_start synchronously as content grows while following
+    assert.equal(K + 20 - K + 1, store.state.window_start)
+    local text = buf_text(handle.transcript.bufnr)
+    assert.truthy(text:find("▸ 20 older messages", 1, true), "collapse not reflected")
+    assert.falsy(text:find("line 1\n", 1, true), "oldest entry still rendered")
+    assert.truthy(text:find("line " .. (K + 20), 1, true), "newest entry missing")
+    handle.close()
+  end)
+
+  it("scrolled up (not following) the window is frozen — no entries collapse", function()
+    local handle, store, prefs = open_panel()
+    prefs:set("follow", false)
+    for i = 1, K + 20 do
+      store:append_entry({ kind = "agent", text = "line " .. i })
+    end
+    assert.equal(1, store.state.window_start, "window must not slide while the reader is scrolled up")
+    assert.truthy(buf_text(handle.transcript.bufnr):find("line 1", 1, true), "history was collapsed under the reader")
+    handle.close()
+  end)
+end)

@@ -214,6 +214,13 @@ function M.open(opts)
     local content = state.entries ~= followed.entries or state.tool_calls ~= followed.tool_calls
     followed = state
     if content and prefs.state.follow then
+      -- Slide the transcript's tail window forward as content arrives. Only
+      -- while following (view pinned to the bottom): the entries that fall out
+      -- the top are off-screen, so the collapse is invisible. Scrolled up, we
+      -- leave the window frozen so history under the reader never shifts.
+      -- follow_window is a store mutation; its re-entrant notify sees no content
+      -- change (same entries table) and is change-guarded, so it can't loop.
+      store:follow_window()
       follow_to_bottom()
     end
   end)

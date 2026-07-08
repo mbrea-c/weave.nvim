@@ -230,6 +230,12 @@ SessionStore.PERMISSION_MODE_LABEL = PERMISSION_MODE_LABEL
 SessionStore.auto_option_for = auto_option_for
 SessionStore.HINTS = HINTS
 
+-- Transcript tail-window size: the view renders only the last WINDOW entries by
+-- default (entries[window_start .. #entries]); older ones collapse behind an
+-- "older messages" expander. Bounds relayout/resize cost on monstrous sessions
+-- (see open_tasks_and_issues.md — layout is O(rendered content), not O(history)).
+SessionStore.WINDOW = 30
+
 --- @return weave.store.SessionStore store
 function SessionStore:new()
   local instance = {
@@ -249,6 +255,8 @@ function SessionStore:new()
       hint = random_hint(),
       commands = to_completion_items({}),
       usage = nil,
+      -- index of the oldest entry the transcript currently renders (tail window)
+      window_start = 1,
     },
     _subscribers = {},
     _permission_queue = {},
@@ -290,6 +298,34 @@ function SessionStore:_commit(mutate)
   for _, fn in ipairs({ unpack(self._subscribers) }) do
     fn(draft)
   end
+end
+
+--- Advance the tail window forward so the transcript renders at most WINDOW
+--- entries. The PANEL calls this on content growth ONLY while the view is
+--- following (pinned to the bottom), so the entries that fall out the top are
+--- off-screen and the collapse is invisible; scrolled-up (not following) the
+--- panel leaves the window frozen so history the reader is on never shifts.
+--- Forward-only + change-guarded: no spurious notifies.
+function SessionStore:follow_window()
+  local target = math.max(1, #self.state.entries - SessionStore.WINDOW + 1)
+  if target <= self.state.window_start then
+    return
+  end
+  self:_commit(function(draft)
+    draft.window_start = target
+  end)
+end
+
+--- Reveal the previous WINDOW older entries (the "older messages" expander),
+--- clamped at the first entry. Each press stays bounded — no "load all" cliff.
+function SessionStore:reveal_older()
+  local target = math.max(1, self.state.window_start - SessionStore.WINDOW)
+  if target == self.state.window_start then
+    return
+  end
+  self:_commit(function(draft)
+    draft.window_start = target
+  end)
 end
 
 --- Append a chat entry (reassigning the list — see the discipline note).
@@ -664,6 +700,7 @@ function SessionStore:reset()
     -- a fresh session re-announces its commands; back to just /new meanwhile
     draft.commands = to_completion_items({})
     draft.usage = nil -- forget the previous conversation's token/cost tally
+    draft.window_start = 1 -- fresh session starts at the top of an empty transcript
   end)
   -- Cancel + clear pending permissions so the agent isn't left waiting; this
   -- also resets state.permission / permission_count via _publish.

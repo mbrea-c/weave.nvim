@@ -164,6 +164,71 @@ describe("view.transcript entries", function()
   end)
 end)
 
+describe("view.transcript tail window", function()
+  local K = SessionStore.WINDOW
+
+  -- append n user entries e1..eN
+  local function seed(store, n)
+    for i = 1, n do
+      store:append_entry({ kind = "user", text = "e" .. i })
+    end
+  end
+
+  local function count_prompts(bufnr)
+    local n = 0
+    for _, l in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)) do
+      if l:find("❯ ", 1, true) then
+        n = n + 1
+      end
+    end
+    return n
+  end
+
+  it("renders only entries from window_start, behind an older-messages expander", function()
+    local store = SessionStore:new()
+    seed(store, K + 5)
+    store:follow_window() -- the panel's job; window_start = 6
+    local handle = mount_transcript(store)
+    local text = table.concat(trimmed(handle.bufnr), "\n")
+
+    assert.truthy(text:find("▸ 5 older messages", 1, true), "expander missing")
+    assert.equal(K, count_prompts(handle.bufnr))
+    assert.falsy(text:find("❯ e1\n", 1, true) or text:match("❯ e1$"), "collapsed entry leaked")
+    assert.falsy(text:find("❯ e5\n", 1, true), "collapsed entry leaked")
+    assert.truthy(text:find("❯ e6", 1, true), "first windowed entry missing")
+    assert.truthy(text:find("❯ e35", 1, true), "newest entry missing")
+    handle.unmount()
+  end)
+
+  it("shows no expander when the window already covers every entry", function()
+    local store = SessionStore:new()
+    seed(store, 3)
+    store:follow_window() -- no-op at <= K
+    local handle = mount_transcript(store)
+    local text = table.concat(trimmed(handle.bufnr), "\n")
+    assert.falsy(text:find("older messages", 1, true))
+    assert.truthy(text:find("❯ e1", 1, true))
+    handle.unmount()
+  end)
+
+  it("pressing the expander reveals the previous window of older entries", function()
+    local store = SessionStore:new()
+    seed(store, K + 5)
+    store:follow_window() -- window_start = 6
+    local handle = mount_transcript(store)
+
+    local row, col = locate(handle.bufnr, "older messages")
+    move_cursor(handle, row, col)
+    press(handle, "<CR>")
+
+    assert.equal(1, store.state.window_start)
+    local text = table.concat(trimmed(handle.bufnr), "\n")
+    assert.falsy(text:find("older messages", 1, true), "expander should be gone once fully revealed")
+    assert.truthy(text:find("❯ e1", 1, true), "oldest entry not revealed")
+    handle.unmount()
+  end)
+end)
+
 describe("view.transcript tool calls", function()
   it("renders a collapsed header from the title chain", function()
     local store = SessionStore:new()
