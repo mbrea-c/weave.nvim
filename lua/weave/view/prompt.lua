@@ -113,8 +113,15 @@ function M.Prompt(ctx, props)
       clear_on_submit = true,
       on_submit = skip_empty(props.on_submit),
       style = {
-        border = "rounded",
-        border_hl = Theme.PROMPT_BORDER_HL[state.permission_mode] or Theme.PROMPT_BORDER_HL.normal,
+        border = {
+          "rounded",
+          title = {
+            text = "Prompt (" .. (Theme.PROMPT_TITLE_EXTRA[state.permission_mode] or "normal") .. ")",
+            hl = Theme.PROMPT_BORDER_HL[state.permission_mode] or Theme.PROMPT_BORDER_HL.normal,
+            align = "left"
+          }
+        },
+        border_hl = Theme.PROMPT_BORDER_HL.normal,
       },
       on_create = function(bufnr)
         wire_completion(props.store, bufnr)

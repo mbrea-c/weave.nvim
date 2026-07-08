@@ -133,6 +133,13 @@ M.PROMPT_BORDER_HL = {
   auto = "WeavePromptBorderAuto",
   allow_edits = "WeavePromptBorderAllowEdits",
 }
+
+M.PROMPT_TITLE_EXTRA = {
+  normal = "normal",
+  auto = "auto ⏵⏵",
+  allow_edits = "allow edits ⏵",
+}
+
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.normal, { link = "FloatBorder", default = true })
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.auto, { fg = "#e0af68", default = true })
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.allow_edits, { fg = "#bb9af7", default = true })
