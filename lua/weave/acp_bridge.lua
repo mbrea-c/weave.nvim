@@ -146,7 +146,12 @@ function AcpBridge.build_handlers(store, opts)
         return
       end
 
-      store:set_status("idle")
+      -- Deliberately DON'T touch the status: the turn is still active (the agent
+      -- is blocked on YOU), so it must not masquerade as idle — idle is reserved
+      -- for a genuinely ended turn ("you have the mic"). The "awaiting your
+      -- approval" cue is derived view-side from the presence of a queued
+      -- permission (see weave.view.prompt), a state distinct from both idle and
+      -- the streaming thinking/generating tones.
       -- Enqueue (never overwrite): the agent may have several requests in
       -- flight at once. Each keeps its own respond closure that answers
       -- ONLY the agent. Queue removal is the caller's job (pop on a user

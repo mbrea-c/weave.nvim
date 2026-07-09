@@ -95,12 +95,19 @@ function M.Prompt(ctx, props)
   -- the water ripples. The status word is spliced into the centre of the water;
   -- when idle there's no label and the water settles to a flat blue line (still
   -- clickable — <CR>/click drops a ripple).
+  -- A queued permission means the agent is blocked on YOUR approval — a state
+  -- distinct from both idle ("you have the mic") and the streaming
+  -- thinking/generating tones. Derive it here (view-side) from the store's
+  -- pending permission so the underlying activity status is untouched: answering
+  -- the prompt falls straight back to it, and idle stays reserved for a genuinely
+  -- ended turn.
+  local water_status = state.permission and "awaiting" or state.status
   local children = {
     {
       comp = Water.Water,
       props = {
-        status = state.status,
-        label = state.status ~= "idle" and (state.status .. "…") or nil,
+        status = water_status,
+        label = water_status ~= "idle" and (water_status .. "…") or nil,
       },
     },
   }

@@ -133,6 +133,7 @@ describe("acp_bridge tool calls", function()
         answered[id] = { option_id = option_id }
       end
     end
+    store:set_status("generating") -- mid-turn: the agent hit tools needing approval
     handlers.on_request_permission({ toolCall = { toolCallId = "t1" }, options = {} }, cb("t1"))
     handlers.on_request_permission({ toolCall = { toolCallId = "t2" }, options = {} }, cb("t2"))
 
@@ -143,8 +144,9 @@ describe("acp_bridge tool calls", function()
     assert.is_nil(answered.t1)
     assert.equal("t1", store.state.permission.request.toolCall.toolCallId)
     assert.equal(1, store.state.permission_count)
-    -- queue non-empty, so status stays idle (a prompt is showing)
-    assert.equal("idle", store.state.status)
+    -- a pending permission no longer masquerades as idle: the turn is still
+    -- active (the "awaiting your approval" cue is derived from the queue, view-side)
+    assert.equal("generating", store.state.status)
 
     handlers.on_tool_call_update({ tool_call_id = "t1", status = "completed" })
     assert.same({ option_id = nil }, answered.t1)
@@ -160,13 +162,15 @@ describe("acp_bridge permissions", function()
     { optionId = "always", kind = "allow_always" },
   }
 
-  it("normal mode enqueues, sets idle, and respond routes to the agent callback", function()
+  it("normal mode enqueues (preserving the active status) and respond routes to the agent callback", function()
     local store, handlers = setup()
+    store:set_status("generating") -- the turn is live when the approval is asked for
     local answered
     handlers.on_request_permission({ toolCall = { toolCallId = "t1" }, options = ALLOW }, function(option_id)
       answered = option_id
     end)
-    assert.equal("idle", store.state.status)
+    -- the request no longer idles the water; the turn stays active
+    assert.equal("generating", store.state.status)
     assert.equal(1, store.state.permission_count)
     store.state.permission.respond("once")
     assert.equal("once", answered)

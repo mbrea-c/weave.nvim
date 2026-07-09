@@ -155,13 +155,16 @@ M.WATER_HL = { "WeaveWater1", "WeaveWater2", "WeaveWater3", "WeaveWater4" }
 M.WATER_LABEL_HL = "WeaveWaterLabel"
 
 -- The colour the water fades TOWARD in each activity state (blue idle → yellow
--- thinking → red generating; busy is the pre-stream warm-up). `{r,g,b}` 0-255.
+-- thinking → red generating; busy is the pre-stream warm-up; awaiting is the
+-- agent blocked on YOUR approval — a distinct purple so a pending permission
+-- reads as neither "your turn" nor plain streaming). `{r,g,b}` 0-255.
 --- @type table<string, integer[]>
 M.WATER_STATE_FG = {
   idle = { 0x5a, 0x7f, 0xd0 }, -- #5a7fd0 blue
   thinking = { 0xe0, 0xaf, 0x68 }, -- #e0af68 yellow
   generating = { 0xf7, 0x76, 0x8e }, -- #f7768e red
   busy = { 0xff, 0x9e, 0x64 }, -- #ff9e64 orange
+  awaiting = { 0xbb, 0x9a, 0xf7 }, -- #bb9af7 purple — agent blocked on YOUR approval
 }
 for _, group in ipairs(M.WATER_HL) do
   vim.api.nvim_set_hl(0, group, { fg = "#5a7fd0" })

@@ -127,6 +127,32 @@ describe("view.prompt", function()
     handle.unmount()
   end)
 
+  it("shows a distinct 'awaiting' status while a permission is pending", function()
+    local store = SessionStore:new()
+    local handle = mount_prompt(store)
+    local function text()
+      return table.concat(vim.api.nvim_buf_get_lines(handle.bufnr, 0, -1, false), "\n")
+    end
+
+    -- mid-turn the agent hits a tool needing approval: the water must say the
+    -- agent is blocked on YOU — distinct from "generating" AND from idle (your
+    -- mic), so a pending approval never reads as a finished turn.
+    store:set_status("generating")
+    store:enqueue_permission({
+      request = { toolCall = { toolCallId = "t1" }, options = {} },
+      respond = function() end,
+    })
+    assert.truthy(text():find("awaiting…", 1, true), "no 'awaiting' cue while a permission is pending")
+    assert.falsy(text():find("generating…", 1, true), "should not read as plain generating while blocked on you")
+
+    -- answering it falls back to the underlying activity (the agent proceeds),
+    -- NOT to idle — idle is reserved for a genuinely ended turn
+    store:pop_permission()
+    assert.falsy(text():find("awaiting", 1, true))
+    assert.truthy(text():find("generating…", 1, true))
+    handle.unmount()
+  end)
+
   it("typed text survives status flips (the input is never repositioned)", function()
     local store = SessionStore:new()
     local handle = mount_prompt(store)
