@@ -171,15 +171,24 @@ describe("view.prompt", function()
     handle.unmount()
   end)
 
-  it("border colour tracks the permission mode", function()
+  it("the prompt title colour + label track the permission mode", function()
     local store = SessionStore:new()
     local handle = mount_prompt(store)
+    local function text()
+      return table.concat(vim.api.nvim_buf_get_lines(handle.bufnr, 0, -1, false), "\n")
+    end
 
-    assert.is_true(#marks_with(handle.bufnr, Theme.PROMPT_BORDER_HL.normal) > 0)
+    -- The permission mode tints the TITLE and names the mode in it; the border
+    -- edge itself stays a constant 'normal' hl. So in normal mode the title
+    -- reads "(normal)" and there's no auto tint anywhere.
+    assert.truthy(text():find("(normal)", 1, true))
+    assert.equal(0, #marks_with(handle.bufnr, Theme.PROMPT_BORDER_HL.auto))
 
     store:cycle_permission_mode() -- normal → auto
+    -- the title gains the mode's colour + label; the border_hl is unchanged, so
+    -- an auto mark can ONLY come from the title
+    assert.truthy(text():find("(auto", 1, true))
     assert.is_true(#marks_with(handle.bufnr, Theme.PROMPT_BORDER_HL.auto) > 0)
-    assert.equal(0, #marks_with(handle.bufnr, Theme.PROMPT_BORDER_HL.normal))
     handle.unmount()
   end)
 
