@@ -216,6 +216,35 @@ local function auto_option_for(request, mode)
   return fallback
 end
 
+--- Reorder a permission request's options so the ALLOW options come first —
+--- the ;;1 slot always approves, whatever order the provider sent them in
+--- (claude-agent-acp sometimes puts the reject first, betraying muscle memory).
+--- allow_once before allow_always (the "approve once" slot, matching
+--- auto_option_for's preference); everything else keeps its original relative
+--- order. Pure + stable (the option tables are shared, only the array reorders),
+--- so display numbering, the sidebar, and ;;n answering all stay consistent.
+--- @param options table[]|nil ACP PermissionOption[]
+--- @return table[] reordered
+local function order_permission_options(options)
+  local once, always, rest = {}, {}, {}
+  for _, opt in ipairs(options or {}) do
+    if opt.kind == "allow_once" then
+      once[#once + 1] = opt
+    elseif opt.kind == "allow_always" then
+      always[#always + 1] = opt
+    else
+      rest[#rest + 1] = opt
+    end
+  end
+  local out = {}
+  for _, list in ipairs({ once, always, rest }) do
+    for _, opt in ipairs(list) do
+      out[#out + 1] = opt
+    end
+  end
+  return out
+end
+
 --- @class weave.store.SessionStore
 --- @field state weave.store.State The current snapshot (never mutated in place)
 --- @field _subscribers fun(state: weave.store.State)[]
@@ -228,6 +257,7 @@ SessionStore.__index = SessionStore
 SessionStore.PERMISSION_MODES = PERMISSION_MODES
 SessionStore.PERMISSION_MODE_LABEL = PERMISSION_MODE_LABEL
 SessionStore.auto_option_for = auto_option_for
+SessionStore.order_permission_options = order_permission_options
 SessionStore.HINTS = HINTS
 
 -- Transcript tail-window size: the view renders only the last WINDOW entries by
@@ -575,6 +605,11 @@ end
 --- — that was the bug. The head is surfaced; the rest wait their turn.
 --- @param permission weave.store.PendingPermission
 function SessionStore:enqueue_permission(permission)
+  -- Allow-first so ;;1 always approves (the single choke point: display,
+  -- sidebar and ;;n answering all read request.options in this order).
+  if permission.request then
+    permission.request.options = order_permission_options(permission.request.options)
+  end
   self._permission_queue[#self._permission_queue + 1] = permission
   self:_publish_permission_head()
 end

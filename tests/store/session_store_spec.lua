@@ -266,6 +266,36 @@ describe("session_store status and meta", function()
   end)
 end)
 
+describe("session_store permission option ordering", function()
+  local function ids(options)
+    local out = {}
+    for i, o in ipairs(options) do
+      out[i] = o.optionId
+    end
+    return out
+  end
+
+  it("orders allow first (allow_once before allow_always), the rest kept stable", function()
+    local ordered = SessionStore.order_permission_options({
+      { optionId = "reject", kind = "reject_once" },
+      { optionId = "always", kind = "allow_always" },
+      { optionId = "once", kind = "allow_once" },
+      { optionId = "reject_all", kind = "reject_always" },
+    })
+    assert.same({ "once", "always", "reject", "reject_all" }, ids(ordered))
+  end)
+
+  it("leaves order unchanged when there's no allow option", function()
+    assert.same(
+      { "a", "b" },
+      ids(SessionStore.order_permission_options({
+        { optionId = "a", kind = "reject_once" },
+        { optionId = "b", kind = "reject_always" },
+      }))
+    )
+  end)
+end)
+
 describe("session_store permission queue", function()
   it("enqueues FIFO, surfacing the head and the count", function()
     local store = SessionStore:new()
@@ -275,6 +305,18 @@ describe("session_store permission queue", function()
     assert.rawequal(p1, store.state.permission)
     assert.rawequal(p1, store:get_permission())
     assert.equal(2, store.state.permission_count)
+  end)
+
+  it("surfaces the allow option at slot 1 (;;1) even when the agent sends it later", function()
+    local store = SessionStore:new()
+    store:enqueue_permission(permission("t1", {
+      { optionId = "reject", kind = "reject_once" },
+      { optionId = "allow", kind = "allow_once" },
+    }))
+    -- muscle memory: ;;1 must always approve, whatever order the provider used
+    local opts = store.state.permission.request.options
+    assert.equal("allow", opts[1].optionId)
+    assert.equal("reject", opts[2].optionId)
   end)
 
   it("pop returns the head and promotes the next", function()
