@@ -56,8 +56,27 @@ describe("view.prompt", function()
 
     vim.api.nvim_set_current_win(sub)
     press("irun tests")
-    press("<Esc><CR>")
+    press("<CR>") -- normal-mode <CR> submits (headless lands in normal after typing)
     assert.same({ "run tests" }, submitted)
+    assert.same({ "" }, vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sub), 0, -1, false))
+    handle.unmount()
+  end)
+
+  it("insert <CR> is a newline; <C-s> submits (multi-line) from insert mode", function()
+    local store = SessionStore:new()
+    local submitted = {}
+    local handle = mount_prompt(store, {
+      on_submit = function(text)
+        submitted[#submitted + 1] = text
+      end,
+    })
+    local sub = subwin_of(handle)
+
+    vim.api.nvim_set_current_win(sub)
+    -- one batch keeps us in insert: <CR> composes a second line (NOT a submit),
+    -- then <C-s> submits the whole multi-line buffer without leaving insert
+    press("iline one<CR>line two<C-s>")
+    assert.same({ "line one\nline two" }, submitted)
     assert.same({ "" }, vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sub), 0, -1, false))
     handle.unmount()
   end)
@@ -90,7 +109,7 @@ describe("view.prompt", function()
 
     vim.api.nvim_set_current_win(sub)
     press("ido this instead")
-    press("<Esc><C-x>")
+    press("<C-x>") -- <C-x> steers from insert too (mapped for {n,i})
     assert.same({ "do this instead" }, steered)
     assert.same({ "" }, vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sub), 0, -1, false))
 

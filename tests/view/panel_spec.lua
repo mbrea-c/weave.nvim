@@ -182,7 +182,7 @@ describe("view.panel shell", function()
 
     handle.focus_prompt()
     press("ido the thing")
-    press("<Esc><CR>")
+    press("<CR>") -- normal-mode <CR> submits (headless lands in normal after typing)
     assert.same({ "do the thing" }, submitted)
     handle.close()
   end)

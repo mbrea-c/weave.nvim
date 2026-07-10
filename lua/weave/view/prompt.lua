@@ -1,8 +1,10 @@
 -- The prompt: a text_input wired for chat, ported from agentic's
--- reactive/view/components/prompt.lua onto fibrous. <CR> submits and clears
--- (fibrous's clear_on_submit — the buffer is the post-seed source of truth,
--- so only the subwin layer can clear it); <C-x> steers (cancel + send now);
--- both skip empty text. The input border colour tracks the permission mode
+-- reactive/view/components/prompt.lua onto fibrous. NORMAL-mode <CR> submits and
+-- clears (fibrous's clear_on_submit — the buffer is the post-seed source of
+-- truth, so only the subwin layer can clear it); insert-mode <CR> is a newline
+-- (compose multi-line). <C-s> submits and <C-x> steers (cancel + send now) from
+-- BOTH modes, so you never have to leave insert to send; both skip empty text.
+-- The input border colour tracks the permission mode
 -- (an ambient reminder of what's being auto-allowed), a status row above the
 -- input shows turn activity, and on_create wires the input buffer's
 -- slash-command completion + the steer keymap.
@@ -132,16 +134,26 @@ function M.Prompt(ctx, props)
       },
       on_create = function(bufnr)
         wire_completion(props.store, bufnr)
-        -- Steer: interrupt the in-flight turn and send THIS. Reads + clears
-        -- the buffer itself — unlike <CR>, no subwin plumbing handles it.
+        -- Read + clear the buffer, then run `action(text)` (skipping empty). Used
+        -- for the from-both-modes keys — unlike normal-mode <CR>, no subwin
+        -- plumbing handles these, so they clear the buffer themselves.
+        local function send_with(action)
+          local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+          if text == "" then
+            return
+          end
+          vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "" })
+          action(text)
+        end
+        -- <C-s> submits and <C-x> steers (interrupt + send) from BOTH normal and
+        -- insert, so you can send without leaving insert (normal-mode <CR> also
+        -- submits; insert <CR> is a plain newline).
         for _, mode in ipairs({ "n", "i" }) do
+          vim.keymap.set(mode, "<C-s>", function()
+            send_with(props.on_submit)
+          end, { buffer = bufnr, desc = "weave: submit" })
           vim.keymap.set(mode, "<C-x>", function()
-            local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
-            if text == "" then
-              return
-            end
-            vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "" })
-            props.on_steer(text)
+            send_with(props.on_steer)
           end, { buffer = bufnr, desc = "weave: steer (interrupt + send)" })
         end
         if props.on_create then

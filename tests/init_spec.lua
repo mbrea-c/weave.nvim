@@ -159,7 +159,7 @@ describe("weave entrypoint", function()
     pump()
 
     press("iship it")
-    press("<Esc><CR>")
+    press("<CR>") -- normal-mode <CR> submits (headless lands in normal after typing)
     assert.same({ "ship it" }, client.calls.prompts)
     weave.stop()
     pump()

@@ -86,8 +86,9 @@ require("weave").setup({
 ## Usage
 
 Open the panel with `:Weave` (or `require("weave").toggle()`), type in the
-prompt at the bottom, and press `<CR>` to send. The agent's reply streams into
-the transcript above.
+prompt at the bottom, and press `<C-s>` (or `<CR>` from normal mode) to send —
+insert-mode `<CR>` is a newline, so multi-line prompts compose naturally. The
+agent's reply streams into the transcript above.
 
 The panel is **one docked pane** with three regions:
 
@@ -107,9 +108,11 @@ running** — reopen with `:Weave`.
 
 | Key | Action |
 | --- | --- |
-| `<CR>` | Submit the prompt (send to the agent) |
-| `<C-x>` | Steer — interrupt the running turn and send this instead |
+| `<C-s>` | Submit the prompt (send to the agent) — works from insert **and** normal |
+| `<CR>` (normal mode) | Submit the prompt. In **insert** mode `<CR>` is a newline, so prompts compose multi-line |
+| `<C-x>` | Steer — interrupt the running turn and send this instead (insert or normal) |
 | `<C-c>` | Cancel the running turn |
+| `<Esc>` (normal mode) | Leave a focused region (prompt / transcript) back to the panel |
 | `<CR>` / `za` | On a tool-call header: expand/collapse it |
 | `zR` / `zM` | Expand / collapse all tool calls |
 | `;;t` | Toggle thinking blocks |
