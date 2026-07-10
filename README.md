@@ -110,8 +110,9 @@ running** — reopen with `:Weave`.
 | --- | --- |
 | `<C-s>` | Submit the prompt (send to the agent) — works from insert **and** normal |
 | `<CR>` (normal mode) | Submit the prompt. In **insert** mode `<CR>` is a newline, so prompts compose multi-line |
-| `<C-x>` | Steer — interrupt the running turn and send this instead (insert or normal) |
-| `<C-c>` | Cancel the running turn |
+| `<C-x>` | Steer — interrupt the running turn and send this instead (insert or normal). While editing a queued prompt, sends *that* now, skipping the rest of the queue |
+| `<C-c>` | Cancel the running turn — **keeps** the queue (moves straight on to the next queued prompt) |
+| `<C-Up>` / `<C-Down>` | In the prompt: recall previous / next prompt. Walks up through queued prompts (edit them in place) then sent history (recalled as a fresh copy); your draft is preserved |
 | `<Esc>` (normal mode) | Leave a focused region (prompt / transcript) back to the panel |
 | `<CR>` / `za` | On a tool-call header: expand/collapse it |
 | `zR` / `zM` | Expand / collapse all tool calls |
@@ -127,6 +128,22 @@ running** — reopen with `:Weave`.
 
 Type `/` at the start of the prompt for slash-command completion. `/new`
 (always available) starts a fresh conversation; agents may advertise more.
+
+### Prompt queue & history
+
+A prompt sent while a turn is running is **queued** — queued prompts stack just
+above the prompt box (between the water indicator and the box) and are sent in
+order as the turn ends. The prompt box is a movable edit-cursor over that stack:
+
+- `<C-Up>`/`<C-Down>` walk it up and down — onto a **queued** prompt it moves
+  there to edit it in place (earlier queued above, later below), and past the
+  queue it recalls your **sent** prompts as a fresh copy to compose. Your
+  in-progress draft is kept as you navigate.
+- `<C-s>`/`<CR>` while editing a queued prompt **saves the edit in place**;
+  a `✕` on any queued row (or clearing it and submitting) removes it.
+- `<C-c>` cancels the running turn but **keeps** the queue (so it moves straight
+  to the next queued prompt); `<C-x>` sends the box's current text now, jumping
+  the queue.
 
 ### Permissions
 

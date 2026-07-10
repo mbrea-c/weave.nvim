@@ -166,12 +166,12 @@ describe("session turns", function()
     session:submit("first")
     session:submit("second")
     assert.same({ "first" }, client.calls.prompts)
-    assert.same({ "second" }, store.state.queued)
+    assert.same({ "second" }, store:queued_texts())
 
     client:end_turn()
     pump()
     assert.same({ "first", "second" }, client.calls.prompts)
-    assert.same({}, store.state.queued)
+    assert.same({}, store:queued_texts())
   end)
 
   it("a turn error lands in the transcript", function()
@@ -202,11 +202,11 @@ describe("session turns", function()
     assert.equal(0, client.calls.cancel_turns)
   end)
 
-  it("cancel stops the turn, drops the queue, answers permissions cancelled", function()
+  it("cancel stops the turn but KEEPS the queue; permissions answered cancelled", function()
     local session, client, store = started()
     session:submit("work")
     session:submit("queued")
-    local answered
+    local answered = "UNSET"
     store:enqueue_permission({
       request = { toolCall = { toolCallId = "t1" }, options = {} },
       respond = function(option_id)
@@ -216,14 +216,27 @@ describe("session turns", function()
 
     session:cancel()
     assert.equal(1, client.calls.cancel_turns)
-    assert.same({}, store.state.queued)
-    assert.is_nil(answered)
+    -- the queue survives (requests.md: <C-c> cancels the turn, keeps the queue)…
+    assert.same({ "queued" }, store:queued_texts())
+    -- …but pending permissions are still answered cancelled (ACP requirement)
+    assert.is_nil(answered) -- respond(nil) was called
     assert.equal(0, store.state.permission_count)
 
+    -- the cancelled turn ends → the queue drains, moving straight on to the next
     client:end_turn()
     pump()
-    -- nothing is resent after an explicit cancel
-    assert.same({ "work" }, client.calls.prompts)
+    assert.same({ "work", "queued" }, client.calls.prompts)
+  end)
+
+  it("sent prompts accumulate in the recall history", function()
+    local session, client, store = started()
+    session:submit("first") -- sent now
+    session:submit("second") -- queued (turn in flight)
+    assert.same({ "first" }, store.state.history) -- only the sent one so far
+
+    client:end_turn()
+    pump() -- "second" drains and is sent
+    assert.same({ "first", "second" }, store.state.history)
   end)
 end)
 

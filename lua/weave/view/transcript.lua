@@ -149,20 +149,6 @@ function M.AgentEntry(_, props)
   }
 end
 
---- A prompt held while a turn is in flight, rendered dimmed with a marker so
---- the user sees what will be sent automatically when the turn ends.
---- @param props { text: string }
-function M.QueuedEntry(_, props)
-  return {
-    comp = ui.row,
-    props = {},
-    children = {
-      { comp = ui.label, props = { text = "⏳ ", style = { text_hl = "@comment" } } },
-      { comp = ui.paragraph, props = { text = props.text, style = { text_hl = "@comment" } } },
-    },
-  }
-end
-
 --- One tool call: always a rich header row (chevron, status glyph, kind
 --- glyph + tag, title) that toggles expansion on <CR>/click; an inline diff
 --- preview for edits (gated by the show_diff pref, passed as a scalar prop so
@@ -371,9 +357,8 @@ function M.Transcript(ctx, props)
     end
   end
 
-  for _, text in ipairs(state.queued) do
-    children[#children + 1] = { comp = M.QueuedEntry, memo = true, props = { text = text } }
-  end
+  -- Queued prompts no longer render here: they stack in the prompt block, above
+  -- the input box (view/prompt.lua), so you can edit/reorder/cancel them there.
 
   if state.permission then
     children[#children + 1] = {

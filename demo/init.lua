@@ -6,6 +6,7 @@
 -- second prompt makes an edit that asks for permission. All the panel
 -- machinery is live — try:
 --   <CR>/<C-s> submit · <C-x> steer · <C-c> cancel · <CR>/za on a tool call
+--   <C-Up>/<C-Down> recall/edit queued prompts (queue while a turn runs) ·
 --   zR/zM expand/collapse all · ;;t ;;d ;;c ;;f view prefs · ;;p permission
 --   mode · ;;1..;;9 answer permissions · ;;r restore a saved session ·
 --   ;;s the session modal (multiple sessions, per-tab selection) ·

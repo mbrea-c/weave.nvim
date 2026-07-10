@@ -389,11 +389,12 @@ function Session:steer(text)
   self:_cancel_turn()
 end
 
---- Explicitly cancel the in-flight turn with no resend, and drop any queued
---- prompts. Resolves pending permissions as cancelled (ACP requirement).
+--- Cancel the in-flight turn with no resend, KEEPING any queued prompts: the
+--- cancelled turn ends, and _on_turn_end drains the next queued prompt so we
+--- move straight on to it (requests.md). Clear queued prompts individually (the
+--- prompt-box `✕`) to drop them. Resolves pending permissions as cancelled (ACP).
 function Session:cancel()
   self._steer_text = nil
-  self._store:clear_queue()
   if self._turn_active then
     self:_cancel_turn()
   end
@@ -433,6 +434,7 @@ end
 --- @param text string
 function Session:_send_now(text)
   self._store:append_entry({ kind = "user", text = text })
+  self._store:push_history(text) -- a sent prompt joins the recall history
   self._store:set_status("thinking")
   self._turn_active = true
 

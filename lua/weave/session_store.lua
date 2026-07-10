@@ -37,7 +37,8 @@
 --- @field status "idle" | "thinking" | "generating" | "busy" Spinner/activity state
 --- @field permission weave.store.PendingPermission|nil HEAD of the permission queue (the one shown); nil when none pending
 --- @field permission_count integer Pending permission requests (head + waiting), for "1 of N" display
---- @field queued string[] Prompts queued while a turn is in flight (sent in order on turn end)
+--- @field queued { id: integer, text: string }[] Prompts queued while a turn is in flight (sent FIFO on turn end); each carries a stable id so the prompt box tracks the one it edits by identity
+--- @field history string[] Sent prompts, oldest -> newest, for prompt-box recall (consecutive dups collapsed)
 --- @field meta weave.store.SessionMeta Provider/agent/model/mode metadata
 --- @field permission_mode weave.store.PermissionMode How incoming permission requests are answered
 --- @field hint string Rotating UI hint shown in the sidebar (rotated each turn)
@@ -280,6 +281,7 @@ function SessionStore:new()
       permission = nil,
       permission_count = 0,
       queued = {},
+      history = {},
       meta = {},
       permission_mode = "normal",
       hint = random_hint(),
@@ -662,14 +664,90 @@ function SessionStore:drain_permissions()
   self:_publish_permission_head()
 end
 
---- Append a prompt to the queue (held while a turn is in flight). The
---- transcript renders queued prompts distinctly.
+--- Index of the queued entry carrying `id`, or nil.
+--- @param id integer
+--- @return integer|nil
+function SessionStore:_queued_index(id)
+  for i, e in ipairs(self.state.queued) do
+    if e.id == id then
+      return i
+    end
+  end
+  return nil
+end
+
+--- The queued prompt texts in order (ids dropped) — for rendering + assertions.
+--- @return string[]
+function SessionStore:queued_texts()
+  local out = {}
+  for i, e in ipairs(self.state.queued) do
+    out[i] = e.text
+  end
+  return out
+end
+
+--- Append a prompt to the queue (held while a turn is in flight). Each entry
+--- gets a STABLE id so the prompt box can track the one it is editing by
+--- IDENTITY as earlier prompts drain — you never get bumped onto a different
+--- prompt mid-edit (requests.md).
 --- @param text string
 function SessionStore:enqueue_prompt(text)
+  self._next_qid = (self._next_qid or 0) + 1
+  local id = self._next_qid
   self:_commit(function(draft)
     local queued = vim.list_extend({}, draft.queued)
-    queued[#queued + 1] = text
+    queued[#queued + 1] = { id = id, text = text }
     draft.queued = queued
+  end)
+end
+
+--- Replace the text of the queued prompt with `id` (in-place editing: the
+--- movable prompt box saving an edit). No-op if that id is no longer queued
+--- (it drained or was removed).
+--- @param id integer
+--- @param text string
+function SessionStore:update_queued(id, text)
+  local idx = self:_queued_index(id)
+  if not idx then
+    return
+  end
+  self:_commit(function(draft)
+    local queued = vim.list_extend({}, draft.queued)
+    queued[idx] = { id = id, text = text }
+    draft.queued = queued
+  end)
+end
+
+--- Remove and return the text of the queued prompt with `id` (the `✕` on a row,
+--- or clearing the box while editing it). Returns nil for an unknown id.
+--- @param id integer
+--- @return string|nil removed
+function SessionStore:remove_queued(id)
+  local idx = self:_queued_index(id)
+  if not idx then
+    return nil
+  end
+  local removed = self.state.queued[idx].text
+  self:_commit(function(draft)
+    local queued = vim.list_extend({}, draft.queued)
+    table.remove(queued, idx)
+    draft.queued = queued
+  end)
+  return removed
+end
+
+--- Append a SENT prompt to the recall history (oldest -> newest). Consecutive
+--- duplicates collapse (a resend of the same text does not stack up); empty is a
+--- no-op. Non-consecutive repeats are kept, so recent order reads naturally.
+--- @param text string
+function SessionStore:push_history(text)
+  if text == "" or self.state.history[#self.state.history] == text then
+    return
+  end
+  self:_commit(function(draft)
+    local history = vim.list_extend({}, draft.history)
+    history[#history + 1] = text
+    draft.history = history
   end)
 end
 
@@ -680,7 +758,7 @@ function SessionStore:dequeue_prompt()
   if #current == 0 then
     return nil
   end
-  local text = current[1]
+  local text = current[1].text
   self:_commit(function(draft)
     local queued = vim.list_extend({}, draft.queued)
     table.remove(queued, 1)
@@ -732,6 +810,7 @@ function SessionStore:reset()
     draft.plan = {}
     draft.status = "idle"
     draft.queued = {}
+    draft.history = {} -- prompt-recall history is per-conversation
     -- a fresh session re-announces its commands; back to just /new meanwhile
     draft.commands = to_completion_items({})
     draft.usage = nil -- forget the previous conversation's token/cost tally

@@ -233,3 +233,190 @@ describe("view.prompt", function()
     handle.unmount()
   end)
 end)
+
+describe("view.prompt queue + history", function()
+  local function pump()
+    vim.wait(100, function()
+      return false
+    end, 5)
+  end
+  local function lines(bufnr)
+    return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  end
+  local function mount_tall(store, callbacks)
+    callbacks = callbacks or {}
+    return mount.floating(prompt.Prompt, {
+      store = store,
+      on_submit = callbacks.on_submit or function() end,
+      on_steer = callbacks.on_steer or function() end,
+    }, { width = 44, height = 16 })
+  end
+  -- row/col (1-based row, 0-based col) of the first cell containing `needle`
+  local function locate(bufnr, needle)
+    for i, l in ipairs(lines(bufnr)) do
+      local col = l:find(needle, 1, true)
+      if col then
+        return i, col - 1
+      end
+    end
+    error("not found in buffer: " .. needle)
+  end
+
+  it("stacks queued prompts as rows above the box, each with a ✕", function()
+    local store = SessionStore:new()
+    store:enqueue_prompt("first queued")
+    store:enqueue_prompt("second queued")
+    local handle = mount_tall(store)
+    pump()
+
+    local text = table.concat(lines(handle.bufnr), "\n")
+    assert.truthy(text:find("⏳", 1, true), "the queued marker")
+    assert.truthy(text:find("✕", 1, true), "the remove button")
+    local first_row = locate(handle.bufnr, "first queued")
+    local second_row = locate(handle.bufnr, "second queued")
+    -- both above the box (the input's border row is below them)
+    assert.is_true(first_row < second_row, "queued prompts render in order")
+    handle.unmount()
+  end)
+
+  it("the ✕ on a queued row removes just that prompt", function()
+    local store = SessionStore:new()
+    store:enqueue_prompt("keep me")
+    store:enqueue_prompt("remove me")
+    local handle = mount_tall(store)
+    pump()
+
+    -- activate the FIRST ✕ (the "keep me" row) via the root interaction layer
+    local row, col = locate(handle.bufnr, "✕")
+    vim.api.nvim_set_current_win(handle.winid)
+    vim.api.nvim_win_set_cursor(handle.winid, { row, col })
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = handle.bufnr })
+    press("<CR>")
+    pump()
+    assert.same({ "remove me" }, store:queued_texts())
+    handle.unmount()
+  end)
+
+  it("<C-Up> moves the box onto the last queued prompt; <C-s> saves the edit in place", function()
+    local store = SessionStore:new()
+    store:enqueue_prompt("alpha")
+    store:enqueue_prompt("bravo")
+    local handle = mount_tall(store)
+    local sub = subwin_of(handle)
+    vim.api.nvim_set_current_win(sub)
+    pump()
+
+    -- navigate up onto the LAST queued prompt: the box now shows its text
+    press("<C-Up>")
+    pump()
+    local boxbuf = vim.api.nvim_win_get_buf(sub)
+    assert.same({ "bravo" }, lines(boxbuf))
+
+    -- edit it and save in place: the queue keeps its order, entry updated
+    vim.api.nvim_buf_set_lines(boxbuf, 0, -1, false, { "bravo EDITED" })
+    press("<C-s>")
+    pump()
+    assert.same({ "alpha", "bravo EDITED" }, store:queued_texts())
+    handle.unmount()
+  end)
+
+  it("keeps the box on the SAME queued prompt (by identity) when an earlier one drains", function()
+    local store = SessionStore:new()
+    store:enqueue_prompt("alpha")
+    store:enqueue_prompt("bravo")
+    store:enqueue_prompt("charlie")
+    local handle = mount_tall(store)
+    local sub = subwin_of(handle)
+    vim.api.nvim_set_current_win(sub)
+    pump()
+
+    -- navigate up twice to edit the MIDDLE queued prompt ("bravo")
+    press("<C-Up>") -- charlie (last)
+    press("<C-Up>") -- bravo
+    pump()
+    local boxbuf = vim.api.nvim_win_get_buf(sub)
+    assert.same({ "bravo" }, lines(boxbuf))
+
+    -- a turn ends → the FRONT prompt ("alpha") drains. "bravo" shifts index but
+    -- the box tracks it by id, so it stays put (no jump onto "charlie").
+    store:dequeue_prompt()
+    pump()
+    assert.same({ "bravo" }, lines(vim.api.nvim_win_get_buf(sub)))
+    handle.unmount()
+  end)
+
+  it("<C-Up>/<C-Down> walk the WHOLE column: queue (nearest first) then sent history", function()
+    local store = SessionStore:new()
+    store:push_history("hist A") -- older
+    store:push_history("hist B") -- newer
+    store:enqueue_prompt("q1")
+    store:enqueue_prompt("q2")
+    local handle = mount_tall(store)
+    local sub = subwin_of(handle)
+    vim.api.nvim_set_current_win(sub)
+    pump()
+    local function box()
+      return table.concat(lines(vim.api.nvim_win_get_buf(sub)), "\n")
+    end
+
+    -- up through the queue nearest-first, then into sent history newest-first
+    local up = { "q2", "q1", "hist B", "hist A" }
+    for i, want in ipairs(up) do
+      press("<C-Up>")
+      pump()
+      assert.equal(want, box(), "C-Up step " .. i)
+    end
+    -- at the top, another <C-Up> stays put
+    press("<C-Up>")
+    pump()
+    assert.equal("hist A", box())
+
+    -- and back down to an empty compose box
+    local down = { "hist B", "q1", "q2", "" }
+    for i, want in ipairs(down) do
+      press("<C-Down>")
+      pump()
+      assert.equal(want, box(), "C-Down step " .. i)
+    end
+    handle.unmount()
+  end)
+
+  it("navigating past the queue recalls a sent prompt as a copy in the box", function()
+    local store = SessionStore:new()
+    store:push_history("an old prompt")
+    local handle = mount_tall(store)
+    local sub = subwin_of(handle)
+    vim.api.nvim_set_current_win(sub)
+    pump()
+
+    -- no queue, so the first <C-Up> lands on the newest sent prompt
+    press("<C-Up>")
+    pump()
+    local boxbuf = vim.api.nvim_win_get_buf(sub)
+    assert.same({ "an old prompt" }, lines(boxbuf))
+    -- the history entry is untouched (recall is a copy)
+    assert.same({ "an old prompt" }, store.state.history)
+    handle.unmount()
+  end)
+
+  it("<C-x> while editing a queued prompt sends it directly, leaving the queue", function()
+    local store = SessionStore:new()
+    store:enqueue_prompt("alpha")
+    store:enqueue_prompt("bravo")
+    local steered = {}
+    local handle = mount_tall(store, { on_steer = function(t)
+      steered[#steered + 1] = t
+    end })
+    local sub = subwin_of(handle)
+    vim.api.nvim_set_current_win(sub)
+    pump()
+
+    press("<C-Up>") -- edit "bravo"
+    pump()
+    press("<C-x>") -- interrupt + send it directly
+    pump()
+    assert.same({ "bravo" }, steered)
+    assert.same({ "alpha" }, store:queued_texts()) -- bravo left the queue
+    handle.unmount()
+  end)
+end)

@@ -44,8 +44,59 @@ describe("session_store initial state", function()
     assert.is_nil(s.permission)
     assert.equal(0, s.permission_count)
     assert.same({}, s.queued)
+    assert.same({}, s.history)
     assert.same({}, s.meta)
     assert.equal("normal", s.permission_mode)
+  end)
+end)
+
+describe("session_store prompt queue + history", function()
+  it("enqueues FIFO; remove_queued and update_queued edit by identity", function()
+    local store = SessionStore:new()
+    store:enqueue_prompt("one")
+    store:enqueue_prompt("two")
+    store:enqueue_prompt("three")
+    assert.same({ "one", "two", "three" }, store:queued_texts())
+
+    -- edit the middle entry by its id (the movable prompt box saving its edit)
+    local id2 = store.state.queued[2].id
+    store:update_queued(id2, "TWO")
+    assert.same({ "one", "TWO", "three" }, store:queued_texts())
+
+    -- remove by id, returning the removed text
+    local id1 = store.state.queued[1].id
+    assert.equal("one", store:remove_queued(id1))
+    assert.same({ "TWO", "three" }, store:queued_texts())
+    -- an unknown id is a nil no-op
+    assert.is_nil(store:remove_queued(999999))
+    assert.same({ "TWO", "three" }, store:queued_texts())
+  end)
+
+  it("queued ids are STABLE across a drain (identity, not position)", function()
+    local store = SessionStore:new()
+    store:enqueue_prompt("one")
+    store:enqueue_prompt("two")
+    store:enqueue_prompt("three")
+    local id_three = store.state.queued[3].id
+
+    -- draining the front removes "one"; "three" keeps its id at a NEW index, so
+    -- a box editing it by id stays put instead of jumping to another prompt
+    store:dequeue_prompt()
+    assert.same({ "two", "three" }, store:queued_texts())
+    assert.equal(id_three, store.state.queued[2].id)
+    assert.equal(2, store:_queued_index(id_three))
+  end)
+
+  it("push_history appends sent prompts, deduping only consecutive repeats", function()
+    local store = SessionStore:new()
+    store:push_history("a")
+    store:push_history("b")
+    store:push_history("b") -- consecutive dup collapses
+    store:push_history("a") -- non-consecutive repeat is kept
+    assert.same({ "a", "b", "a" }, store.state.history)
+    -- empty is a no-op
+    store:push_history("")
+    assert.same({ "a", "b", "a" }, store.state.history)
   end)
 end)
 
@@ -423,9 +474,9 @@ describe("session_store queued prompts", function()
     local before = store.state.queued
     store:enqueue_prompt("second")
     assert.is_false(rawequal(before, store.state.queued))
-    assert.same({ "first", "second" }, store.state.queued)
+    assert.same({ "first", "second" }, store:queued_texts())
     assert.equal("first", store:dequeue_prompt())
-    assert.same({ "second" }, store.state.queued)
+    assert.same({ "second" }, store:queued_texts())
     assert.equal("second", store:dequeue_prompt())
     assert.is_nil(store:dequeue_prompt())
   end)
