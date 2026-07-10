@@ -1,7 +1,7 @@
 -- Default configuration: the ACP-relevant subset carried over from agentic
--- (the provider table is protocol plumbing, not UI). Everything view-related
--- is deliberately absent — the fibrous UI reads its own options once it
--- exists, and starting minimal keeps the config surface honest.
+-- (the provider table is protocol plumbing, not UI), plus a small `view` table
+-- the panel reads for its default geometry. The rest of the view still reads
+-- its own options where it lives; the config surface stays minimal on purpose.
 
 --- @class weave.acp.ACPProviderConfig
 --- @field name string Display name
@@ -10,15 +10,29 @@
 --- @field env? table<string, string>
 --- @field mcpServers? weave.acp.McpServer[] Per-provider override of `mcp_servers`
 
+--- @class weave.ViewConfig Default panel geometry; a per-open opts value overrides.
+--- @field width integer Total docked panel width (columns)
+--- @field sidebar_width integer Sidebar column width (clamped to at most half the panel)
+--- @field prompt_height integer Prompt input height (rows)
+
 --- @class weave.UserConfig
 --- @field debug boolean Log to the debug file (utils/logger.lua)
 --- @field provider string Default provider (a key of `acp_providers`)
 --- @field acp_providers table<string, weave.acp.ACPProviderConfig|nil>
 --- @field mcp_servers weave.acp.McpServer[] MCP servers handed to EVERY provider over ACP (session/new), unless a provider sets its own `mcpServers`. The agent spawns/connects them.
+--- @field view weave.ViewConfig Default panel geometry (width / sidebar_width / prompt_height)
 local ConfigDefault = {
   debug = false,
 
   provider = "claude-agent-acp",
+
+  -- Panel geometry defaults, read by view/panel.lua at open time; each field is
+  -- overridable per call via open()/toggle() opts.
+  view = {
+    width = 100,
+    sidebar_width = 30,
+    prompt_height = 5,
+  },
 
   acp_providers = {
     ["claude-agent-acp"] = {

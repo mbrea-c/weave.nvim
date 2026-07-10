@@ -162,6 +162,22 @@ conversation in the panel.
 | `acp_providers` | `table` | 13 built-ins | Agent launch definitions (see below) |
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
+| `view` | `table` | see below | Default panel geometry |
+
+`view` sets the panel's default geometry; a per-call `open`/`toggle` opt (below)
+overrides it for that panel.
+
+| `view` field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `width` | `integer` | `100` | Total docked panel width (columns) |
+| `sidebar_width` | `integer` | `30` | Sidebar column width (clamped to at most half the panel) |
+| `prompt_height` | `integer` | `5` | Prompt input height (rows) |
+
+```lua
+require("weave").setup({
+  view = { sidebar_width = 40 },   -- a wider sidebar by default
+})
+```
 
 ### Providers
 

@@ -20,12 +20,9 @@ local TranscriptView = require("weave.view.transcript")
 local Transcript = TranscriptView.Transcript
 local Prompt = require("weave.view.prompt").Prompt
 local Sidebar = require("weave.view.sidebar").Sidebar
+local Config = require("weave.config")
 
 local M = {}
-
-local DEFAULT_WIDTH = 100
-local DEFAULT_SIDEBAR_WIDTH = 30
-local DEFAULT_PROMPT_HEIGHT = 5
 
 --- The default ;;<n> answer: pop the HEAD permission and respond with its
 --- n-th option (as numbered in the sidebar). Pop-then-respond — respond only
@@ -94,6 +91,9 @@ end
 --- @field winid integer       the mount's root float
 --- @field host_winid integer  the docked native pane
 --- @field transcript { bufnr: integer, winid: integer }  the transcript container's buffer and float
+--- @field width integer         resolved panel width (opts, else Config.view)
+--- @field sidebar_width integer resolved sidebar width (post half-panel clamp)
+--- @field prompt_height integer resolved prompt height
 --- @field focus_prompt fun()
 --- @field close fun()
 --- @field is_open fun(): boolean
@@ -117,10 +117,11 @@ function M.open(opts)
   local on_restore_picker = opts.on_restore_picker or function() end
   local on_sessions = opts.on_sessions or function() end
 
-  local width = opts.width or DEFAULT_WIDTH
+  -- Geometry: a per-open opt wins, else the configured default (Config.view).
+  local width = opts.width or Config.view.width
   -- The sidebar never eats more than half the panel.
-  local sidebar_width = math.min(opts.sidebar_width or DEFAULT_SIDEBAR_WIDTH, math.floor(width / 2))
-  local prompt_height = opts.prompt_height or DEFAULT_PROMPT_HEIGHT
+  local sidebar_width = math.min(opts.sidebar_width or Config.view.sidebar_width, math.floor(width / 2))
+  local prompt_height = opts.prompt_height or Config.view.prompt_height
 
   local origin_win = vim.api.nvim_get_current_win()
 
@@ -337,6 +338,10 @@ function M.open(opts)
     winid = app.winid,
     host_winid = app.host_winid,
     transcript = transcript,
+    -- the resolved geometry the panel opened with (post config-fallback + clamp)
+    width = width,
+    sidebar_width = sidebar_width,
+    prompt_height = prompt_height,
     focus_prompt = focus_prompt,
     close = close,
     is_open = function()

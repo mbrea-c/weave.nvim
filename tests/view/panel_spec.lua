@@ -58,6 +58,31 @@ describe("view.panel shell", function()
     assert.equal(before_wins, #vim.api.nvim_list_wins())
   end)
 
+  it("resolves panel geometry from Config.view, per-open opts still winning", function()
+    local Config = require("weave.config")
+    -- the geometry defaults live in config now (view-configurable)
+    assert.equal(30, Config.view.sidebar_width)
+
+    -- no per-open sidebar_width: the panel takes it from Config.view (width wide
+    -- enough that the half-panel clamp doesn't bite)
+    local h1 = panel.open({ store = SessionStore:new(), prefs = Prefs:new(), width = 120 })
+    assert.equal(30, h1.sidebar_width)
+    h1.close()
+
+    -- a config override is picked up by a fresh open with no per-open opt
+    local saved = Config.view.sidebar_width
+    Config.view.sidebar_width = 42
+    local h2 = panel.open({ store = SessionStore:new(), prefs = Prefs:new(), width = 120 })
+    assert.equal(42, h2.sidebar_width)
+    h2.close()
+    Config.view.sidebar_width = saved
+
+    -- an explicit per-open opt still overrides the configured default
+    local h3 = panel.open({ store = SessionStore:new(), prefs = Prefs:new(), width = 120, sidebar_width = 18 })
+    assert.equal(18, h3.sidebar_width)
+    h3.close()
+  end)
+
   it("close from OUTSIDE the panel leaves focus where it is", function()
     local handle = open_panel()
     -- a window that has nothing to do with the panel takes focus (like the
