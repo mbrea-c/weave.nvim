@@ -11,6 +11,7 @@
 local ui = require("fibrous.inline.components")
 local SessionStore = require("weave.session_store")
 local Theme = require("weave.view.theme")
+local octant = require("weave.view.octant")
 local use_store = require("weave.view.use_store")
 
 local M = {}
@@ -67,9 +68,78 @@ function M.SessionSection(ctx, props)
   return { comp = ui.col, props = {}, children = rows }
 end
 
---- Session usage: context tokens used / window size with a percent, and the
---- running cost when the agent charges for the turn (ACP usage_update). A free
---- or subscription model reports cost 0, so the cost line is omitted then.
+-- A cell is an octant sub-canvas (2 cols x 4 rows = 8 sub-cells), so the
+-- boundary cell of the bar carries EIGHT sub-levels: fill the left column
+-- bottom-up to a half-lit ▌ (levels 1-4), then the right column bottom-up to a
+-- full █ (levels 5-8). Column-major so the fill reads left-to-right, one octant
+-- resolving what a whole cell would — an 8× finer bar than a cell-granular one.
+local FULL = "█"
+
+--- The boundary glyph for `level` sub-cells lit (1..7), column-major: the left
+--- column fills first (levels 1-4 → up to ▌), then the right (levels 5-7).
+--- @param level integer 1..7
+--- @return integer bitmap
+local function boundary_bits(level)
+  if level <= 4 then
+    return octant.col_fill(level) -- left column, bottom `level` rows
+  end
+  return octant.col_fill(4) + octant.col_fill(level - 4) * 16 -- left full + right rows
+end
+
+--- A horizontal context-usage bar `width` cells wide. Full cells render █; when
+--- the fill lands mid-cell the boundary column is an octant filled to the
+--- nearest eighth (left column bottom-up, then right), so a W-cell bar resolves
+--- 8W steps. The rest is spaces — the row's background tint (UsageSection's
+--- style.hl) shows through as the track, so there is no "empty" glyph. Returned
+--- as a fibrous span list for a `fill = ` label that re-sizes to the section
+--- width (no width threading, like the water widget).
+--- @param fraction number 0..1 (used / window)
+--- @param width integer cells
+--- @param fill_hl string highlight for the lit portion
+--- @return table spans
+function M.context_bar(fraction, width, fill_hl)
+  width = math.max(width, 1)
+  fraction = math.min(math.max(fraction, 0), 1)
+  local sub = math.floor(fraction * width * 8 + 0.5) -- eighth-cell steps (8 per cell)
+  if fraction > 0 and sub == 0 then
+    sub = 1 -- a live context never reads as an empty bar
+  end
+  sub = math.min(sub, width * 8)
+  local full = math.floor(sub / 8)
+  local rem = sub % 8
+  local spans = {}
+  if full > 0 then
+    spans[#spans + 1] = { FULL:rep(full), hl = fill_hl }
+  end
+  if rem > 0 then
+    spans[#spans + 1] = { octant.glyph(boundary_bits(rem)), hl = fill_hl }
+  end
+  local lit = full + (rem > 0 and 1 or 0)
+  if lit < width then
+    -- the unfilled track: bare spaces carrying the same bg tint the fill groups
+    -- do, so lit and unlit cells share one background
+    spans[#spans + 1] = { (" "):rep(width - lit), hl = Theme.USAGE_TRACK_HL }
+  end
+  return spans
+end
+
+--- Fill colour by fullness: green while there is headroom, amber past two
+--- thirds, red near the cap — so context pressure reads without doing the math.
+--- @param pct integer 0..100
+--- @return string
+local function bar_hl(pct)
+  if pct >= 90 then
+    return Theme.USAGE_BAR_HL.high
+  elseif pct >= 66 then
+    return Theme.USAGE_BAR_HL.mid
+  end
+  return Theme.USAGE_BAR_HL.low
+end
+
+--- Session usage: a context-fill bar over the exact figure (used / window with a
+--- percent), and the running cost when the agent charges for the turn (ACP
+--- usage_update). A free or subscription model reports cost 0, so the cost line
+--- is omitted then; a raw token count with no window size stays a plain line.
 --- @param ctx table
 --- @param props { store: weave.store.SessionStore }
 function M.UsageSection(ctx, props)
@@ -78,10 +148,28 @@ function M.UsageSection(ctx, props)
   local rows = { header("Usage") }
   if usage then
     if usage.used and usage.size and usage.size > 0 then
-      local pct = math.floor(usage.used / usage.size * 100 + 0.5)
+      local fraction = usage.used / usage.size
+      local pct = math.floor(fraction * 100 + 0.5)
+      local fill_hl = bar_hl(pct)
+      -- the fill bar, stretched to the section width by `fill` (re-sized on
+      -- resize with no re-render, like the water indicator). Every cell — lit,
+      -- partially lit, or track — carries the same background tint from its span,
+      -- so a partial octant's unlit sub-cells read as the track, not a hole...
       rows[#rows + 1] = {
         comp = ui.label,
-        props = { text = string.format("Context: %s / %s (%d%%)", commas(usage.used), commas(usage.size), pct) },
+        props = {
+          fill = function(w)
+            return M.context_bar(fraction, w, fill_hl)
+          end,
+        },
+      }
+      -- ...with the exact figure centred beneath it
+      rows[#rows + 1] = {
+        comp = ui.label,
+        props = {
+          text = string.format("%s / %s (%d%%)", commas(usage.used), commas(usage.size), pct),
+          align_self = "center",
+        },
       }
     elseif usage.used then
       rows[#rows + 1] = { comp = ui.label, props = { text = "Tokens: " .. commas(usage.used) } }

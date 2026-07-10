@@ -51,10 +51,12 @@ local function press_on(handle, needle)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "xt", false)
 end
 
+local SIDEBAR_WIDTH = 30
+
 local function mount_sidebar(store, prefs)
   return mount.floating(
     sidebar.Sidebar,
-    { store = store, prefs = prefs or Prefs:new() },
+    { store = store, prefs = prefs or Prefs:new(), sidebar_width = SIDEBAR_WIDTH },
     { width = 34, height = 30 }
   )
 end
@@ -81,16 +83,89 @@ describe("view.sidebar", function()
     handle.unmount()
   end)
 
-  it("projects usage live: context used/total with percent, and cost when charged", function()
+  it("context_bar draws a block-octant fill with eighth-cell precision", function()
+    local octant = require("weave.view.octant")
+    -- concat a span list's texts into the rendered glyph row
+    local function row(frac, w)
+      local s = ""
+      for _, sp in ipairs(sidebar.context_bar(frac, w, "Hl")) do
+        s = s .. (type(sp) == "table" and sp[1] or sp)
+      end
+      return s
+    end
+    -- 8 sub-levels per cell (an octant's 2x4 canvas) → 0.25 of a 10-cell bar =
+    -- 20 sub → 2 full + a half-lit ▌ (left column full, level 4)
+    assert.equal("██▌" .. (" "):rep(7), row(0.25, 10))
+    -- exactly full: no track, no partial
+    assert.equal(("█"):rep(10), row(1.0, 10))
+    -- empty: all track (bare spaces — the bg tint is the track)
+    assert.equal((" "):rep(10), row(0.0, 10))
+    -- a live-but-tiny context never reads as empty: at least one sub-cell lit
+    assert.equal(octant.glyph(octant.col_fill(1)) .. (" "):rep(9), row(0.001, 10))
+    -- the boundary cell is column-major: below half-full it is the LEFT column
+    -- filled bottom-up (levels 1-4), past half the RIGHT column joins (levels
+    -- 5-8) until the cell is a full █. 0.1375 of a 10-cell bar = 11 sub →
+    -- 1 full + level-3 (left column, bottom 3 rows).
+    assert.equal("█" .. octant.glyph(octant.col_fill(3)) .. (" "):rep(8), row(0.1375, 10))
+    -- 0.1875 = 15 sub → 1 full + level-7 (left full ▌ + right bottom 3 rows)
+    assert.equal(
+      "█" .. octant.glyph(octant.col_fill(4) + octant.col_fill(3) * 16) .. (" "):rep(8),
+      row(0.1875, 10)
+    )
+  end)
+
+  it("projects usage live: a context bar + centered used/total (percent), and cost when charged", function()
     local store = SessionStore:new()
     local handle = mount_sidebar(store)
 
     store:set_usage({ used = 7837, size = 200000, cost = { amount = 0.42, currency = "USD" } })
     local text = text_of(handle.bufnr)
-    assert.truthy(text:find("7,837 / 200,000", 1, true)) -- thousands-separated
-    assert.truthy(text:find("(4%)", 1, true)) -- 7837/200000 ≈ 3.9% → 4%
+    -- the exact figure stays: thousands-separated, with the rounded percent
+    assert.truthy(text:find("7,837 / 200,000 (4%)", 1, true)) -- 7837/200000 ≈ 3.9% → 4%
     assert.truthy(text:find("$0.42", 1, true))
     assert.falsy(text:find("(no usage yet)", 1, true))
+    -- a two-line block: a fine-grained fill bar (█ lit, a bg-tinted track) over
+    -- the figure, the figure CENTERED under it (not flush left like other rows)
+    local bar_row = locate(handle.bufnr, "█") -- the lit portion of the bar
+    local fig_row, fig_col = locate(handle.bufnr, "7,837 / 200,000")
+    assert.is_true(fig_row == bar_row + 1, "the figure sits directly under the bar")
+    assert.is_true(fig_col > 2, "the figure is centered (indented), not flush left")
+
+    -- the fill tracks the fraction: near-full paints more blocks than near-empty
+    local function block_count(t)
+      local n = 0
+      for _ in t:gmatch("█") do
+        n = n + 1
+      end
+      return n
+    end
+    store:set_usage({ used = 190000, size = 200000 })
+    local full_blocks = block_count(text_of(handle.bufnr))
+    store:set_usage({ used = 2000, size = 200000 })
+    local empty_blocks = block_count(text_of(handle.bufnr))
+    assert.is_true(full_blocks > empty_blocks, "a fuller context paints more blocks")
+
+    -- the fill is coloured by fullness: green with headroom, red near the cap
+    store:set_usage({ used = 50000, size = 200000 })
+    assert.is_true(#marks_with(handle.bufnr, Theme.USAGE_BAR_HL.low) >= 1, "green fill with headroom")
+    store:set_usage({ used = 195000, size = 200000 })
+    assert.is_true(#marks_with(handle.bufnr, Theme.USAGE_BAR_HL.high) >= 1, "red fill near the cap")
+
+    -- every cell shares one background: a partially-lit octant's unlit sub-cells
+    -- must read as the track, not a hole — so the fill groups carry the SAME bg
+    -- as the track group (a span replaces the cell hl, so a node bg won't show)
+    local function bg(hl)
+      return vim.api.nvim_get_hl(0, { name = hl, link = false }).bg
+    end
+    assert.is_true(bg(Theme.USAGE_TRACK_HL) ~= nil, "the track has a visible background")
+    assert.equal(bg(Theme.USAGE_TRACK_HL), bg(Theme.USAGE_BAR_HL.low))
+    assert.equal(bg(Theme.USAGE_TRACK_HL), bg(Theme.USAGE_BAR_HL.high))
+
+    -- only a window size gives a bar; a raw token count stays a plain line
+    store:set_usage({ used = 1234 })
+    local t = text_of(handle.bufnr)
+    assert.truthy(t:find("Tokens: 1,234", 1, true))
+    assert.falsy(t:find("█", 1, true))
 
     -- a zero cost (free/subscription model) shows no cost line, just context
     store:set_usage({ used = 100, size = 200000, cost = { amount = 0, currency = "USD" } })

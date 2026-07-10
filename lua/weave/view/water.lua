@@ -38,59 +38,27 @@ local M = {}
 M.HL = Theme.WATER_HL
 M.LABEL_HL = Theme.WATER_LABEL_HL
 
--- Unicode-16 block-octant glyphs (U+1CD00…), indexed by bitmap+1; left column =
--- bits 0-3 (values 1,2,4,8, TOP→bottom), right column = bits 4-7 (16…128).
--- Borrowed verbatim from neominimap; landmark glyphs pinned in the spec.
-local OCTANT = ""
-  .. " 𜺨𜴀▘𜴉𜴊🯦𜴍𜺣𜴶𜴹𜴺▖𜵅𜵈▌𜺫🮂𜴁𜴂𜴋𜴌𜴎𜴏𜴷𜴸𜴻𜴼𜵆𜵇𜵉𜵊"
-  .. "𜴃𜴄𜴆𜴇𜴐𜴑𜴔𜴕𜴽𜴾𜵁𜵂𜵋𜵌𜵎𜵏▝𜴅𜴈▀𜴒𜴓𜴖𜴗𜴿𜵀𜵃𜵄▞𜵍𜵐▛"
-  .. "𜴘𜴙𜴜𜴝𜴧𜴨𜴫𜴬𜵑𜵒𜵕𜵖𜵡𜵢𜵥𜵦𜴚𜴛𜴞𜴟𜴩𜴪𜴭𜴮𜵓𜵔𜵗𜵘𜵣𜵤𜵧𜵨"
-  .. "🯧𜴠𜴣𜴤𜴯𜴰𜴳𜴴𜵙𜵚𜵝𜵞𜵩𜵪𜵭𜵮𜴡𜴢𜴥𜴦𜴱𜴲𜴵🮅𜵛𜵜𜵟𜵠𜵫𜵬𜵯𜵰"
-  .. "𜺠𜵱𜵴𜵵𜶀𜶁𜶄𜶅▂𜶬𜶯𜶰𜶻𜶼𜶿𜷀𜵲𜵳𜵶𜵷𜶂𜶃𜶆𜶇𜶭𜶮𜶱𜶲𜶽𜶾𜷁𜷂"
-  .. "𜵸𜵹𜵼𜵽𜶈𜶉𜶌𜶍𜶳𜶴𜶷𜶸𜷃𜷄𜷇𜷈𜵺𜵻𜵾𜵿𜶊𜶋𜶎𜶏𜶵𜶶𜶹𜶺𜷅𜷆𜷉𜷊"
-  .. "▗𜶐𜶓▚𜶜𜶝𜶠𜶡𜷋𜷌𜷏𜷐▄𜷛𜷞▙𜶑𜶒𜶔𜶕𜶞𜶟𜶢𜶣𜷍𜷎𜷑𜷒𜷜𜷝𜷟𜷠"
-  .. "𜶖𜶗𜶙𜶚𜶤𜶥𜶨𜶩𜷓𜷔𜷗𜷘𜷡𜷢▆𜷤▐𜶘𜶛▜𜶦𜶧𜶪𜶫𜷕𜷖𜷙𜷚▟𜷣𜷥█"
-
--- Braille dot cells (U+2800…), same bit layout, universal fallback.
-local BRAILLE = ""
-  .. "⠀⠁⠂⠃⠄⠅⠆⠇⡀⡁⡂⡃⡄⡅⡆⡇⠈⠉⠊⠋⠌⠍⠎⠏⡈⡉⡊⡋⡌⡍⡎⡏"
-  .. "⠐⠑⠒⠓⠔⠕⠖⠗⡐⡑⡒⡓⡔⡕⡖⡗⠘⠙⠚⠛⠜⠝⠞⠟⡘⡙⡚⡛⡜⡝⡞⡟"
-  .. "⠠⠡⠢⠣⠤⠥⠦⠧⡠⡡⡢⡣⡤⡥⡦⡧⠨⠩⠪⠫⠬⠭⠮⠯⡨⡩⡪⡫⡬⡭⡮⡯"
-  .. "⠰⠱⠲⠳⠴⠵⠶⠷⡰⡱⡲⡳⡴⡵⡶⡷⠸⠹⠺⠻⠼⠽⠾⠿⡸⡹⡺⡻⡼⡽⡾⡿"
-  .. "⢀⢁⢂⢃⢄⢅⢆⢇⣀⣁⣂⣃⣄⣅⣆⣇⢈⢉⢊⢋⢌⢍⢎⢏⣈⣉⣊⣋⣌⣍⣎⣏"
-  .. "⢐⢑⢒⢓⢔⢕⢖⢗⣐⣑⣒⣓⣔⣕⣖⣗⢘⢙⢚⢛⢜⢝⢞⢟⣘⣙⣚⣛⣜⣝⣞⣟"
-  .. "⢠⢡⢢⢣⢤⢥⢦⢧⣠⣡⣢⣣⣤⣥⣦⣧⢨⢩⢪⢫⢬⢭⢮⢯⣨⣩⣪⣫⣬⣭⣮⣯"
-  .. "⢰⢱⢲⢳⢴⢵⢶⢷⣰⣱⣲⣳⣴⣵⣶⣷⢸⢹⢺⢻⢼⢽⢾⢿⣸⣹⣺⣻⣼⣽⣾⣿"
-
-local SETS = {
-  octant = vim.fn.str2list(OCTANT),
-  braille = vim.fn.str2list(BRAILLE),
-}
+local octant = require("weave.view.octant")
 
 local TOP = 3 -- highest surface row index (0 = bottom … 3 = top), 4 rows
 local REST_S = 1 -- baseline surface: the SECOND row from the bottom
 local GAIN = 1.2 -- displacement → surface-row scaling
 
--- Left-column bit for a SINGLE surface dot at row-from-bottom `s`: the bottom
--- row (s=0) is bit 8, up to the top row (s=3) at bit 1. Surface only — nothing
--- is filled below, exactly like the old wave. Right column is this << 4.
-local DOT = { [0] = 8, [1] = 4, [2] = 2, [3] = 1 }
+-- Glyph tables live in the shared octant module; re-exported so the water API
+-- (and its spec) stay put. A cell's bitmap is `dot(sl) + dot(sr) * 16` (left
+-- column bits 1,2,4,8 TOP→bottom, right column those << 4); the surface is a
+-- single dot per column — nothing filled below, exactly like the old wave.
 
 --- @param bitmap integer 0-255
 --- @param set? "octant"|"braille"
 --- @return string
-function M.glyph(bitmap, set)
-  local codes = SETS[set or "octant"]
-  return vim.fn.list2str({ codes[bitmap + 1] })
-end
+M.glyph = octant.glyph
 
 --- Left-column bit for the surface dot at height `s` (0 = bottom … 3 = top). A
 --- cell is `dot(sl) + dot(sr) * 16` (the right column is the left shifted up 4).
 --- @param s integer 0..3
 --- @return integer
-function M.dot(s)
-  return DOT[s] or (s < 0 and 8 or 1)
-end
+M.dot = octant.dot
 
 -- ── The sim ──────────────────────────────────────────────────────────────────
 

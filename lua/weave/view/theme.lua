@@ -73,6 +73,29 @@ for status, fg in pairs(STATUS_DEFAULT_FG) do
   vim.api.nvim_set_hl(0, M.KIND_TAG_HL[status], { fg = fg, bold = true, default = true })
 end
 
+-- Context-usage bar (sidebar Usage section): a horizontal fill drawn with block
+-- octants (a 2x4 sub-canvas per cell). Full cells are █; the boundary cell fills
+-- an octant column-major — left column bottom-up to a half-lit ▌, then the right
+-- to full — so a W-cell bar resolves 8W steps, one glyph doing a whole cell's
+-- worth of precision. The lit glyphs are FOREGROUND-coloured by fullness (green
+-- with headroom, amber past two thirds, red near the cap — the tool-status
+-- palette); every cell, lit or not, carries the SAME background tint so a
+-- partially-lit octant's unlit sub-cells read as the track, not a hole. The bg
+-- is therefore baked into the fill groups too, not just the track group (a text
+-- span replaces the cell highlight, so a node background wouldn't show under it).
+-- default = true keeps a user override authoritative.
+local USAGE_TRACK_BG = "#3b4261" -- subtle slate under the whole bar row
+M.USAGE_BAR_HL = {
+  low = "WeaveUsageBarLow",
+  mid = "WeaveUsageBarMid",
+  high = "WeaveUsageBarHigh",
+}
+M.USAGE_TRACK_HL = "WeaveUsageBarTrack"
+vim.api.nvim_set_hl(0, M.USAGE_BAR_HL.low, { fg = STATUS_DEFAULT_FG.completed, bg = USAGE_TRACK_BG, default = true })
+vim.api.nvim_set_hl(0, M.USAGE_BAR_HL.mid, { fg = STATUS_DEFAULT_FG.in_progress, bg = USAGE_TRACK_BG, default = true })
+vim.api.nvim_set_hl(0, M.USAGE_BAR_HL.high, { fg = STATUS_DEFAULT_FG.failed, bg = USAGE_TRACK_BG, default = true })
+vim.api.nvim_set_hl(0, M.USAGE_TRACK_HL, { bg = USAGE_TRACK_BG, default = true })
+
 -- Thinking tag: link to @comment as a default so it tracks the theme's
 -- comment colour out of the box, while a user override still wins.
 M.THINKING_TAG_HL = "WeaveThinkingTag"

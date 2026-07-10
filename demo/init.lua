@@ -103,6 +103,15 @@ function client:send_prompt(sid, _prompt, callback)
       sessionUpdate = "agent_thought_chunk",
       content = { text = "The user asked something; let me stage a convincing demo response." },
     })
+    -- Context usage arrives up front and grows each turn (config-plane → the
+    -- sidebar's Usage bar, which fills and shifts green → amber → red as the
+    -- window fills up).
+    h.on_session_update({
+      sessionUpdate = "usage_update",
+      used = math.min(turn * 24000 + 8000, 200000),
+      size = 200000,
+      cost = { amount = turn * 0.021, currency = "USD" },
+    })
   end)
 
   -- Stream the reply word by word, KEEPING the whitespace between chunks —

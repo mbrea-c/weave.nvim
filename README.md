@@ -8,7 +8,7 @@ Gemini, Codex, Copilot, and others. It gives you a docked panel with a live
 transcript, streaming markdown, tool-call and diff previews, permission
 prompts, and multiple concurrent sessions.
 
-The UI is built on [fibrous.nvim](../nui-reactive), a reactive UI framework:
+The UI is built on [fibrous.nvim](https://github.com/mbrea-c/fibrous.nvim), a reactive UI framework:
 ACP events mutate a plain-Lua store and the whole panel — transcript, sidebar,
 prompt — is a pure `state → render` projection of it.
 
@@ -18,7 +18,7 @@ prompt — is a pure `state → render` projection of it.
 
 - **Neovim** — developed and tested on 0.12.x. Older versions may work but
   aren't tested.
-- **[fibrous.nvim](../nui-reactive)** — the UI framework. It is a *peer*
+- **[fibrous.nvim](https://github.com/mbrea-c/fibrous.nvim)** — the UI framework. It is a *peer*
   plugin (not vendored), so it must be on your `runtimepath` alongside this
   plugin.
 - **An ACP agent binary on your `PATH`** — e.g. `claude-agent-acp`, `gemini`,
