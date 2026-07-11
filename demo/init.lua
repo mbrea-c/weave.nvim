@@ -61,6 +61,12 @@ local REPLY = "Sure — I looked at the request and here is what I found. "
   .. "| markdown_table.lua | GFM pipe-table alignment as a pure-text transform | 340 | weave | ported from agentic, plain-Lua testable |\n"
   .. "| markdown.lua | treesitter highlight + conceal + table wiring | 230 | weave | parse on settle, cached per (text, conceal) |\n"
   .. "| transcript.lua | per-entry components in a scroll container | 400 | weave | memoized entries, follow-scroll, nowrap tables |\n"
+  .. "\n"
+  .. "## Math\n"
+  .. "Math also works inline $x = \\sqrt{5}$ and display mode:\n\n"
+  .. "$$\n"
+  .. "\\sum_i \\sqrt{\\frac{5}{2}}\n"
+  .. "$$\n"
 
 local client = {
   state = "connected",
