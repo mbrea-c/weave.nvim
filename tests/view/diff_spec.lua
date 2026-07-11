@@ -1,5 +1,5 @@
 -- The diff component (roadmap R6): an old/new pair rendered as a properly
--- interleaved unified diff — reusable and store-agnostic like view.markdown.
+-- interleaved unified diff — reusable and store-agnostic (props in, vnodes out).
 -- This extracts the transcript's inline append_diff_preview into a component;
 -- the ToolCallEntry spec pins the transcript-side wiring.
 

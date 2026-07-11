@@ -125,18 +125,18 @@ describe("view.transcript entries", function()
     local handle = mount_transcript(store)
     -- Settled: parsed, and conceal_markdown (default on) strips the markers.
     assert.equal("settled bold prose", trimmed(handle.bufnr)[1])
-    assert.equal(1, #marks_with(handle.bufnr, "@markup.strong.markdown_inline"))
+    assert.equal(1, #marks_with(handle.bufnr, "@markup.strong"))
 
     -- A streaming tail renders plain — no parse per tick, markers visible.
     store:set_status("generating")
     store:append_streaming_text("agent", "streaming **loud**")
     assert.equal("streaming **loud**", trimmed(handle.bufnr)[5])
-    assert.equal(1, #marks_with(handle.bufnr, "@markup.strong.markdown_inline"))
+    assert.equal(1, #marks_with(handle.bufnr, "@markup.strong"))
 
     -- Turn end settles it: parsed and concealed like any other entry.
     store:set_status("idle")
     assert.equal("streaming loud", trimmed(handle.bufnr)[5])
-    assert.equal(2, #marks_with(handle.bufnr, "@markup.strong.markdown_inline"))
+    assert.equal(2, #marks_with(handle.bufnr, "@markup.strong"))
     handle.unmount()
   end)
 
@@ -148,9 +148,10 @@ describe("view.transcript entries", function()
     assert.equal("some bold here", trimmed(handle.bufnr)[1])
 
     prefs:toggle("conceal_markdown")
+    -- "Prettify" off shows the raw source, rendered plain (no markdown parse,
+    -- so no @markup highlighting) — the widget's raw path.
     assert.equal("some **bold** here", trimmed(handle.bufnr)[1])
-    -- Markers visible but still highlighted.
-    assert.equal(1, #marks_with(handle.bufnr, "@markup.strong.markdown_inline"))
+    assert.equal(0, #marks_with(handle.bufnr, "@markup.strong"))
     handle.unmount()
   end)
 

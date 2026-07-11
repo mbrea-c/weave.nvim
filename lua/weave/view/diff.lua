@@ -1,5 +1,5 @@
 -- An old/new line pair as a properly INTERLEAVED unified diff (roadmap R6).
--- Store-agnostic like view.markdown — props in, vnodes out — extracted from
+-- Store-agnostic (props in, vnodes out) — extracted from
 -- the transcript's inline diff preview so any view can render one. vim.diff
 -- gives minimal line-level hunks with context and +/-/space gutters; each
 -- line maps to a Diff* highlight (hunk headers dim to @comment).

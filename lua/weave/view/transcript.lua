@@ -9,7 +9,6 @@
 
 local ui = require("fibrous.inline.components")
 local Diff = require("weave.view.diff")
-local Markdown = require("weave.view.markdown")
 local Peek = require("weave.view.peek")
 local Theme = require("weave.view.theme")
 local use_store = require("weave.view.use_store")
@@ -131,19 +130,21 @@ function M.ThoughtEntry(_, props)
 end
 
 --- Agent prose renders FLUSH-LEFT (no marker/indent) so markdown block
---- elements (headings, lists, fenced code) parse at column 0, through the
---- markdown component (R6): `live` while this entry is still streaming (no
---- parse per tick), parsed once + cached when it settles; `conceal` follows
---- the conceal_markdown pref. Both are scalars, so the memo bailout
---- invalidates exactly when they flip.
+--- elements (headings, lists, fenced code) parse at column 0, through fibrous's
+--- built-in `ui.markdown` (a pure-Lua parser feeding the shared document
+--- renderer, with treesitter code highlighting where available). It parses once
+--- and caches when settled; while still streaming (`live`) it renders the raw
+--- text without parsing. The conceal_markdown pref ("Prettify markdown") maps
+--- onto that same raw path: off = show the source, on = render it. Both inputs
+--- are scalars, so the memo bailout invalidates exactly when they flip.
 --- @param props { entry: weave.store.ChatEntry, live: boolean, conceal: boolean }
 function M.AgentEntry(_, props)
   return {
-    comp = Markdown.Markdown,
+    comp = ui.markdown,
     props = {
       text = props.entry.text,
-      live = props.live,
-      conceal = props.conceal,
+      -- streaming OR "prettify off" both render the raw source (no parse)
+      live = props.live or not props.conceal,
       on_key = peek_keys(props.entry),
     },
   }
