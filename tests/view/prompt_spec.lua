@@ -292,6 +292,31 @@ describe("view.prompt queue + history", function()
     handle.unmount()
   end)
 
+  it("renders queued prompts single-line, ellipsized to the row (requests.md)", function()
+    local store = SessionStore:new()
+    store:enqueue_prompt("first line of a long pasted block\nsecond line\nthird line")
+    local handle = mount_tall(store)
+    pump()
+
+    local ls = lines(handle.bufnr)
+    -- exactly ONE row carries the prompt (a pasted block must never stack
+    -- rows into the layout) …
+    local rows = {}
+    for _, l in ipairs(ls) do
+      if l:find("first line", 1, true) then
+        rows[#rows + 1] = l
+      end
+    end
+    assert.equal(1, #rows)
+    -- … cut with a trailing ellipsis, the ✕ still on the row after it
+    assert.truthy(rows[1]:find("…", 1, true))
+    assert.truthy(rows[1]:find("✕", 1, true))
+    for _, l in ipairs(ls) do
+      assert.is_nil(l:find("third line", 1, true))
+    end
+    handle.unmount()
+  end)
+
   it("the ✕ on a queued row removes just that prompt", function()
     local store = SessionStore:new()
     store:enqueue_prompt("keep me")

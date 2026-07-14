@@ -87,8 +87,35 @@ local function wire_completion(store, bufnr)
   })
 end
 
---- One queued-prompt row: a ⏳ marker, the (dimmed) prompt text, and a `✕`
---- button that removes it from the queue (by its stable id).
+--- One line of `text` fitting `w` cells: newlines collapse to spaces and a
+--- cut tail is marked with a trailing `…` — a pasted block must never stack
+--- rows into the layout (requests.md).
+--- @param text string
+--- @param w integer available cells
+--- @return string
+local function ellipsize(text, w)
+  local flat = (text:gsub("%s*\n%s*", " "))
+  if w < 1 then
+    return ""
+  end
+  if vim.api.nvim_strwidth(flat) <= w then
+    return flat
+  end
+  local used, out = 1, {} -- one cell reserved for the ellipsis
+  for ch in flat:gmatch("[%z\1-\127\194-\253][\128-\191]*") do
+    local cw = vim.api.nvim_strwidth(ch)
+    if used + cw > w then
+      break
+    end
+    used = used + cw
+    out[#out + 1] = ch
+  end
+  return table.concat(out) .. "…"
+end
+
+--- One queued-prompt row: a ⏳ marker, the (dimmed) prompt text — one line,
+--- ellipsized to the row via a width-aware `fill` leaf — and a `✕` button
+--- that removes it from the queue (by its stable id).
 --- @param _ table
 --- @param props { store: weave.store.SessionStore, id: integer, text: string }
 function M.QueuedRow(_, props)
@@ -97,7 +124,16 @@ function M.QueuedRow(_, props)
     props = { gap = 1 },
     children = {
       { comp = ui.label, props = { text = "⏳", style = { text_hl = "@comment" } } },
-      { comp = ui.paragraph, props = { grow = 1, text = props.text, style = { text_hl = "@comment" } } },
+      {
+        comp = ui.label,
+        props = {
+          grow = 1,
+          fill = function(w)
+            return ellipsize(props.text, w)
+          end,
+          style = { text_hl = "@comment" },
+        },
+      },
       {
         comp = ui.button,
         props = {
