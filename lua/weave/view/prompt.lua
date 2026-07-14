@@ -188,6 +188,10 @@ function M.Prompt(ctx, props)
     if st.bufnr and vim.api.nvim_buf_is_valid(st.bufnr) then
       vim.api.nvim_buf_set_lines(st.bufnr, 0, -1, false, vim.split(text_for(st.target), "\n", { plain = true }))
     end
+    -- Tell the store which queued entry is under the box: the drain HOLDS it
+    -- (a turn ending mid-edit must not send text out from under the user) and
+    -- releases when the box moves off (requests.md).
+    st.store:set_editing_queued(st.target.kind == "queued" and st.target.id or nil)
   end, { sig })
 
   -- The recall column as IDENTITIES, nearest-first: last queued .. first queued,

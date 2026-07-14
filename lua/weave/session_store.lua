@@ -38,6 +38,7 @@
 --- @field permission weave.store.PendingPermission|nil HEAD of the permission queue (the one shown); nil when none pending
 --- @field permission_count integer Pending permission requests (head + waiting), for "1 of N" display
 --- @field queued { id: integer, text: string }[] Prompts queued while a turn is in flight (sent FIFO on turn end); each carries a stable id so the prompt box tracks the one it edits by identity
+--- @field editing_queued integer|nil Id of the queued prompt the box is currently editing; the drain HOLDS while it is at the head (a prompt is never sent from under the user)
 --- @field history string[] Sent prompts, oldest -> newest, for prompt-box recall (consecutive dups collapsed)
 --- @field meta weave.store.SessionMeta Provider/agent/model/mode metadata
 --- @field permission_mode weave.store.PermissionMode How incoming permission requests are answered
@@ -736,6 +737,20 @@ function SessionStore:remove_queued(id)
   return removed
 end
 
+--- Mark the queued prompt with `id` as under edit (the movable prompt box sits
+--- on it), or clear the mark with nil. While the EDITED entry is at the head,
+--- dequeue_prompt holds — a turn ending never sends text out from under the
+--- user's cursor (requests.md); the session drains it when the mark clears.
+--- @param id integer|nil
+function SessionStore:set_editing_queued(id)
+  if self.state.editing_queued == id then
+    return
+  end
+  self:_commit(function(draft)
+    draft.editing_queued = id
+  end)
+end
+
 --- Append a SENT prompt to the recall history (oldest -> newest). Consecutive
 --- duplicates collapse (a resend of the same text does not stack up); empty is a
 --- no-op. Non-consecutive repeats are kept, so recent order reads naturally.
@@ -751,11 +766,13 @@ function SessionStore:push_history(text)
   end)
 end
 
---- Remove and return the oldest queued prompt, or nil when the queue is empty.
+--- Remove and return the oldest queued prompt; nil when the queue is empty OR
+--- the head is being edited (the drain waits until the user finishes — order
+--- is FIFO, so a held head holds everything behind it too).
 --- @return string|nil text
 function SessionStore:dequeue_prompt()
   local current = self.state.queued
-  if #current == 0 then
+  if #current == 0 or current[1].id == self.state.editing_queued then
     return nil
   end
   local text = current[1].text

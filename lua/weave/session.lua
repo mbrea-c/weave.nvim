@@ -53,7 +53,7 @@ Session.__index = Session
 --- @return weave.Session session
 function Session:new(opts)
   opts = opts or {}
-  return setmetatable({
+  local session = setmetatable({
     _store = SessionStore:new(),
     _client = nil,
     _session_id = nil,
@@ -64,6 +64,21 @@ function Session:new(opts)
     _restoring = false,
     _config = {},
   }, Session)
+  -- A drain held back by an in-progress edit (dequeue_prompt refuses while
+  -- the edited entry is at the head) resumes here: when the box releases (or
+  -- moves to another entry), pick the queue back up. Deferred so the drain
+  -- never runs inside another mutation's notify.
+  local prev_editing
+  session._store:subscribe(function(state)
+    local now = state.editing_queued
+    if now ~= prev_editing then
+      prev_editing = now
+      vim.schedule(function()
+        session:_drain_queue()
+      end)
+    end
+  end)
+  return session
 end
 
 --- The store backing this session; the panel binds to it.
@@ -477,6 +492,18 @@ function Session:_on_turn_end(err)
     return
   end
 
+  self:_drain_queue()
+end
+
+--- Send the next queued prompt, if there is one and nothing holds it back:
+--- no turn in flight, no steer pending, the head not under edit
+--- (dequeue_prompt returns nil for a held head). Called at turn end and when
+--- an edit releases a held queue.
+--- @private
+function Session:_drain_queue()
+  if self._turn_active or self._steer_text or not self:is_ready() then
+    return
+  end
   local next_prompt = self._store:dequeue_prompt()
   if next_prompt then
     self:_send_now(next_prompt)

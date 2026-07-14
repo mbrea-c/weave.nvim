@@ -358,6 +358,34 @@ describe("view.prompt queue + history", function()
     handle.unmount()
   end)
 
+  it("marks the queued prompt under the box as being edited, and unmarks on leave", function()
+    local store = SessionStore:new()
+    store:enqueue_prompt("alpha")
+    store:enqueue_prompt("bravo")
+    local handle = mount_tall(store)
+    local sub = subwin_of(handle)
+    vim.api.nvim_set_current_win(sub)
+    pump()
+    assert.is_nil(store.state.editing_queued)
+
+    -- onto "bravo" (last queued): the store knows it is under the user's cursor
+    press("<C-Up>")
+    pump()
+    assert.equal(store.state.queued[2].id, store.state.editing_queued)
+
+    -- onto "alpha"
+    press("<C-Up>")
+    pump()
+    assert.equal(store.state.queued[1].id, store.state.editing_queued)
+
+    -- back down to compose: released
+    press("<C-Down>")
+    press("<C-Down>")
+    pump()
+    assert.is_nil(store.state.editing_queued)
+    handle.unmount()
+  end)
+
   it("<C-Up>/<C-Down> walk the WHOLE column: queue (nearest first) then sent history", function()
     local store = SessionStore:new()
     store:push_history("hist A") -- older

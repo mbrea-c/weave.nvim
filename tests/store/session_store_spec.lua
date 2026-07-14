@@ -87,6 +87,27 @@ describe("session_store prompt queue + history", function()
     assert.equal(2, store:_queued_index(id_three))
   end)
 
+  it("dequeue holds the HEAD while it is being edited (requests.md)", function()
+    local store = SessionStore:new()
+    store:enqueue_prompt("one")
+    store:enqueue_prompt("two")
+
+    -- the head is under the user's cursor: the drain must wait
+    store:set_editing_queued(store.state.queued[1].id)
+    assert.is_nil(store:dequeue_prompt())
+    assert.same({ "one", "two" }, store:queued_texts())
+
+    -- editing a LATER entry does not hold the head (FIFO order is preserved,
+    -- the queue just stops when the edited entry reaches the front)
+    store:set_editing_queued(store.state.queued[2].id)
+    assert.equal("one", store:dequeue_prompt())
+    assert.is_nil(store:dequeue_prompt())
+
+    -- editing done: the held entry drains with the user's latest text
+    store:set_editing_queued(nil)
+    assert.equal("two", store:dequeue_prompt())
+  end)
+
   it("push_history appends sent prompts, deduping only consecutive repeats", function()
     local store = SessionStore:new()
     store:push_history("a")

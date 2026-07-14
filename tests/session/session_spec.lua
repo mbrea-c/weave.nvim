@@ -174,6 +174,26 @@ describe("session turns", function()
     assert.same({}, store:queued_texts())
   end)
 
+  it("a queued prompt being edited is NOT sent from under the user (requests.md)", function()
+    local session, client, store = started()
+    session:submit("first")
+    session:submit("second")
+    -- the prompt box is sitting on "second" when the turn ends
+    store:set_editing_queued(store.state.queued[1].id)
+
+    client:end_turn()
+    pump()
+    assert.same({ "first" }, client.calls.prompts)
+    assert.same({ "second" }, store:queued_texts())
+    assert.equal("idle", store.state.status)
+
+    -- editing finishes (box drops back to compose) → the held prompt drains
+    store:set_editing_queued(nil)
+    pump()
+    assert.same({ "first", "second" }, client.calls.prompts)
+    assert.same({}, store:queued_texts())
+  end)
+
   it("a turn error lands in the transcript", function()
     local session, client, store = started()
     session:submit("boom")
