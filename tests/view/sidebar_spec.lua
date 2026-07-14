@@ -224,6 +224,40 @@ describe("view.sidebar", function()
     handle.unmount()
   end)
 
+  it("caps a LONG task list into a scrollable viewport (requests.md)", function()
+    local store = SessionStore:new()
+    local plan = {}
+    for i = 1, 30 do
+      plan[i] = { content = "task " .. i, status = "pending" }
+    end
+    store:set_plan(plan, "acp")
+    local handle = mount_sidebar(store)
+    vim.wait(50, function()
+      return false
+    end, 5)
+
+    -- the sections BELOW the tasks survive a long plan: the permission block
+    -- is still on the sidebar, not pushed off the bottom
+    locate(handle.bufnr, "Permissions")
+
+    -- the tail never lands inline — it scrolls inside a tasks viewport (a
+    -- container float over the sidebar)…
+    assert.is_nil(text_of(handle.bufnr):find("task 30", 1, true))
+    local sub
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local cfg = vim.api.nvim_win_get_config(win)
+      if cfg.relative == "win" and cfg.win == handle.winid then
+        sub = win
+      end
+    end
+    assert.is_not_nil(sub, "the tasks viewport float")
+    -- …whose buffer carries the WHOLE plan, head to tail
+    local content = table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sub), 0, -1, false), "\n")
+    assert.truthy(content:find("task 1", 1, true))
+    assert.truthy(content:find("task 30", 1, true))
+    handle.unmount()
+  end)
+
   it("sections are self-contained: TasksSection mounts standalone and updates live", function()
     local store = SessionStore:new()
     local handle = mount.floating(sidebar.TasksSection, { store = store }, { width = 30, height = 6 })

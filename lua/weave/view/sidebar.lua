@@ -226,10 +226,16 @@ function M.HintSection(ctx, props)
   }
 end
 
+-- A plan longer than this scrolls inside a container viewport instead of
+-- pushing the sections below it off the sidebar (requests.md).
+local MAX_TASK_ROWS = 10
+
 --- The plan: one row per task — a status glyph in its status colour, then the
 --- task text, which dims + strikes through once the task is done or failed
 --- (the icon is never struck: colour marks the outcome, the strike the text).
---- Wrapped task text hangs under itself, not under the icon.
+--- Wrapped task text hangs under itself, not under the icon. A long plan is
+--- capped into a scrollable container viewport; short ones stay inline (flat
+--- text, no float).
 --- @param ctx table
 --- @param props { store: weave.store.SessionStore }
 function M.TasksSection(ctx, props)
@@ -238,12 +244,13 @@ function M.TasksSection(ctx, props)
   if #state.plan == 0 then
     rows[2] = dim("(no tasks)")
   else
+    local tasks = {}
     for _, e in ipairs(state.plan) do
       local status = e.status or "pending"
       local icon = Theme.TASK_ICON[status] or Theme.TASK_ICON.pending
       local icon_hl = Theme.TASK_ICON_HL[status]
       local text_hl = (status == "completed" or status == "failed") and Theme.TASK_DONE_HL or nil
-      rows[#rows + 1] = {
+      tasks[#tasks + 1] = {
         comp = ui.row,
         props = { gap = 1 },
         children = {
@@ -251,6 +258,11 @@ function M.TasksSection(ctx, props)
           { comp = ui.paragraph, props = { text = e.content or "", style = text_hl and { text_hl = text_hl } or nil } },
         },
       }
+    end
+    if #state.plan > MAX_TASK_ROWS then
+      rows[#rows + 1] = { comp = ui.container, props = { height = MAX_TASK_ROWS }, children = tasks }
+    else
+      vim.list_extend(rows, tasks)
     end
   end
   return { comp = ui.col, props = {}, children = rows }
