@@ -331,6 +331,9 @@ function M.Prompt(ctx, props)
       },
       on_create = function(bufnr)
         st.bufnr = bufnr
+        -- prompts are markdown; set it BEFORE the completion wiring so the
+        -- ftplugin can't clobber completefunc/iskeyword
+        vim.bo[bufnr].filetype = "markdown"
         wire_completion(props.store, bufnr)
         for _, mode in ipairs({ "n", "i" }) do
           vim.keymap.set(mode, "<C-s>", function()
