@@ -226,43 +226,201 @@ function M.HintSection(ctx, props)
   }
 end
 
--- A plan longer than this scrolls inside a container viewport instead of
--- pushing the sections below it off the sidebar (requests.md).
-local MAX_TASK_ROWS = 10
+-- The sidebar task list caps (requests.md): at most this many items inline,
+-- each clamped to this many wrapped lines; the rest lives behind the
+-- "…see full list" button.
+local MAX_TASKS = 8
+local MAX_TASK_LINES = 3
 
---- The plan: one row per task — a status glyph in its status colour, then the
---- task text, which dims + strikes through once the task is done or failed
---- (the icon is never struck: colour marks the outcome, the strike the text).
---- Wrapped task text hangs under itself, not under the icon. A long plan is
---- capped into a scrollable container viewport; short ones stay inline (flat
---- text, no float).
+--- Which tasks stay on the sidebar when the plan exceeds `max` (requests.md):
+--- hide the oldest COMPLETED items first — they're the least interesting —
+--- then the oldest of any other state, until `max` remain. Plan order is
+--- preserved. Pure, so the hide policy is spec'd directly.
+--- @param plan { content: string, status?: string }[]
+--- @param max integer
+--- @return table shown, integer hidden
+function M.visible_tasks(plan, max)
+  if #plan <= max then
+    return vim.list_slice(plan, 1, #plan), 0
+  end
+  local hide = #plan - max
+  local hidden = {}
+  for i, e in ipairs(plan) do
+    if hide == 0 then
+      break
+    end
+    if (e.status or "pending") == "completed" then
+      hidden[i], hide = true, hide - 1
+    end
+  end
+  for i in ipairs(plan) do
+    if hide == 0 then
+      break
+    end
+    if not hidden[i] then
+      hidden[i], hide = true, hide - 1
+    end
+  end
+  local shown = {}
+  for i, e in ipairs(plan) do
+    if not hidden[i] then
+      shown[#shown + 1] = e
+    end
+  end
+  return shown, #plan - max
+end
+
+--- Greedy word-wrap of `text` into display lines of width <= w cells (the
+--- same policy as fibrous's paragraph wrap: whitespace collapses, words wider
+--- than the line are hard-broken).
+--- @param text string
+--- @param w integer
+--- @return string[]
+local function wrap_words(text, w)
+  local lines = {}
+  local line, lw = "", 0
+  for word in text:gmatch("%S+") do
+    local ww = vim.api.nvim_strwidth(word)
+    if ww > w then
+      if line ~= "" then
+        lines[#lines + 1] = line
+      end
+      -- hard-break: peel w-cell chunks off the front
+      while vim.api.nvim_strwidth(word) > w do
+        local chunk, cells = "", 0
+        for ch in word:gmatch("[%z\1-\127\194-\253][\128-\191]*") do
+          local cw = vim.api.nvim_strwidth(ch)
+          if cells + cw > w then
+            break
+          end
+          chunk, cells = chunk .. ch, cells + cw
+        end
+        lines[#lines + 1] = chunk
+        word = word:sub(#chunk + 1)
+      end
+      line, lw = word, vim.api.nvim_strwidth(word)
+    elseif line == "" then
+      line, lw = word, ww
+    elseif lw + 1 + ww <= w then
+      line, lw = line .. " " .. word, lw + 1 + ww
+    else
+      lines[#lines + 1] = line
+      line, lw = word, ww
+    end
+  end
+  if line ~= "" or #lines == 0 then
+    lines[#lines + 1] = line
+  end
+  return lines
+end
+
+--- Wrap `text` to `w` cells and keep at most `max_lines` lines; a clamped
+--- tail carries a trailing ellipsis (requests.md: "truncate each item at 3
+--- lines"). Pure, spec'd directly.
+--- @param text string
+--- @param w integer
+--- @param max_lines integer
+--- @return string[] lines, boolean truncated
+function M.clamp_lines(text, w, max_lines)
+  w = math.max(w, 4)
+  local lines = wrap_words(text, w)
+  if #lines <= max_lines then
+    return lines, false
+  end
+  local out = vim.list_slice(lines, 1, max_lines)
+  local tail = out[max_lines]
+  while tail ~= "" and vim.api.nvim_strwidth(tail) + 1 > w do
+    tail = vim.fn.strcharpart(tail, 0, vim.fn.strchars(tail) - 1)
+  end
+  out[max_lines] = tail .. "…"
+  return out, true
+end
+
+--- One task row: a status glyph in its status colour, then the task text,
+--- which dims + strikes through once the task is done or failed (the icon is
+--- never struck: colour marks the outcome, the strike the text). `text` may
+--- be pre-clamped lines (sidebar) or the raw content (full list).
+local function task_row(e, text, wrap)
+  local status = e.status or "pending"
+  local icon = Theme.TASK_ICON[status] or Theme.TASK_ICON.pending
+  local icon_hl = Theme.TASK_ICON_HL[status]
+  local text_hl = (status == "completed" or status == "failed") and Theme.TASK_DONE_HL or nil
+  return {
+    comp = ui.row,
+    props = { gap = 1 },
+    children = {
+      { comp = ui.label, props = { text = icon, style = icon_hl and { text_hl = icon_hl } or nil } },
+      { comp = wrap and ui.paragraph or ui.label, props = { text = text, style = text_hl and { text_hl = text_hl } or nil } },
+    },
+  }
+end
+
+--- The FULL plan in its own floating mount (the "…see full list" button):
+--- every item, untruncated, live off the store; q/<Esc> closes.
+--- @param store weave.store.SessionStore
+function M.open_tasks_list(store)
+  local mount = require("fibrous.inline.mount")
+  local function FullList(ctx)
+    local state = use_store(ctx, store)
+    local rows = { header(("Tasks (%d)"):format(#state.plan)) }
+    if #state.plan == 0 then
+      rows[2] = dim("(no tasks)")
+    end
+    for _, e in ipairs(state.plan) do
+      rows[#rows + 1] = task_row(e, e.content or "", true)
+    end
+    return { comp = ui.col, props = {}, children = rows }
+  end
+  local app = mount.floating(FullList, {}, {
+    width = 60,
+    height = math.min(math.max(#store.state.plan + 2, 4), math.max(vim.o.lines - 6, 8)),
+    mode = "scroll",
+    border = "rounded",
+    backdrop = true,
+  })
+  for _, lhs in ipairs({ "q", "<Esc>" }) do
+    vim.keymap.set("n", lhs, function()
+      app.unmount()
+    end, { buffer = app.bufnr, nowait = true, desc = "weave: close task list" })
+  end
+  app.focus()
+  return app
+end
+
+--- The plan (requests.md shape): at most MAX_TASKS rows, each clamped to
+--- MAX_TASK_LINES wrapped lines (ellipsis when cut); overflow hides oldest
+--- completed items first, then oldest of any state; anything hidden or
+--- truncated adds a "…see full list" button opening the whole plan in a
+--- floating mount. Clamped lines hang under the text, not under the icon.
 --- @param ctx table
---- @param props { store: weave.store.SessionStore }
+--- @param props { store: weave.store.SessionStore, width?: integer }
 function M.TasksSection(ctx, props)
   local state = use_store(ctx, props.store)
   local rows = { header("Tasks") }
   if #state.plan == 0 then
     rows[2] = dim("(no tasks)")
   else
-    local tasks = {}
-    for _, e in ipairs(state.plan) do
-      local status = e.status or "pending"
-      local icon = Theme.TASK_ICON[status] or Theme.TASK_ICON.pending
-      local icon_hl = Theme.TASK_ICON_HL[status]
-      local text_hl = (status == "completed" or status == "failed") and Theme.TASK_DONE_HL or nil
-      tasks[#tasks + 1] = {
-        comp = ui.row,
-        props = { gap = 1 },
-        children = {
-          { comp = ui.label, props = { text = icon, style = icon_hl and { text_hl = icon_hl } or nil } },
-          { comp = ui.paragraph, props = { text = e.content or "", style = text_hl and { text_hl = text_hl } or nil } },
+    local shown, hidden = M.visible_tasks(state.plan, MAX_TASKS)
+    -- text width inside the sidebar: its col chrome (left border + x-padding
+    -- = 3) plus the icon column and gap (2)
+    local text_w = math.max((props.width or 30) - 5, 4)
+    local truncated = false
+    for _, e in ipairs(shown) do
+      local lines, clamped = M.clamp_lines(e.content or "", text_w, MAX_TASK_LINES)
+      truncated = truncated or clamped
+      rows[#rows + 1] = task_row(e, table.concat(lines, "\n"), false)
+    end
+    if hidden > 0 or truncated then
+      rows[#rows + 1] = {
+        comp = ui.button,
+        props = {
+          label = "…see full list",
+          style = { text_hl = "@comment" },
+          on_press = function()
+            M.open_tasks_list(props.store)
+          end,
         },
       }
-    end
-    if #state.plan > MAX_TASK_ROWS then
-      rows[#rows + 1] = { comp = ui.container, props = { height = MAX_TASK_ROWS }, children = tasks }
-    else
-      vim.list_extend(rows, tasks)
     end
   end
   return { comp = ui.col, props = {}, children = rows }
@@ -316,7 +474,7 @@ function M.Sidebar(_, props)
       { comp = M.UsageSection, props = { store = props.store } },
       { comp = M.PrefsSection, props = { prefs = props.prefs } },
       { comp = M.HintSection, props = { store = props.store } },
-      { comp = M.TasksSection, props = { store = props.store } },
+      { comp = M.TasksSection, props = { store = props.store, width = props.sidebar_width } },
       { comp = M.PermissionsSection, props = { store = props.store } },
     },
   }

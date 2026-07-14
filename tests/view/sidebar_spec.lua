@@ -224,37 +224,104 @@ describe("view.sidebar", function()
     handle.unmount()
   end)
 
-  it("caps a LONG task list into a scrollable viewport (requests.md)", function()
+  -- The refined task-list spec (requests.md): at most 8 items on the sidebar,
+  -- each clamped to 3 lines with an ellipsis; overflow hides oldest COMPLETED
+  -- items first, then oldest of any state; anything hidden or truncated adds a
+  -- "…see full list" button that opens the whole plan in a floating mount.
+
+  it("visible_tasks hides oldest completed first, then oldest of any state", function()
+    local plan = {}
+    for i = 1, 12 do
+      plan[i] = { content = "task " .. i, status = (i >= 3 and i <= 5) and "completed" or "pending" }
+    end
+    -- 12 items, cap 8 → hide 4: completed 3,4,5 first, then oldest other (1)
+    local shown, hidden = sidebar.visible_tasks(plan, 8)
+    assert.equal(4, hidden)
+    local contents = vim.tbl_map(function(e)
+      return e.content
+    end, shown)
+    assert.same({ "task 2", "task 6", "task 7", "task 8", "task 9", "task 10", "task 11", "task 12" }, contents)
+
+    -- short plans pass through whole
+    local all, none = sidebar.visible_tasks({ { content = "a" }, { content = "b" } }, 8)
+    assert.equal(0, none)
+    assert.equal(2, #all)
+  end)
+
+  it("clamp_lines wraps to width and clamps at max lines with an ellipsis", function()
+    local lines, truncated = sidebar.clamp_lines("alpha bravo charlie delta echo foxtrot golf", 13, 3)
+    assert.is_true(truncated)
+    assert.equal(3, #lines)
+    assert.same({ "alpha bravo", "charlie delta" }, { lines[1], lines[2] })
+    assert.truthy(lines[3]:find("…$"))
+    for _, l in ipairs(lines) do
+      assert.is_true(vim.api.nvim_strwidth(l) <= 13, "line overflows: " .. l)
+    end
+
+    local short, t2 = sidebar.clamp_lines("just two words", 20, 3)
+    assert.is_false(t2)
+    assert.same({ "just two words" }, short)
+  end)
+
+  it("shows at most 8 tasks and a see-full-list button; the tail is hidden", function()
     local store = SessionStore:new()
     local plan = {}
-    for i = 1, 30 do
-      plan[i] = { content = "task " .. i, status = "pending" }
+    for i = 1, 12 do
+      plan[i] = { content = "task " .. i .. " padding", status = i <= 3 and "completed" or "pending" }
     end
     store:set_plan(plan, "acp")
     local handle = mount_sidebar(store)
-    vim.wait(50, function()
-      return false
-    end, 5)
 
-    -- the sections BELOW the tasks survive a long plan: the permission block
-    -- is still on the sidebar, not pushed off the bottom
+    -- hide 4 = completed 1..3 first, then the oldest pending (task 4)
+    local text = text_of(handle.bufnr)
+    for i = 1, 4 do
+      assert.is_nil(text:find("task " .. i .. " ", 1, true), "task " .. i .. " should be hidden")
+    end
+    locate(handle.bufnr, "task 5")
+    locate(handle.bufnr, "task 12")
+    locate(handle.bufnr, "see full list")
+    -- the sections below survive: permission block still on the sidebar
     locate(handle.bufnr, "Permissions")
+    handle.unmount()
+  end)
 
-    -- the tail never lands inline — it scrolls inside a tasks viewport (a
-    -- container float over the sidebar)…
-    assert.is_nil(text_of(handle.bufnr):find("task 30", 1, true))
-    local sub
+  it("clamps a rambling task to 3 lines and opens the FULL list from the button", function()
+    local store = SessionStore:new()
+    local long = "investigate the flaky bench harness on the ci runner and "
+      .. "quantify the noise floor then decide whether the bound is safe OMEGA"
+    store:set_plan({
+      { content = long, status = "in_progress" },
+      { content = "short one", status = "pending" },
+    }, "acp")
+    local handle = mount_sidebar(store)
+
+    -- the sidebar row is clamped: the tail word never renders inline…
+    local text = text_of(handle.bufnr)
+    assert.is_nil(text:find("OMEGA", 1, true))
+    assert.truthy(text:find("…", 1, true))
+    -- …which alone (2 tasks < 8) warrants the see-full-list button
+    locate(handle.bufnr, "see full list")
+
+    -- activating it opens a floating mount carrying the UNTRUNCATED plan
+    press_on(handle, "see full list")
+    local modal
     for _, win in ipairs(vim.api.nvim_list_wins()) do
       local cfg = vim.api.nvim_win_get_config(win)
-      if cfg.relative == "win" and cfg.win == handle.winid then
-        sub = win
+      if cfg.relative == "editor" and win ~= handle.winid then
+        local content = table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, -1, false), "\n")
+        if content:find("OMEGA", 1, true) then
+          modal = win
+        end
       end
     end
-    assert.is_not_nil(sub, "the tasks viewport float")
-    -- …whose buffer carries the WHOLE plan, head to tail
-    local content = table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sub), 0, -1, false), "\n")
-    assert.truthy(content:find("task 1", 1, true))
-    assert.truthy(content:find("task 30", 1, true))
+    assert.is_not_nil(modal, "full task list floating mount with the untruncated text")
+    local content = table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(modal), 0, -1, false), "\n")
+    assert.truthy(content:find("short one", 1, true))
+
+    -- q closes it
+    vim.api.nvim_set_current_win(modal)
+    vim.api.nvim_feedkeys("q", "xt", false)
+    assert.is_false(vim.api.nvim_win_is_valid(modal))
     handle.unmount()
   end)
 
@@ -318,9 +385,12 @@ describe("view.sidebar", function()
     local store = SessionStore:new()
     local handle = mount_sidebar(store)
     store:rotate_hint()
-    -- the shown hint is whatever the store now holds (may wrap: check prefix)
+    -- the shown hint is whatever the store now holds; hints are random and a
+    -- long one WRAPS at the sidebar width, so compare whitespace-collapsed
+    -- (the wrap turns a space into a newline, never more)
     local prefix = store.state.hint:sub(1, 20)
-    assert.truthy(text_of(handle.bufnr):find(prefix, 1, true))
+    local flat = text_of(handle.bufnr):gsub("%s+", " ")
+    assert.truthy(flat:find((prefix:gsub("%s+", " ")), 1, true))
     handle.unmount()
   end)
 end)
