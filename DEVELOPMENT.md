@@ -112,9 +112,14 @@ nix run .#demo-constrained -- 2400    # harsher
 make demo-constrained DEMO_BPS=2400   # same, against the working tree
 ```
 
-Input is not throttled (the slow direction of a remote session is the
-downlink). The make target needs util-linux `script` and `pv` on `PATH`; the
-nix app brings its own.
+The throttle is `demo/slowpty.py`, a pty relay that only reads from nvim at
+the link rate, so the small kernel pty buffer gives nvim real backpressure
+(like a true 9600-baud serial line) and lag stays bounded at a few KB. A
+naive `script | pv` pipeline buffers hundreds of KB in between, which lets
+nvim paint ahead into a queue and shows you frames that are tens of seconds
+stale. Input is not throttled (the slow direction of a remote session is the
+downlink). The make target needs `python3` on `PATH`; the nix app brings its
+own.
 
 ### Types
 

@@ -101,18 +101,18 @@
             exec nvim --clean -u ${self}/demo/init.lua
           '';
           # The same demo through a bandwidth-throttled pty: nvim runs inside a
-          # pty (util-linux `script`) and everything it draws is squeezed
-          # through `pv -L` at N bytes/sec (first argument, default 9600, about
-          # a shabby ssh-over-cellular link). On a local terminal even a
-          # full-screen repaint flushes in microseconds, so per-keystroke
-          # redraw storms are invisible; here a few-KB repaint costs a visible
-          # fraction of a second while row-local damage stays instant. Input is
-          # not throttled (the slow direction of a remote session is the
-          # downlink). Linux-shaped: needs util-linux's `script`.
-          demo-constrained = appWith [ pkgs.util-linux pkgs.pv ] "weave-demo-constrained" ''
+          # pty whose output is capped at N bytes/sec (first argument, default
+          # 9600, about a shabby ssh-over-cellular link). On a local terminal
+          # even a full-screen repaint flushes in microseconds, so
+          # per-keystroke redraw storms are invisible; here a few-KB repaint
+          # costs a visible fraction of a second while row-local damage stays
+          # instant. The throttle is a purpose-built relay (demo/slowpty.py)
+          # rather than `script | pv`, so nvim feels real backpressure and lag
+          # stays bounded instead of queueing up stale frames; input is never
+          # throttled (the slow direction of a remote session is the downlink).
+          demo-constrained = appWith [ pkgs.python3 ] "weave-demo-constrained" ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
-            bps="''${1:-9600}"
-            script -qec "nvim --clean -u ${self}/demo/init.lua" /dev/null | pv -qL "$bps"
+            exec python3 ${self}/demo/slowpty.py "''${1:-9600}" nvim --clean -u ${self}/demo/init.lua
           '';
         }
       );
