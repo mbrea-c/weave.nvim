@@ -12,8 +12,7 @@ local Theme = require("weave.view.theme")
 
 local function subwin_of(handle)
   for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local cfg = vim.api.nvim_win_get_config(win)
-    if cfg.relative == "win" and cfg.win == handle.winid then
+    if vim.w[win].fibrous_anchor == handle.winid then
       return win
     end
   end
