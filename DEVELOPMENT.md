@@ -100,6 +100,22 @@ make demo           # same, against the working tree
 `demo` honors `FIBROUS_PATH` as well, so it is also the quickest way to eyeball a
 fibrous change through weave's UI.
 
+A local terminal swallows even a full-screen repaint in microseconds, so
+per-keystroke redraw storms (the tmux + ssh flicker class of bug) are
+invisible in the plain demo. The constrained variant runs the same demo inside
+a pty whose output is throttled to a fixed byte rate, so excessive draw cost
+shows up as lag you can feel:
+
+```sh
+nix run .#demo-constrained            # 9600 bytes/sec, a shabby remote link
+nix run .#demo-constrained -- 2400    # harsher
+make demo-constrained DEMO_BPS=2400   # same, against the working tree
+```
+
+Input is not throttled (the slow direction of a remote session is the
+downlink). The make target needs util-linux `script` and `pv` on `PATH`; the
+nix app brings its own.
+
 ### Types
 
 Source is annotated with [LuaCATS](https://luals.github.io/wiki/annotations/) so

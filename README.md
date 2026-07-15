@@ -291,6 +291,8 @@ Against the working tree (fibrous from the sibling checkout, or set
     make bench       # benchmarks (BENCH_N=… sizes the workload)
     make demo        # the UI in a clean interactive nvim, against a scripted
                      # agent — streaming, tool calls, permissions (:qa quits)
+    make demo-constrained  # same, through a pty throttled to DEMO_BPS
+                           # bytes/sec (default 9600): draw cost as felt lag
 
 Against the flake's snapshot of the source (staged/committed files, fibrous
 from the PINNED input — `nix flake update fibrous` to bump it):
@@ -298,6 +300,7 @@ from the PINNED input — `nix flake update fibrous` to bump it):
     nix run .#test   # also: nix flake check
     nix run .#bench
     nix run .#demo   # also the default: nix run .
+    nix run .#demo-constrained -- 2400   # the demo over a simulated slow link
 
 `nix develop` gives a shell with neovim, make, lua-language-server, and stylua.
 

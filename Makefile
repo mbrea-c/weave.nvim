@@ -48,3 +48,15 @@ bench-panel-term:
 .PHONY: demo
 demo:
 	$(NVIM_BIN) --clean -u demo/init.lua
+
+# The demo through a bandwidth-throttled pty, like a slow ssh link: everything
+# nvim draws is capped at DEMO_BPS bytes/sec, so redraw storms that flush
+# invisibly fast on a local terminal become visible lag. Needs util-linux
+# `script` and `pv` on PATH (the nix app, `nix run .#demo-constrained`, brings
+# its own).
+#   make demo-constrained
+#   make demo-constrained DEMO_BPS=2400
+DEMO_BPS ?= 9600
+.PHONY: demo-constrained
+demo-constrained:
+	script -qec "$(NVIM_BIN) --clean -u demo/init.lua" /dev/null | pv -qL $(DEMO_BPS)
