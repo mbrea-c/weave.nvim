@@ -31,7 +31,7 @@ local ConfigDefault = {
   view = {
     width = 100,
     sidebar_width = 30,
-    prompt_height = 5,
+    prompt_height = 6,
   },
 
   acp_providers = {
