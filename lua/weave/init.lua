@@ -10,6 +10,7 @@ local Config = require("weave.config")
 local Logger = require("weave.utils.logger")
 local Panel = require("weave.view.panel")
 local Registry = require("weave.registry")
+local SessionDetails = require("weave.view.session_details")
 local SessionModal = require("weave.view.session_modal")
 local SessionSource = require("weave.session_source")
 
@@ -50,6 +51,9 @@ local function open_panel(entry, opts)
   panel_opts.prompt_height = opts.prompt_height
   panel_opts.on_sessions = function()
     M.sessions()
+  end
+  panel_opts.on_session_details = function()
+    SessionDetails.open({ session = entry.session })
   end
   panels[vim.api.nvim_get_current_tabpage()] = {
     handle = Panel.open(panel_opts),
@@ -240,6 +244,16 @@ function M.sessions(opts)
   local get_instance = opts.get_instance or injected_get_instance
   return SessionModal.open({
     on_select = select_session,
+    -- a row's ⓘ: full details for THAT session, current or not; its Open in
+    -- panel action is the same selection the row's <CR> performs
+    on_details = function(entry)
+      SessionDetails.open({
+        session = entry.session,
+        on_open = function()
+          select_session(entry)
+        end,
+      })
+    end,
     on_new = function()
       pick_provider(function(provider)
         select_session(Registry.add({ provider = provider, get_instance = get_instance }))

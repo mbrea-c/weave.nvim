@@ -27,9 +27,13 @@ local SessionStore = require("weave.session_store")
 --- @field id string Value sent to the agent
 --- @field label string Human label for the picker
 
---- Normalised model/mode config captured at session creation. `set(id)` knows
---- whether to call set_model/set_mode (Kiro) or set_config_option (ACP).
+--- One selectable config kind captured at session creation: the Kiro legacy
+--- pair (model/mode) or ANY ACP configOption category (model, mode,
+--- thought_level, ...). `set(id)` knows whether to call set_model/set_mode
+--- (Kiro) or set_config_option (ACP).
 --- @class weave.session.ConfigKind
+--- @field key string category key ("model", "mode", "thought_level", ...)
+--- @field label string human label for the kind ("Model", "Thinking effort")
 --- @field current? string
 --- @field available weave.session.Option[]
 --- @field set fun(id: string, cb: fun(ok: boolean)): nil
@@ -43,7 +47,8 @@ local SessionStore = require("weave.session_store")
 --- @field _turn_active boolean Whether a prompt turn is currently in flight
 --- @field _steer_text? string Prompt to resend once a steered turn ends as cancelled
 --- @field _restoring boolean Whether a session/load history replay is in flight
---- @field _config { model?: weave.session.ConfigKind, mode?: weave.session.ConfigKind }
+--- @field _config table<string, weave.session.ConfigKind> by category key
+--- @field _config_order string[] category keys in capture order
 local Session = {}
 Session.__index = Session
 
@@ -63,6 +68,7 @@ function Session:new(opts)
     _steer_text = nil,
     _restoring = false,
     _config = {},
+    _config_order = {},
   }, Session)
   -- A drain held back by an in-progress edit (dequeue_prompt refuses while
   -- the edited entry is at the head) resumes here: when the box releases (or
@@ -216,8 +222,53 @@ function Session:_publish_meta()
   })
 end
 
+--- The selectable config kinds captured from the session, in capture order —
+--- the details window's editable fields. Live ConfigKind references: `current`
+--- tracks set_config successes.
+--- @return weave.session.ConfigKind[]
+function Session:config_kinds()
+  local out = {}
+  for _, key in ipairs(self._config_order) do
+    out[#out + 1] = self._config[key]
+  end
+  return out
+end
+
+--- Apply a config choice: validate it against the captured options, send it
+--- through the kind's `set` closure, and on success track `current` and
+--- mirror the option's label into the sidebar meta.
+--- @param key string category key ("model", "mode", "thought_level", ...)
+--- @param id string option id to select
+--- @param cb? fun(ok: boolean)
+function Session:set_config(key, id, cb)
+  cb = cb or function() end
+  local cfg = self._config[key]
+  local option
+  for _, o in ipairs(cfg and cfg.available or {}) do
+    if o.id == id then
+      option = o
+    end
+  end
+  if not option then
+    cb(false)
+    return
+  end
+  cfg.set(id, function(ok)
+    vim.schedule(function()
+      if not ok then
+        Logger.notify("Failed to set " .. cfg.label .. ".", vim.log.levels.ERROR)
+        cb(false)
+        return
+      end
+      cfg.current = id
+      self._store:set_meta({ [key] = option.label })
+      cb(true)
+    end)
+  end)
+end
+
 --- Show a picker for a config kind ("model" | "mode") and apply the choice
---- via its captured `set` closure, updating the sidebar meta on success.
+--- via set_config.
 --- @param kind "model" | "mode"
 function Session:show_config_picker(kind)
   local cfg = self._config[kind]
@@ -236,38 +287,38 @@ function Session:show_config_picker(kind)
     if not choice then
       return
     end
-    cfg.set(choice.id, function(ok)
-      vim.schedule(function()
-        if not ok then
-          Logger.notify("Failed to set " .. kind .. ".", vim.log.levels.ERROR)
-          return
-        end
-        cfg.current = choice.id
-        self._store:set_meta({ [kind] = choice.label })
-      end)
-    end)
+    self:set_config(kind, choice.id)
   end)
 end
 
---- Capture selectable model/mode options from a session-creation response,
+--- Capture the selectable config kinds from a session-creation response,
 --- normalising the two provider shapes:
 ---   * Kiro legacy: response.models / response.modes (availableX + currentX),
 ---     changed via set_model / set_mode.
----   * ACP standard: response.configOptions[] with category model|mode,
----     changed via set_config_option.
+---   * ACP standard: response.configOptions[] — EVERY category (model, mode,
+---     thought_level, ...), changed via set_config_option.
 --- Each kind's `set(id, cb)` closure reads self._session_id at CALL time —
 --- config is process-level and may outlive the session it was captured from.
 --- @private
 --- @param response table SessionCreationResponse
 function Session:_capture_config(response)
-  local config = {}
+  local config, order = {}, {}
+
+  local function capture(key, kind)
+    if not config[key] then
+      order[#order + 1] = key
+    end
+    kind.key = key
+    config[key] = kind
+  end
 
   if response.models then
     local available = {}
     for _, m in ipairs(response.models.availableModels or {}) do
       available[#available + 1] = { id = m.modelId, label = m.name }
     end
-    config.model = {
+    capture("model", {
+      label = "Model",
       current = response.models.currentModelId,
       available = available,
       set = function(id, cb)
@@ -275,7 +326,7 @@ function Session:_capture_config(response)
           cb(not err)
         end)
       end,
-    }
+    })
   end
 
   if response.modes then
@@ -283,7 +334,8 @@ function Session:_capture_config(response)
     for _, m in ipairs(response.modes.availableModes or {}) do
       available[#available + 1] = { id = m.id, label = m.name }
     end
-    config.mode = {
+    capture("mode", {
+      label = "Mode",
       current = response.modes.currentModeId,
       available = available,
       set = function(id, cb)
@@ -291,30 +343,32 @@ function Session:_capture_config(response)
           cb(not err)
         end)
       end,
-    }
+    })
   end
 
   for _, opt in ipairs(response.configOptions or {}) do
-    local category = opt.category
-    if category == "model" or category == "mode" then
-      local available = {}
-      for _, o in ipairs(opt.options or {}) do
-        available[#available + 1] = { id = o.value, label = o.name }
-      end
-      local config_id = opt.id
-      config[category] = {
-        current = opt.currentValue,
-        available = available,
-        set = function(id, cb)
-          self._client:set_config_option(self._session_id, config_id, id, function(_r, err)
-            cb(not err)
-          end)
-        end,
-      }
+    local available = {}
+    for _, o in ipairs(opt.options or {}) do
+      available[#available + 1] = { id = o.value, label = o.name }
     end
+    local config_id = opt.id
+    -- opt.name is the agent's own label; fall back to a title-cased category
+    -- key ("thought_level" → "Thought level") for agents that omit it
+    local label = opt.name or (opt.category:sub(1, 1):upper() .. opt.category:sub(2):gsub("_", " "))
+    capture(opt.category, {
+      label = label,
+      current = opt.currentValue,
+      available = available,
+      set = function(id, cb)
+        self._client:set_config_option(self._session_id, config_id, id, function(_r, err)
+          cb(not err)
+        end)
+      end,
+    })
   end
 
   self._config = config
+  self._config_order = order
 end
 
 --- @private

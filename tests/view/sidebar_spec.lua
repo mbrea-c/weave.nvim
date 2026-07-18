@@ -190,6 +190,28 @@ describe("view.sidebar", function()
     handle.unmount()
   end)
 
+  it("activating the Session section opens the details handler (requests.md)", function()
+    local store = SessionStore:new()
+    local opened = 0
+    local handle = mount.floating(sidebar.Sidebar, {
+      store = store,
+      prefs = Prefs:new(),
+      sidebar_width = SIDEBAR_WIDTH,
+      on_details = function()
+        opened = opened + 1
+      end,
+    }, { width = 34, height = 30 })
+
+    store:set_meta({ provider = "Kiro ACP", agent = "kiro 1.0", model = "sonnet", mode = "dev" })
+    -- <CR> anywhere on the meta block activates: first row…
+    press_on(handle, "Provider: Kiro ACP")
+    assert.equal(1, opened)
+    -- …and the last row alike (one interactable block, not one lucky line)
+    press_on(handle, "Mode: dev")
+    assert.equal(2, opened)
+    handle.unmount()
+  end)
+
   it("plan tasks: status glyphs with coloured icons; done/failed text struck through", function()
     local store = SessionStore:new()
     store:set_plan({

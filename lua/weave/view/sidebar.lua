@@ -49,23 +49,36 @@ local function fmt_cost(cost)
 end
 
 --- Session metadata (provider/agent/model/mode), or a connecting placeholder
---- before the first set_meta.
+--- before the first set_meta. With `on_details` the whole meta block is ONE
+--- bare-button interactable (requests.md: activating the section opens the
+--- session details modal) — hover marks it, <CR> anywhere on it activates.
 --- @param ctx table
---- @param props { store: weave.store.SessionStore }
+--- @param props { store: weave.store.SessionStore, on_details?: fun() }
 function M.SessionSection(ctx, props)
   local state = use_store(ctx, props.store)
-  local rows = { header("Session") }
+  local lines = {}
   local labels = { { "provider", "Provider" }, { "agent", "Agent" }, { "model", "Model" }, { "mode", "Mode" } }
   for _, pair in ipairs(labels) do
     local value = state.meta[pair[1]]
     if value then
-      rows[#rows + 1] = { comp = ui.label, props = { text = pair[2] .. ": " .. value } }
+      lines[#lines + 1] = pair[2] .. ": " .. value
     end
   end
-  if #rows == 1 then
-    rows[2] = dim("(connecting…)")
+  local body
+  if #lines == 0 then
+    body = dim("(connecting…)")
+  else
+    body = { comp = ui.label, props = { text = table.concat(lines, "\n") } }
   end
-  return { comp = ui.col, props = {}, children = rows }
+  if props.on_details then
+    body.comp = ui.button
+    body.props.label = body.props.text
+    body.props.text = nil
+    body.props.theme = false -- no chip chrome: the block reads as plain rows
+    body.props.style = vim.tbl_extend("force", body.props.style or {}, { _hover = { hl = "FibrousHover" } })
+    body.props.on_press = props.on_details
+  end
+  return { comp = ui.col, props = {}, children = { header("Session"), body } }
 end
 
 -- A cell is an octant sub-canvas (2 cols x 4 rows = 8 sub-cells), so the
@@ -456,7 +469,7 @@ function M.PermissionsSection(ctx, props)
 end
 
 --- Pure composition — every section subscribes to its own store slice.
---- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.view.Prefs }
+--- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.view.Prefs, on_details?: fun() }
 function M.Sidebar(_, props)
   return {
     comp = ui.col,
@@ -470,7 +483,7 @@ function M.Sidebar(_, props)
         },
     }},
     children = {
-      { comp = M.SessionSection, props = { store = props.store } },
+      { comp = M.SessionSection, props = { store = props.store, on_details = props.on_details } },
       { comp = M.UsageSection, props = { store = props.store } },
       { comp = M.PrefsSection, props = { prefs = props.prefs } },
       { comp = M.HintSection, props = { store = props.store } },

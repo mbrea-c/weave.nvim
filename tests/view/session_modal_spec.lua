@@ -120,6 +120,33 @@ describe("view.session_modal", function()
     handle.close()
   end)
 
+  it("a row's ⓘ hands the entry to on_details and closes the modal (requests.md)", function()
+    Registry.add({ provider = "prov-a", get_instance = get_instance })
+    local b = Registry.add({ provider = "prov-b", get_instance = get_instance })
+    pump()
+
+    local detailed
+    local handle = SessionModal.open({
+      on_select = function() end,
+      on_details = function(entry)
+        detailed = entry
+      end,
+    })
+    local row = locate(handle.bufnr, "prov-b")
+    local _, col = locate(handle.bufnr, "ⓘ", row)
+    activate(handle, row, col)
+    assert.rawequal(b, detailed)
+    assert.is_false(handle.is_open())
+  end)
+
+  it("without on_details the rows carry no ⓘ", function()
+    Registry.add({ provider = "prov-a", get_instance = get_instance })
+    pump()
+    local handle = SessionModal.open({ on_select = function() end })
+    assert.is_nil(buffer_text(handle.bufnr):find("ⓘ", 1, true))
+    handle.close()
+  end)
+
   it("new-session and load-saved actions reach their callbacks", function()
     Registry.add({ provider = "prov-a", get_instance = get_instance })
     pump()

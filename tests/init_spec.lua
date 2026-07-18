@@ -191,6 +191,84 @@ describe("weave entrypoint", function()
     pump()
   end)
 
+  -- The window (if any) whose buffer holds `needle`, with the buffer.
+  local function win_with(needle)
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local buf = vim.api.nvim_win_get_buf(win)
+      local text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+      if text:find(needle, 1, true) then
+        return win, buf
+      end
+    end
+  end
+
+  it("the modal's ⓘ opens the details window; Open in panel swaps to that session", function()
+    local Registry = require("weave.registry")
+    local get = function(_n, on_ready)
+      local c = fake_client()
+      on_ready(c)
+      return c
+    end
+
+    weave.open({ get_instance = get, width = 45 })
+    pump()
+    weave.get_session():submit("alpha question")
+    local b = Registry.add({ get_instance = get })
+    pump()
+
+    local modal = weave.sessions()
+    local row = locate(modal.bufnr, "(no messages yet)")
+    local line = vim.api.nvim_buf_get_lines(modal.bufnr, row - 1, row, false)[1]
+    activate(modal, row, line:find("ⓘ", 1, true) - 1)
+    pump()
+    assert.is_false(modal.is_open())
+
+    -- the details window is up for the ROW's session (not the tab's), and its
+    -- Open in panel action makes that session the tab's selection
+    local dwin, dbuf = win_with("Session details")
+    assert.is_not_nil(dwin)
+    local drow, dcol = locate(dbuf, "Open in panel")
+    vim.api.nvim_set_current_win(dwin)
+    vim.api.nvim_win_set_cursor(dwin, { drow, dcol })
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = dbuf })
+    press("<CR>")
+    pump()
+
+    assert.is_nil(win_with("Session details"))
+    assert.rawequal(b.session, weave.get_session())
+    assert.is_true(weave.is_open())
+    weave.stop()
+    pump()
+  end)
+
+  it("activating the sidebar's Session section opens details for the tab's session", function()
+    local get = function(_n, on_ready)
+      local c = fake_client()
+      on_ready(c)
+      return c
+    end
+    weave.open({ get_instance = get, width = 45 })
+    pump()
+
+    -- the sidebar renders in the panel's root canvas: activate the meta block
+    local pwin, pbuf = win_with("Provider: ")
+    assert.is_not_nil(pwin)
+    local prow, pcol = locate(pbuf, "Provider: ")
+    vim.api.nvim_set_current_win(pwin)
+    vim.api.nvim_win_set_cursor(pwin, { prow, pcol })
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = pbuf })
+    press("<CR>")
+    pump()
+
+    local dwin = win_with("Session details")
+    assert.is_not_nil(dwin)
+    vim.api.nvim_set_current_win(dwin)
+    press("q")
+    assert.is_nil(win_with("Session details"))
+    weave.stop()
+    pump()
+  end)
+
   it("closing the panel-bound session from the modal keeps the modal focused", function()
     local Registry = require("weave.registry")
     local get = function(_n, on_ready)

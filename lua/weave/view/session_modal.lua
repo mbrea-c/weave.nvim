@@ -68,6 +68,17 @@ local function Modal(_, props)
           },
         },
         { comp = ui.label, props = { text = " " } },
+        -- ⓘ opens the session details window for THIS row's session
+        -- (requests.md), whether or not it is the tab's selection
+        props.on_details and {
+          comp = ui.button,
+          props = {
+            label = "ⓘ",
+            on_press = function()
+              props.on_details(entry)
+            end,
+          },
+        } or { comp = ui.label, props = { text = "" } },
         {
           comp = ui.button,
           props = {
@@ -91,9 +102,11 @@ local function Modal(_, props)
       { comp = ui.button, props = { label = "↺ load saved…", on_press = props.on_load_saved } },
     },
   }
+  local hint = props.on_details and "<CR> select · <Tab> cycle · ⓘ details · ✕ close session · q close"
+    or "<CR> select · <Tab> cycle · ✕ close session · q close"
   children[#children + 1] = {
     comp = ui.label,
-    props = { text = { { "<CR> select · <Tab> cycle · ✕ close session · q close", hl = "Comment" } } },
+    props = { text = { { hint, hl = "Comment" } } },
   }
 
   return { comp = ui.col, props = {}, children = children }
@@ -107,8 +120,9 @@ end
 --- @field is_open fun(): boolean
 
 --- Open the modal for the CURRENT tabpage.
---- @param opts { registry?: table, on_select: fun(entry: weave.registry.Entry), on_new?: fun(), on_load_saved?: fun() }
----   on_select/on_new/on_load_saved run AFTER the modal closes itself.
+--- @param opts { registry?: table, on_select: fun(entry: weave.registry.Entry), on_details?: fun(entry: weave.registry.Entry), on_new?: fun(), on_load_saved?: fun() }
+---   on_select/on_details/on_new/on_load_saved run AFTER the modal closes
+---   itself; on_details (a row's ⓘ) opens the session details window.
 --- @return weave.view.SessionModalHandle handle
 function M.open(opts)
   local registry = opts.registry or require("weave.registry")
@@ -137,6 +151,10 @@ function M.open(opts)
         registry.close(entry.key)
         refresh()
       end,
+      on_details = opts.on_details and function(entry)
+        close()
+        opts.on_details(entry)
+      end or nil,
       on_new = function()
         close()
         if opts.on_new then

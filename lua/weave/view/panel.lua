@@ -80,7 +80,12 @@ local function Panel(_, props)
       },
       {
         comp = Sidebar,
-        props = { sidebar_width = props.sidebar_width, store = props.store, prefs = props.prefs }
+        props = {
+          sidebar_width = props.sidebar_width,
+          store = props.store,
+          prefs = props.prefs,
+          on_details = props.on_session_details,
+        },
       },
     },
   }
@@ -99,7 +104,7 @@ end
 --- @field is_open fun(): boolean
 
 --- Open the panel.
---- @param opts { store: weave.store.SessionStore, prefs: weave.view.Prefs, on_submit?: fun(text: string), on_steer?: fun(text: string), on_cancel?: fun(), on_permission?: fun(index: integer), on_cycle_permission_mode?: fun(), on_pick_model?: fun(), on_pick_mode?: fun(), on_restore_picker?: fun(), on_sessions?: fun(), width?: integer, sidebar_width?: integer, prompt_height?: integer }
+--- @param opts { store: weave.store.SessionStore, prefs: weave.view.Prefs, on_submit?: fun(text: string), on_steer?: fun(text: string), on_cancel?: fun(), on_permission?: fun(index: integer), on_cycle_permission_mode?: fun(), on_pick_model?: fun(), on_pick_mode?: fun(), on_restore_picker?: fun(), on_sessions?: fun(), on_session_details?: fun(), width?: integer, sidebar_width?: integer, prompt_height?: integer }
 --- @return weave.view.PanelHandle handle
 function M.open(opts)
   local store = opts.store
@@ -137,6 +142,7 @@ function M.open(opts)
     prompt_height = prompt_height,
     on_submit = on_submit,
     on_steer = on_steer,
+    on_session_details = opts.on_session_details,
     on_transcript_create = function(bufnr, winid)
       transcript.bufnr, transcript.winid = bufnr, winid
     end,

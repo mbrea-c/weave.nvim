@@ -22,7 +22,7 @@ local function fake_client(session_response)
     -- session/list (real listing providers set this; Kiro doesn't — see
     -- session_source_spec for the filesystem fallback)
     agent_capabilities = { sessionCapabilities = { list = true } },
-    calls = { prompts = {}, cancel_turns = 0, cancel_sessions = 0, set_model = {}, set_mode = {} },
+    calls = { prompts = {}, cancel_turns = 0, cancel_sessions = 0, set_model = {}, set_mode = {}, set_config = {} },
     _prompt_cbs = {},
   }
   function client:create_session(handlers, callback, _mcp)
@@ -52,6 +52,10 @@ local function fake_client(session_response)
   end
   function client:set_mode(_session_id, id, cb)
     self.calls.set_mode[#self.calls.set_mode + 1] = id
+    cb({}, nil)
+  end
+  function client:set_config_option(_session_id, config_id, value, cb)
+    self.calls.set_config[#self.calls.set_config + 1] = { config_id, value }
     cb({}, nil)
   end
   --- session/list: scripted via client.saved_sessions / client.list_err.
@@ -366,6 +370,94 @@ describe("session permissions and /new", function()
     assert.same({}, store.state.entries)
     assert.equal("kept", store.state.meta.provider)
     assert.is_true(session:is_ready())
+  end)
+end)
+
+describe("session config kinds", function()
+  --- A session response carrying model AND a non-model/mode category
+  --- (thought_level), the shape the details window consumes.
+  local function response()
+    return {
+      sessionId = "s1",
+      configOptions = {
+        {
+          id = "opt-model",
+          category = "model",
+          name = "Model",
+          currentValue = "m1",
+          options = { { value = "m1", name = "One" }, { value = "m2", name = "Two" } },
+        },
+        {
+          id = "opt-effort",
+          category = "thought_level",
+          name = "Thinking effort",
+          currentValue = "high",
+          options = { { value = "low", name = "Low" }, { value = "high", name = "High" } },
+        },
+      },
+    }
+  end
+
+  it("captures EVERY configOption category, in response order", function()
+    local session = started(response())
+    local kinds = session:config_kinds()
+    assert.equal(2, #kinds)
+    assert.equal("model", kinds[1].key)
+    assert.equal("Model", kinds[1].label)
+    assert.equal("m1", kinds[1].current)
+    assert.same({ { id = "m1", label = "One" }, { id = "m2", label = "Two" } }, kinds[1].available)
+    assert.equal("thought_level", kinds[2].key)
+    assert.equal("Thinking effort", kinds[2].label)
+    assert.equal("high", kinds[2].current)
+  end)
+
+  it("legacy models/modes surface as config kinds too", function()
+    local session = started({
+      sessionId = "s1",
+      models = {
+        currentModelId = "sonnet",
+        availableModels = { { modelId = "sonnet", name = "Sonnet" }, { modelId = "opus", name = "Opus" } },
+      },
+      modes = {
+        currentModeId = "dev",
+        availableModes = { { id = "dev", name = "Dev" } },
+      },
+    })
+    local kinds = session:config_kinds()
+    assert.equal(2, #kinds)
+    assert.equal("model", kinds[1].key)
+    assert.equal("Model", kinds[1].label)
+    assert.equal("sonnet", kinds[1].current)
+    assert.equal("mode", kinds[2].key)
+    assert.equal("Mode", kinds[2].label)
+    assert.equal("dev", kinds[2].current)
+  end)
+
+  it("set_config applies via the client and updates current + meta label", function()
+    local session, client, store = started(response())
+    local applied
+    session:set_config("thought_level", "low", function(ok)
+      applied = ok
+    end)
+    pump()
+    assert.same({ { "opt-effort", "low" } }, client.calls.set_config)
+    assert.is_true(applied)
+    assert.equal("low", session:config_kinds()[2].current)
+    assert.equal("Low", store.state.meta.thought_level)
+  end)
+
+  it("set_config on an unknown kind or option is a no-op failure", function()
+    local session, client = started(response())
+    local results = {}
+    session:set_config("nope", "x", function(ok)
+      results[#results + 1] = ok
+    end)
+    session:set_config("model", "not-a-model", function(ok)
+      results[#results + 1] = ok
+    end)
+    pump()
+    assert.same({}, client.calls.set_config)
+    assert.same({ false, false }, results)
   end)
 end)
 

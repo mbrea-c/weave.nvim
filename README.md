@@ -162,6 +162,7 @@ Different sessions can run on different providers at the same time.
 Open the **session modal** with `;;s` or `:Weave sessions`:
 
 - Each row is a button — `<CR>` selects that session for the current tab.
+- `ⓘ` on a row opens that session's **details window** (below).
 - `✕` on a row closes that session everywhere (it stops running).
 - **+ new session** starts a fresh session on any configured provider.
 - **↺ load saved…** activates a previously saved session (from the provider's
@@ -169,6 +170,18 @@ Open the **session modal** with `;;s` or `:Weave sessions`:
 
 `;;r` instead restores a saved session *in place*, over the current
 conversation in the panel.
+
+### Session details
+
+Activating the sidebar's **Session** section (`<CR>` on the metadata block),
+or a row's `ⓘ` in the session modal, opens the **session details window**:
+the full metadata (provider, agent, session id, status, permission mode,
+context usage) plus a dropdown for every config the agent lets you change —
+model, mode, thinking effort, whatever the provider advertises (ACP
+`configOptions`, or the legacy models/modes shape). Dropdowns filter as you
+type; `<C-n>`/`<C-p>` move the selection, `<CR>`/`<C-y>` apply it. Opened
+from the modal for a session that is not the tab's current one, an **Open in
+panel** button makes it the tab's selection. `q`/`<Esc>` closes.
 
 ---
 
@@ -278,7 +291,8 @@ panel.
       init.lua             setup() + :Weave, panels per tabpage
     lua/weave/view/      fibrous components: transcript, sidebar, prompt,
                            panel (one docked pane, one mount; the transcript
-                           is a fibrous ui.container), session_modal, wave
+                           is a fibrous ui.container), session_modal,
+                           session_details (metadata + config dropdowns), wave
                            (thinking indicator), prefs, theme, use_store
 
 ## Development
