@@ -279,14 +279,18 @@ mode saves. Backing out of a comment you never wrote removes it, so no
 highlight is stranded. Saving an empty body deletes the comment too, which
 makes "clear the box and save" a working way to drop one.
 
-The open draft appears in the sidebar below **Terminal tasks**, one row per
-comment (`file:line  body`), each opening that comment for editing, plus
-**send feedback** and **discard** buttons.
+The open draft appears in the sidebar below **Terminal tasks**, summarised as
+`N comment(s) pending` plus **send feedback** and **discard** buttons. The
+**Code feedback** header is itself the way in: activating it opens the full
+list, one row per comment (`file:line  body`). Activating a row **jumps to that
+comment's code** and opens its editor there.
 
 Comments are anchored with **extmarks**, not line numbers, so they follow the
 code as it moves — including when the agent edits above them. A comment whose
-code is deleted outright is marked `⚠` in the sidebar and sent labelled
-*stale*, rather than silently pointing at whatever moved into its place.
+code is deleted outright is counted as `⚠ N stale` in the sidebar, marked in
+the list, and sent labelled *stale*, rather than silently pointing at whatever
+moved into its place. Jumping to a stale comment still works: it lands on the
+line its code was last seen at.
 Extmarks die when a buffer unloads, so on reload weave re-finds each comment by
 searching for the text it quoted; comments whose code is genuinely gone stay
 orphaned rather than being dropped.
@@ -816,6 +820,7 @@ feedback.comment_line(opts)       -- comment the cursor line, open the editor
 feedback.comment_selection(opts)  -- comment the visual selection, open the editor
 feedback.edit_comment(opts)       -- reopen the comment under the cursor
 feedback.add(opts)                -- attach a comment with NO editor (for plugins)
+feedback.goto_comment(id)         -- jump to a comment's code; false if it is gone
 
 feedback.send(opts)               -- format the draft and hand it to a sink
 feedback.discard()                -- drop the draft and its highlights

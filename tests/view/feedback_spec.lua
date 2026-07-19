@@ -93,12 +93,32 @@ describe("feedback sidebar section", function()
     assert.is_nil(find_button(View.Section(fake_ctx(), { width = 40 }), "send feedback"))
   end)
 
-  it("lists each comment with its file, line and body", function()
+  -- The sidebar is narrow and a draft can hold a dozen comments from several
+  -- sources; a count plus a way in beats a list that pushes Permissions off
+  -- the bottom of the screen.
+  it("summarises the draft as a count rather than listing every comment", function()
     local buf = scratch({ "alpha", "beta" }, "/tmp/weave-fb-section.lua")
-    Store.add({ bufnr = buf, range = { lnum = 2, end_lnum = 2 }, body = "rename this" })
+    Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "rename this" })
+    Store.add({ bufnr = buf, range = { lnum = 2, end_lnum = 2 }, body = "and this" })
     local text = labels(View.Section(fake_ctx(), { width = 60 }))
-    assert.truthy(text:find("weave%-fb%-section%.%d+%.lua:2"))
-    assert.truthy(text:find("rename this", 1, true))
+    assert.truthy(text:find("2 comment(s) pending", 1, true))
+    assert.is_nil(text:find("rename this", 1, true))
+  end)
+
+  it("makes the header the way into the full list", function()
+    local buf = scratch({ "alpha" }, "/tmp/weave-fb-header.lua")
+    Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "x" })
+    local header = find_button(View.Section(fake_ctx(), { width = 40 }), "Code feedback")
+    assert.is_not_nil(header)
+
+    local opened = false
+    local real = View.open_list
+    View.open_list = function()
+      opened = true
+    end
+    header.props.on_press()
+    View.open_list = real
+    assert.is_true(opened)
   end)
 
   it("offers send and discard once a draft exists", function()
@@ -109,11 +129,66 @@ describe("feedback sidebar section", function()
     assert.is_not_nil(find_button(tree, "discard"))
   end)
 
-  it("warns on a comment whose code is gone", function()
+  -- The count alone would hide this, and "which line was that again" is worth
+  -- knowing BEFORE sending, not after.
+  it("warns in the summary when a comment's code is gone", function()
     local buf = scratch({ "alpha", "beta" }, "/tmp/weave-fb-orphan.lua")
     Store.add({ bufnr = buf, range = { lnum = 2, end_lnum = 2 }, body = "x" })
     vim.api.nvim_buf_set_lines(buf, 1, 2, false, {})
-    assert.truthy(labels(View.Section(fake_ctx(), { width = 40 })):find("⚠", 1, true))
+    local text = labels(View.Section(fake_ctx(), { width = 40 }))
+    assert.truthy(text:find("⚠", 1, true))
+    assert.truthy(text:find("1 stale", 1, true))
+  end)
+end)
+
+describe("feedback comment list", function()
+  before_each(function()
+    Store._reset()
+  end)
+
+  it("lists every comment location with its body", function()
+    local buf = scratch({ "alpha", "beta" }, "/tmp/weave-fb-list.lua")
+    Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "rename this" })
+    Store.add({ bufnr = buf, range = { lnum = 2, end_lnum = 2 }, body = "and this" })
+    local text = labels(View.List(fake_ctx(), {}))
+    assert.truthy(text:find("weave%-fb%-list%.%d+%.lua:1"))
+    assert.truthy(text:find("rename this", 1, true))
+    assert.truthy(text:find("and this", 1, true))
+  end)
+
+  -- Two comments on the same line are indistinguishable by location alone, so
+  -- activation has to carry the comment id, not its position.
+  it("activates the comment it was rendered from", function()
+    local buf = scratch({ "alpha", "beta" }, "/tmp/weave-fb-activate.lua")
+    Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "first" })
+    local second = Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "second" })
+
+    local activated
+    local tree = View.List(fake_ctx(), {
+      on_activate = function(id)
+        activated = id
+      end,
+    })
+    local buttons = {}
+    for _, node in ipairs(flatten(tree)) do
+      if node.comp == ui.button then
+        buttons[#buttons + 1] = node
+      end
+    end
+    assert.equal(2, #buttons)
+    buttons[2].props.on_press()
+    assert.equal(second.id, activated)
+  end)
+
+  it("marks an orphaned comment", function()
+    local buf = scratch({ "alpha", "beta" }, "/tmp/weave-fb-list-orphan.lua")
+    Store.add({ bufnr = buf, range = { lnum = 2, end_lnum = 2 }, body = "x" })
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, {})
+    assert.truthy(labels(View.List(fake_ctx(), {})):find("⚠", 1, true))
+  end)
+
+  it("says so when there is nothing to list", function()
+    assert.truthy(labels(View.List(fake_ctx(), {})):find("(no comments)", 1, true))
   end)
 end)
 

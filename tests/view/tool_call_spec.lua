@@ -453,10 +453,7 @@ describe("view.renderers.task", function()
 
     it("reads the id from a bare-string result too (provider shapes vary)", function()
       local task = assert(TaskStore.start({ command = "sleep 5" }))
-      assert.equal(
-        task.id,
-        TaskRenderer.task_for({ output = ("task %d: running (pid 2)"):format(task.id) }).id
-      )
+      assert.equal(task.id, TaskRenderer.task_for({ output = ("task %d: running (pid 2)"):format(task.id) }).id)
       TaskStore.kill(task.id)
     end)
 

@@ -292,7 +292,7 @@ end
 --- Permissions header). Returns the fibrous app handle.
 function M.open()
   local mount = require("fibrous.inline.mount")
-  local size = #Permissions.presets() + #(Permissions.active().rules or {}) + 7
+  local size = #Permissions.presets() + #(Permissions.active().rules or {}) + 15
   local app = mount.floating(Window, {}, {
     width = 64,
     height = math.min(math.max(size, 10), math.max(vim.o.lines - 6, 8)),

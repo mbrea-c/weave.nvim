@@ -52,47 +52,47 @@ function M.comment_label(comment)
 end
 
 --- The sidebar section. The header is always present so the feature is
---- discoverable before any comment exists; the send/discard buttons appear only
---- once there is something to send.
+--- discoverable before any comment exists, and is itself the way in — activating
+--- it opens the full list. The draft is summarised as a COUNT rather than
+--- listed: it bundles comments from several sources and routinely holds more
+--- rows than the sidebar can spare without pushing Permissions off-screen.
 --- @param ctx table
 --- @param props { width?: integer }
 function M.Section(ctx, props)
   local draft = use_feedback(ctx)
   local rows = {
-    { comp = ui.label, props = { text = "Code feedback", style = { text_hl = "Title" } } },
+    {
+      comp = ui.button,
+      props = {
+        label = "Code feedback",
+        theme = false,
+        style = { text_hl = "Title", _hover = { hl = "FibrousHover" } },
+        on_press = function()
+          M.open_list()
+        end,
+      },
+    },
   }
-  local text_w = math.max((props.width or 30) - 5, 4)
 
   if not draft then
     rows[#rows + 1] = dim("(no comments)")
     return { comp = ui.col, props = {}, children = rows }
   end
 
+  local stale = 0
   for _, comment in ipairs(draft.comments) do
-    local label, orphaned = M.comment_label(comment)
-    local id = comment.id
+    if Store.resolve(comment).orphaned then
+      stale = stale + 1
+    end
+  end
+
+  rows[#rows + 1] = dim(("%d comment(s) pending"):format(#draft.comments))
+  if stale > 0 then
+    -- An orphaned comment still gets sent, labelled stale; the glyph warns
+    -- BEFORE sending that its line numbers can no longer be trusted.
     rows[#rows + 1] = {
-      comp = ui.row,
-      props = { gap = 1 },
-      children = {
-        -- An orphaned comment still gets sent, labelled stale; the glyph warns
-        -- BEFORE sending that its line number can no longer be trusted.
-        {
-          comp = ui.label,
-          props = orphaned and { text = "⚠", style = { text_hl = "WeaveTaskIconFailed" } } or { text = "•" },
-        },
-        {
-          comp = ui.button,
-          props = {
-            label = TerminalTasks.truncate(label, text_w),
-            theme = false,
-            style = { _hover = { hl = "FibrousHover" } },
-            on_press = function()
-              M.open_editor(id)
-            end,
-          },
-        },
-      },
+      comp = ui.label,
+      props = { text = ("⚠ %d stale"):format(stale), style = { text_hl = "WeaveTaskIconFailed" } },
     }
   end
 
@@ -121,6 +121,97 @@ function M.Section(ctx, props)
     },
   }
   return { comp = ui.col, props = {}, children = rows }
+end
+
+--- Every comment in the draft, one activatable row each. Rendered into its own
+--- float by open_list, and kept a plain component so the row wiring is testable
+--- without a window.
+--- @param ctx table
+--- @param props { on_activate?: fun(id: integer), width?: integer }
+function M.List(ctx, props)
+  local draft = use_feedback(ctx)
+  local comments = draft and draft.comments or {}
+  local activate = props.on_activate or function(id)
+    M.activate(id)
+  end
+  local rows = {
+    {
+      comp = ui.label,
+      props = { text = ("Code feedback (%d)"):format(#comments), style = { text_hl = "Title" } },
+    },
+  }
+  if #comments == 0 then
+    rows[#rows + 1] = dim("(no comments)")
+  end
+
+  local text_w = props.width or 66
+  for _, comment in ipairs(comments) do
+    local label, orphaned = M.comment_label(comment)
+    -- Captured per row: two comments can share a line, so the id is the only
+    -- thing that distinguishes which one this button opens.
+    local id = comment.id
+    rows[#rows + 1] = {
+      comp = ui.row,
+      props = { gap = 1 },
+      children = {
+        {
+          comp = ui.label,
+          props = orphaned and { text = "⚠", style = { text_hl = "WeaveTaskIconFailed" } } or { text = "•" },
+        },
+        {
+          comp = ui.button,
+          props = {
+            label = TerminalTasks.truncate(label, text_w),
+            theme = false,
+            style = { _hover = { hl = "FibrousHover" } },
+            on_press = function()
+              activate(id)
+            end,
+          },
+        },
+      },
+    }
+  end
+  return { comp = ui.col, props = {}, children = rows }
+end
+
+--- Jump to a comment's code and open its editor there. Navigation happens
+--- FIRST so the editor float lands over the code it is about.
+--- @param id integer
+function M.activate(id)
+  require("weave.feedback").goto_comment(id)
+  M.open_editor(id)
+end
+
+--- The full comment list in its own floating mount, live off the store;
+--- q/<Esc> closes. Activating a row closes the list, jumps to that comment's
+--- code and opens its editor.
+function M.open_list()
+  local mount = require("fibrous.inline.mount")
+  local app
+  local function Body(ctx)
+    return M.List(ctx, {
+      on_activate = function(id)
+        if app then
+          app.unmount()
+        end
+        M.activate(id)
+      end,
+    })
+  end
+  app = mount.floating(Body, {}, {
+    width = 70,
+    height = math.min(math.max(#Store.comments() + 2, 4), math.max(vim.o.lines - 6, 8)),
+    mode = "scroll",
+    border = "rounded",
+    backdrop = true,
+    title = " code feedback ",
+  })
+  require("weave.keys").map(app.bufnr, "close_float", function()
+    app.unmount()
+  end, { nowait = true, desc = "weave: close the code feedback list" })
+  app.focus()
+  return app
 end
 
 --- The comment editor for one comment id.

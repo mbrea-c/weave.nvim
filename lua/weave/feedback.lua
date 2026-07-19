@@ -143,6 +143,79 @@ function M.edit_comment(opts)
   return comment
 end
 
+--- Pick a window to jump into for `bufnr`.
+---
+--- Preference order: a window already showing that buffer, then the current
+--- window, then any other. Floats and non-file panes are never targets — the
+--- caller is typically a button inside a float, and retargeting weave's own
+--- transcript pane at a source file would be worse than not moving at all.
+--- @param bufnr integer|nil
+--- @return integer|nil winid
+function M._target_win(bufnr)
+  local function ordinary(win)
+    if vim.api.nvim_win_get_config(win).relative ~= "" then
+      return false
+    end
+    return vim.bo[vim.api.nvim_win_get_buf(win)].buftype == ""
+  end
+
+  local wins = vim.api.nvim_tabpage_list_wins(0)
+  if bufnr then
+    for _, win in ipairs(wins) do
+      if ordinary(win) and vim.api.nvim_win_get_buf(win) == bufnr then
+        return win
+      end
+    end
+  end
+  local cur = vim.api.nvim_get_current_win()
+  if ordinary(cur) then
+    return cur
+  end
+  for _, win in ipairs(wins) do
+    if ordinary(win) then
+      return win
+    end
+  end
+  return nil
+end
+
+--- Jump to a comment's code: focus an ordinary window on its buffer (opening
+--- the file if nothing shows it) and put the cursor on its first line.
+---
+--- An orphaned comment still jumps, to the line its code was LAST seen at:
+--- that is where the user was looking when they wrote it, and refusing to move
+--- would strand the only route back to it.
+--- @param id integer
+--- @return boolean ok
+function M.goto_comment(id)
+  local comment = Store.get(id)
+  if not comment then
+    return false
+  end
+  local at = Store.resolve(comment)
+  local win = M._target_win(comment.bufnr)
+  if not win then
+    return false
+  end
+  vim.api.nvim_set_current_win(win)
+
+  local bufnr = comment.bufnr
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
+    if comment.path == "" then
+      return false
+    end
+    vim.cmd.edit(vim.fn.fnameescape(comment.path))
+    bufnr = vim.api.nvim_get_current_buf()
+  elseif vim.api.nvim_win_get_buf(win) ~= bufnr then
+    vim.api.nvim_win_set_buf(win, bufnr)
+  end
+
+  local lnum = math.max(1, math.min(at.lnum, vim.api.nvim_buf_line_count(bufnr)))
+  vim.api.nvim_win_set_cursor(win, { lnum, math.max((at.col or 1) - 1, 0) })
+  pcall(vim.cmd.normal, { "zz", bang = true })
+  return true
+end
+
 --- Format the open draft and hand it to a sink. The draft is cleared (and its
 --- highlights with it) only on a successful send, so a failure leaves the
 --- user's comments intact to retry.
