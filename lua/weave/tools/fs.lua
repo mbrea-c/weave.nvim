@@ -71,8 +71,13 @@ local function resolve(args)
   if args.buffer ~= nil then
     return { bufnr = resolve_buffer(args.buffer) }
   end
-  if type(args.path) == "string" and args.path ~= "" then
-    local abs = vim.fn.fnamemodify(args.path, ":p")
+  -- The schema says `path`, but agents arrive with priors: `file_path` from
+  -- Claude's builtin tools, `filePath` from OpenCode over ACP (acp_client.lua
+  -- absorbs the same split on the way in). Accepting them costs nothing and
+  -- saves a guaranteed failed call; `path` still wins when several are given.
+  local path = args.path or args.file_path or args.filePath
+  if type(path) == "string" and path ~= "" then
+    local abs = vim.fn.fnamemodify(path, ":p")
     local bufnr = loaded_file_buf(abs)
     if bufnr then
       return { bufnr = bufnr }
@@ -210,13 +215,20 @@ end
 local TARGET_PROPS = {
   path = { type = "string", description = "File path (absolute or relative to cwd)" },
   buffer = {
+    type = { "integer", "string" },
     description = "Neovim buffer id (number) or buffer name/suffix (string); reaches buffers with no backing file",
   },
 }
 
+--- Every fs tool takes exactly one target. `required` cannot say "one of
+--- these two", so the pair goes in `anyOf`: without it the announced schema
+--- lets a caller omit both and only find out from resolve() at run time.
+--- Lenient clients ignore anyOf and still see the properties.
+local TARGET_ANY_OF = { { required = { "path" } }, { required = { "buffer" } } }
+
 local function schema(extra_props, required)
   local props = vim.tbl_extend("force", {}, TARGET_PROPS, extra_props or {})
-  return { type = "object", properties = props, required = required }
+  return { type = "object", properties = props, required = required, anyOf = TARGET_ANY_OF }
 end
 
 ---------------------------------------------------------------------------

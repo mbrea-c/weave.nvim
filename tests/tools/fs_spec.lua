@@ -129,6 +129,48 @@ describe("tools.fs", function()
     end)
   end)
 
+  -- Agents carry a strong prior toward `file_path` (Claude's builtin tools) and
+  -- `filePath` (OpenCode sends camelCase over ACP -- see acp_client.lua). Our
+  -- schema says `path`; accepting the aliases turns a guaranteed retry into a
+  -- working call, at the cost of three lines.
+  describe("path aliases", function()
+    it("accepts file_path and filePath as targets", function()
+      local path = tmpfile("aliased.txt", "alpha\n")
+      assert.truthy(call("read", { file_path = path }):find("alpha", 1, true))
+      assert.truthy(call("read", { filePath = path }):find("alpha", 1, true))
+    end)
+
+    it("aliases work for write and edit, not just read", function()
+      local path = tmpfile("aliased_rw.txt", "alpha\n")
+      call("write", { file_path = path, content = "beta\n" })
+      assert.equal("beta\n", slurp(path))
+      call("edit", { filePath = path, old_string = "beta", new_string = "gamma" })
+      assert.equal("gamma\n", slurp(path))
+    end)
+
+    it("`path` still wins when both are given", function()
+      local real = tmpfile("real.txt", "real\n")
+      local decoy = tmpfile("decoy.txt", "decoy\n")
+      assert.truthy(call("read", { path = real, file_path = decoy }):find("real", 1, true))
+    end)
+  end)
+
+  -- The announced schema has to describe what resolve() actually enforces:
+  -- exactly one of path/buffer, and `buffer` really is number-or-string.
+  describe("inputSchema honesty", function()
+    it("advertises the path/buffer requirement instead of leaving it implicit", function()
+      for _, name in ipairs({ "read", "write", "edit" }) do
+        local props = Fs[name].inputSchema.properties
+        assert.truthy(props.path, name .. " must advertise path")
+        assert.truthy(Fs[name].inputSchema.anyOf, name .. " must state that a target is required")
+      end
+    end)
+
+    it("gives `buffer` an explicit union type", function()
+      assert.same({ "integer", "string" }, Fs.read.inputSchema.properties.buffer.type)
+    end)
+  end)
+
   describe("write", function()
     it("creates a new file, parent dirs included", function()
       local path = tmp_root .. "/a/b/new.txt"
