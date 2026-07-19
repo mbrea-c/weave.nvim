@@ -10,6 +10,7 @@
 
 local ui = require("fibrous.inline.components")
 local SessionStore = require("weave.session_store")
+local TerminalTasks = require("weave.view.terminal_tasks")
 local Theme = require("weave.view.theme")
 local octant = require("weave.view.octant")
 local use_store = require("weave.view.use_store")
@@ -493,6 +494,8 @@ function M.Sidebar(_, props)
       { comp = M.PrefsSection, props = { prefs = props.prefs } },
       { comp = M.HintSection, props = { store = props.store } },
       { comp = M.TasksSection, props = { store = props.store, width = props.sidebar_width } },
+      -- terminal tasks sit ABOVE permissions (design-agent-sandbox.md, 0c)
+      { comp = TerminalTasks.Section, props = { width = props.sidebar_width } },
       { comp = M.PermissionsSection, props = { store = props.store } },
     },
   }

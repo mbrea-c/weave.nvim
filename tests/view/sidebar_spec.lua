@@ -57,7 +57,7 @@ local function mount_sidebar(store, prefs)
   return mount.floating(
     sidebar.Sidebar,
     { store = store, prefs = prefs or Prefs:new(), sidebar_width = SIDEBAR_WIDTH },
-    { width = 34, height = 30 }
+    { width = 34, height = 40 }
   )
 end
 
@@ -78,8 +78,14 @@ describe("view.sidebar", function()
     assert.truthy(text:find("Hint", 1, true))
     assert.truthy(text:find("Tasks", 1, true))
     assert.truthy(text:find("(no tasks)", 1, true))
+    assert.truthy(text:find("Terminal tasks", 1, true))
+    assert.truthy(text:find("(none running)", 1, true))
     assert.truthy(text:find("Permissions", 1, true))
     assert.truthy(text:find("Mode: Normal (ask)  (;;p)", 1, true))
+    -- the terminal-tasks section sits ABOVE permissions (design-agent-sandbox.md)
+    local term_row = locate(handle.bufnr, "Terminal tasks")
+    local perm_row = locate(handle.bufnr, "Permissions")
+    assert.is_true(term_row < perm_row, "terminal tasks sit above permissions")
     handle.unmount()
   end)
 
