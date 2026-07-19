@@ -170,9 +170,7 @@ function M.open(opts)
     backdrop = true,
   })
 
-  for _, lhs in ipairs({ "q", "<Esc>" }) do
-    vim.keymap.set("n", lhs, close, { buffer = app.bufnr, nowait = true, desc = "weave: close session details" })
-  end
+  require("weave.keys").map(app.bufnr, "close_float", close, { nowait = true, desc = "weave: close session details" })
   app.focus()
 
   return {

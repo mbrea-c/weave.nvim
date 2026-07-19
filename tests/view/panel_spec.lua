@@ -312,6 +312,34 @@ describe("view.panel shell", function()
     handle.close()
   end)
 
+  it("Config.keys rebinds and disables land in a fresh panel", function()
+    local Config = require("weave.config")
+    local saved = { sessions = Config.keys.sessions, cancel = Config.keys.cancel }
+    Config.keys.sessions = ";S" -- rebound…
+    Config.keys.cancel = false -- …and disabled
+
+    local opened, cancelled = 0, false
+    local handle = open_panel({
+      on_sessions = function()
+        opened = opened + 1
+      end,
+      on_cancel = function()
+        cancelled = true
+      end,
+    })
+    vim.api.nvim_set_current_win(handle.transcript.winid)
+    press(";S")
+    assert.equal(1, opened)
+    press(";;s") -- the default is GONE, not kept alongside
+    assert.equal(1, opened)
+    press("<C-c>")
+    assert.is_false(cancelled)
+
+    handle.close()
+    Config.keys.sessions = saved.sessions
+    Config.keys.cancel = saved.cancel
+  end)
+
   it(";;r reaches the restore-picker callback", function()
     local restores = 0
     local handle = open_panel({

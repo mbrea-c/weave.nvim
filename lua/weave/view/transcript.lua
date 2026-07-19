@@ -9,27 +9,26 @@
 
 local ui = require("fibrous.inline.components")
 local Diff = require("weave.view.diff")
+local Keys = require("weave.keys")
 local Peek = require("weave.view.peek")
 local Theme = require("weave.view.theme")
 local use_store = require("weave.view.use_store")
 
 local M = {}
 
--- The key that opens an entry's raw source in the peek modal. Weave's choice —
--- fibrous just routes declared keys to the on_key handler of the component under
--- the cursor; the panel mount declares this key, the entries below handle it.
-M.PEEK_KEY = "K"
+-- The `peek` action opens an entry's raw source in the peek modal — fibrous
+-- just routes declared keys to the on_key handler of the component under the
+-- cursor; the panel mount declares the key(s) (Keys.lhs_list), the entries
+-- below handle them.
 
 --- An `on_key` map (fibrous component keybinding) that opens `entry`'s raw source
 --- in the peek modal.
 --- @param entry weave.store.ChatEntry
 --- @return table<string, fun()>
 local function peek_keys(entry)
-  return {
-    [M.PEEK_KEY] = function()
-      Peek.open(entry.text, entry.kind)
-    end,
-  }
+  return Keys.on_key("peek", function()
+    Peek.open(entry.text, entry.kind)
+  end)
 end
 
 --- Collapse any newlines in agent-supplied single-line text (titles, kinds).

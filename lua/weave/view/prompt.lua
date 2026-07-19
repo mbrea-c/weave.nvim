@@ -24,6 +24,7 @@
 -- reconciliation reuses its fiber, and the subwindow float keyed on that fiber).
 
 local ui = require("fibrous.inline.components")
+local Keys = require("weave.keys")
 local Theme = require("weave.view.theme")
 local Water = require("weave.view.water")
 local use_store = require("weave.view.use_store")
@@ -375,20 +376,19 @@ function M.Prompt(ctx, props)
         -- ftplugin can't clobber completefunc/iskeyword
         vim.bo[bufnr].filetype = "markdown"
         wire_completion(props.store, bufnr)
-        for _, mode in ipairs({ "n", "i" }) do
-          vim.keymap.set(mode, "<C-s>", function()
-            st.do_submit()
-          end, { buffer = bufnr, desc = "weave: submit" })
-          vim.keymap.set(mode, "<C-x>", function()
-            st.do_steer()
-          end, { buffer = bufnr, desc = "weave: steer (interrupt + send)" })
-          vim.keymap.set(mode, "<C-Up>", function()
-            st.nav_move(1)
-          end, { buffer = bufnr, desc = "weave: recall previous prompt / edit queued" })
-          vim.keymap.set(mode, "<C-Down>", function()
-            st.nav_move(-1)
-          end, { buffer = bufnr, desc = "weave: recall next prompt" })
-        end
+        -- key(s) per action from Config.keys; insert + normal mode by default
+        Keys.map(bufnr, "submit", function()
+          st.do_submit()
+        end)
+        Keys.map(bufnr, "steer", function()
+          st.do_steer()
+        end)
+        Keys.map(bufnr, "recall_older", function()
+          st.nav_move(1)
+        end)
+        Keys.map(bufnr, "recall_newer", function()
+          st.nav_move(-1)
+        end)
         if props.on_create then
           props.on_create(bufnr)
         end

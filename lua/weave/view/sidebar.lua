@@ -235,7 +235,10 @@ function M.HintSection(ctx, props)
   return {
     comp = ui.col,
     props = {},
-    children = { header("Hint"), { comp = ui.paragraph, props = { text = state.hint, style = { text_hl = "@comment" } } } },
+    children = {
+      header("Hint"),
+      { comp = ui.paragraph, props = { text = state.hint, style = { text_hl = "@comment" } } },
+    },
   }
 end
 
@@ -363,7 +366,10 @@ local function task_row(e, text, wrap)
     props = { gap = 1 },
     children = {
       { comp = ui.label, props = { text = icon, style = icon_hl and { text_hl = icon_hl } or nil } },
-      { comp = wrap and ui.paragraph or ui.label, props = { text = text, style = text_hl and { text_hl = text_hl } or nil } },
+      {
+        comp = wrap and ui.paragraph or ui.label,
+        props = { text = text, style = text_hl and { text_hl = text_hl } or nil },
+      },
     },
   }
 end
@@ -391,11 +397,9 @@ function M.open_tasks_list(store)
     border = "rounded",
     backdrop = true,
   })
-  for _, lhs in ipairs({ "q", "<Esc>" }) do
-    vim.keymap.set("n", lhs, function()
-      app.unmount()
-    end, { buffer = app.bufnr, nowait = true, desc = "weave: close task list" })
-  end
+  require("weave.keys").map(app.bufnr, "close_float", function()
+    app.unmount()
+  end, { nowait = true, desc = "weave: close task list" })
   app.focus()
   return app
 end
@@ -481,7 +485,8 @@ function M.Sidebar(_, props)
         border = {
           left = true,
         },
-    }},
+      },
+    },
     children = {
       { comp = M.SessionSection, props = { store = props.store, on_details = props.on_details } },
       { comp = M.UsageSection, props = { store = props.store } },

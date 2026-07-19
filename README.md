@@ -106,25 +106,35 @@ running** — reopen with `:Weave`.
 
 ### Keymaps (inside the panel)
 
-| Key | Action |
-| --- | --- |
-| `<C-s>` | Submit the prompt (send to the agent) — works from insert **and** normal |
-| `<CR>` (normal mode) | Submit the prompt. In **insert** mode `<CR>` is a newline, so prompts compose multi-line |
-| `<C-x>` | Steer — interrupt the running turn and send this instead (insert or normal). While editing a queued prompt, sends *that* now, skipping the rest of the queue |
-| `<C-c>` | Cancel the running turn — **keeps** the queue (moves straight on to the next queued prompt) |
-| `<C-Up>` / `<C-Down>` | In the prompt: recall previous / next prompt. Walks up through queued prompts (edit them in place) then sent history (recalled as a fresh copy); your draft is preserved |
-| `<Esc>` (normal mode) | Leave a focused region (prompt / transcript) back to the panel |
-| `<CR>` / `za` | On a tool-call header: expand/collapse it |
-| `zR` / `zM` | Expand / collapse all tool calls |
-| `;;t` | Toggle thinking blocks |
-| `;;d` | Toggle edit diffs |
-| `;;c` | Toggle markdown prettifying (conceal) |
-| `;;f` | Toggle follow-streaming (auto-scroll) |
-| `;;p` | Cycle permission mode |
-| `;;m` / `;;M` | Pick model / pick mode |
-| `;;1` … `;;9` | Answer a permission request with option N |
-| `;;r` | Restore a saved session in place |
-| `;;s` | Open the session modal (also `:Weave sessions`) |
+Every key below is a **named action** — the name in the second column is its
+field in the `keys` config table, so any of them can be rebound or disabled
+(see [Keybinds](#keybinds)). Defaults:
+
+| Key | Action name | Effect |
+| --- | --- | --- |
+| `<C-s>` | `submit` | Submit the prompt (send to the agent) — works from insert **and** normal |
+| `<C-x>` | `steer` | Steer — interrupt the running turn and send this instead (insert or normal). While editing a queued prompt, sends *that* now, skipping the rest of the queue |
+| `<C-c>` | `cancel` | Cancel the running turn — **keeps** the queue (moves straight on to the next queued prompt) |
+| `<C-Up>` | `recall_older` | In the prompt: recall previous prompt. Walks up through queued prompts (edit them in place) then sent history (recalled as a fresh copy); your draft is preserved |
+| `<C-Down>` | `recall_newer` | In the prompt: back down towards your draft |
+| `za` | `toggle_tool_call` | On a tool-call header: expand/collapse it (same as `<CR>` activation) |
+| `zR` / `zM` | `expand_all` / `collapse_all` | Expand / collapse all tool calls |
+| `K` | `peek` | Over a transcript entry: its raw source in a scrollable float (yank/search-friendly) |
+| `;;t` | `toggle_thoughts` | Toggle thinking blocks |
+| `;;d` | `toggle_diffs` | Toggle edit diffs |
+| `;;c` | `toggle_conceal` | Toggle markdown prettifying (conceal) |
+| `;;f` | `toggle_follow` | Toggle follow-streaming (auto-scroll) |
+| `;;p` | `cycle_permission_mode` | Cycle permission mode |
+| `;;m` / `;;M` | `pick_model` / `pick_mode` | Pick model / pick mode |
+| `;;1` … `;;9` | `permission_prefix` + digit | Answer a permission request with option N |
+| `;;r` | `restore_session` | Restore a saved session in place |
+| `;;s` | `sessions` | Open the session modal (also `:Weave sessions`) |
+| `q` / `<Esc>` | `close_float` | Close a weave floating window (modals, peek, the full task list) |
+
+Two keys are **not** weave's to rebind, they come with the fibrous widgets:
+normal-mode `<CR>` in the prompt submits (insert-mode `<CR>` is a newline, so
+prompts compose multi-line), and `<Esc>` leaves a focused region (prompt /
+transcript) back to the panel.
 
 Type `/` at the start of the prompt for slash-command completion. `/new`
 (always available) starts a fresh conversation; agents may advertise more.
@@ -196,6 +206,7 @@ panel** button makes it the tab's selection. `q`/`<Esc>` closes.
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
 | `view` | `table` | see below | Default panel geometry |
+| `keys` | `table` | see [Keybinds](#keybinds) | Key(s) per named action |
 
 `view` sets the panel's default geometry; a per-call `open`/`toggle` opt (below)
 overrides it for that panel.
@@ -211,6 +222,42 @@ require("weave").setup({
   view = { sidebar_width = 40 },   -- a wider sidebar by default
 })
 ```
+
+### Keybinds
+
+Every key weave binds is a **named action** (the names are in the
+[keymaps table](#keymaps-inside-the-panel); the machine-readable list is
+`require("weave.keys").ACTIONS`). `keys` maps action names to their key(s):
+
+```lua
+require("weave").setup({
+  keys = {
+    sessions = ";S",                        -- rebind (the default is gone)
+    peek = { "K", "gp" },                   -- several keys for one action
+    submit = { { "<C-CR>", mode = "i" } },  -- an entry with its own mode(s)
+    cancel = false,                         -- disable an action entirely
+  },
+})
+```
+
+A value is one key (string), a list of keys, or a list of entries
+`{ lhs, mode = ... }`; `false` disables the action. An entry **without**
+`mode` keeps the action's default modes — so rebinding `submit` keeps its
+insert-mode half unless you say otherwise. Where an action binds, and its
+default modes, follow from its scope:
+
+| Scope | Bound where | Default modes |
+| --- | --- | --- |
+| panel | every panel buffer (root canvas, transcript, prompt input) | `n` |
+| prompt | the prompt input buffer | `n`, `i` |
+| transcript | transcript entries (fibrous on_key routing) | `n` |
+| float | weave's floating windows (modals, peek, task list) | `n` |
+
+`permission_prefix` is special: it is not bound itself — `<prefix>1` …
+`<prefix>9` answer permission option N.
+
+Rebinds apply to panels/floats opened **after** `setup()` (in practice: put
+`setup()` in your config and never think about it again).
 
 ### Providers
 
@@ -248,6 +295,13 @@ creation (this is not Neovim's own MCP connection). A provider entry's own
 
 ## Lua API
 
+The public surface is three layers: the `require("weave")` module, the
+**Session** object it hands out, and the session's **store** (a read-only
+snapshot you can subscribe to). Everything else under `lua/weave/` — the view
+components, the ACP plumbing, the registry — is internal.
+
+### The module
+
 ```lua
 local weave = require("weave")
 
@@ -267,6 +321,54 @@ weave.stop()           -- close every session (and all their panels)
 — `provider` chooses the agent when a session is created; the others size the
 panel.
 
+### The Session
+
+`weave.get_session()` returns the current tab's Session — everything the
+panel's keys do is a method on it, so all of it can be scripted:
+
+```lua
+local session = require("weave").get_session()
+
+session:submit(text)             -- send (queued while a turn is running)
+session:steer(text)              -- interrupt the running turn and send NOW
+session:cancel()                 -- cancel the running turn (keeps the queue)
+session:respond_permission(n)    -- answer the pending permission, option n
+session:cycle_permission_mode()  -- normal → auto → allow-edits → …
+
+session:config_kinds()           -- what the agent lets you change: a list of
+                                 -- { key, label, current, available = { { id, label }, … } }
+session:set_config(key, id, cb)  -- apply one (e.g. "model", "claude-…"); cb(ok)
+
+session:new_conversation()       -- same as the /new slash command
+session:restore(session_id)      -- restore a saved conversation in place
+
+session:is_ready()               -- agent connected + ACP session created?
+session:get_store()              -- the state snapshot + subscription (below)
+```
+
+### The store
+
+The store is the single source of truth the whole view renders from. Read it,
+subscribe to it — but treat snapshots as **read-only** (they are immutable;
+all mutation goes through Session methods):
+
+```lua
+local store = session:get_store()
+
+store.state                -- the current snapshot
+local unsub = store:subscribe(function(state)
+  -- called synchronously after every mutation
+end)
+```
+
+The snapshot's main fields: `entries` (the transcript timeline), `tool_calls`
+(by id), `status` (`"idle" | "busy" | …`), `plan` (the task list), `queued` +
+`history` (prompt queue and sent prompts), `permission` (the pending request's
+head) + `permission_mode`, `usage` (context tokens), `meta` (provider / agent /
+model / mode / session id), `commands` (advertised slash commands). Snapshots
+are reference-stable: a field's table is reassigned only when it changed, so
+`old.entries ~= new.entries` is a cheap "did content change" test.
+
 ### Commands
 
 | Command | Action |
@@ -282,7 +384,9 @@ panel.
                            payload builders, typed protocol surface, one agent
                            process per provider (sessions multiplex over it)
     lua/weave/utils/     logger, fs helpers, list helpers (carried over)
-    lua/weave/config*    config: providers + mcp servers + debug flag
+    lua/weave/config*    config: providers + mcp servers + keys + debug flag
+    lua/weave/keys.lua   the named-action keybinding surface (Config.keys →
+                           buffer maps / fibrous on_key), see Keybinds above
     lua/weave/
       session_store.lua    plain-Lua state snapshots + subscribers (the SSOT)
       acp_bridge.lua       ACP callbacks → store mutations

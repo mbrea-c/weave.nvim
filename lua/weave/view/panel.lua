@@ -21,6 +21,7 @@ local Transcript = TranscriptView.Transcript
 local Prompt = require("weave.view.prompt").Prompt
 local Sidebar = require("weave.view.sidebar").Sidebar
 local Config = require("weave.config")
+local Keys = require("weave.keys")
 
 local M = {}
 
@@ -113,10 +114,9 @@ function M.open(opts)
   local on_steer = opts.on_steer or function(_) end
   local on_cancel = opts.on_cancel or function() end
   local on_permission = opts.on_permission or default_permission_answer(store)
-  local on_cycle = opts.on_cycle_permission_mode
-    or function()
-      store:cycle_permission_mode()
-    end
+  local on_cycle = opts.on_cycle_permission_mode or function()
+    store:cycle_permission_mode()
+  end
   local on_pick_model = opts.on_pick_model or function() end
   local on_pick_mode = opts.on_pick_mode or function() end
   local on_restore_picker = opts.on_restore_picker or function() end
@@ -152,10 +152,10 @@ function M.open(opts)
   }, {
     split = { direction = "vertical", position = "right", size = width },
     mode = "fixed",
-    -- Route the transcript's peek key to components' on_key handlers: over any
-    -- entry it opens that entry's raw source in the peek modal (separate from
+    -- Route the transcript's peek key(s) to components' on_key handlers: over
+    -- any entry it opens that entry's raw source in the peek modal (separate from
     -- <CR>/tool-call activation, and no hover, since it keys off on_key not role).
-    keys = { TranscriptView.PEEK_KEY },
+    keys = Keys.lhs_list("peek"),
   })
 
   local group = vim.api.nvim_create_augroup("WeavePanel_" .. app.host_winid, { clear = true })
@@ -243,51 +243,40 @@ function M.open(opts)
   -- ── Panel keymaps ───────────────────────────────────────────────────────
   -- Applied to every panel buffer — the root canvas, the transcript
   -- container, the prompt input — so the chords work wherever the user is.
+  -- Each action's key(s) come from Config.keys, through weave.keys.
   local function apply_maps(bufnr)
-    local function map(lhs, fn, desc)
-      vim.keymap.set("n", lhs, fn, { buffer = bufnr, desc = "weave: " .. desc })
-    end
-    map(";;t", function()
+    Keys.map(bufnr, "toggle_thoughts", function()
       prefs:toggle("show_thoughts")
-    end, "toggle thinking")
-    map(";;d", function()
+    end)
+    Keys.map(bufnr, "toggle_diffs", function()
       prefs:toggle("show_diffs")
-    end, "toggle edit diffs")
-    map(";;c", function()
+    end)
+    Keys.map(bufnr, "toggle_conceal", function()
       prefs:toggle("conceal_markdown")
-    end, "toggle markdown conceal")
-    map(";;f", function()
+    end)
+    Keys.map(bufnr, "toggle_follow", function()
       prefs:toggle("follow")
-    end, "toggle follow streaming")
-    map(";;p", on_cycle, "cycle permission mode")
-    map(";;m", on_pick_model, "pick model")
-    map(";;M", on_pick_mode, "pick mode")
-    map(";;r", on_restore_picker, "restore a saved session")
-    map(";;s", on_sessions, "open the session modal")
-    map("zR", function()
+    end)
+    Keys.map(bufnr, "cycle_permission_mode", on_cycle)
+    Keys.map(bufnr, "pick_model", on_pick_model)
+    Keys.map(bufnr, "pick_mode", on_pick_mode)
+    Keys.map(bufnr, "restore_session", on_restore_picker)
+    Keys.map(bufnr, "sessions", on_sessions)
+    Keys.map(bufnr, "expand_all", function()
       store:set_all_expanded(true)
-    end, "expand all tool calls")
-    map("zM", function()
+    end)
+    Keys.map(bufnr, "collapse_all", function()
       store:set_all_expanded(false)
-    end, "collapse all tool calls")
-    map("<C-c>", on_cancel, "cancel the running turn")
-    for i = 1, 9 do
-      map(";;" .. i, function()
-        on_permission(i)
-      end, "answer permission option " .. i)
-    end
+    end)
+    Keys.map(bufnr, "cancel", on_cancel)
+    Keys.map_permissions(bufnr, on_permission)
   end
   apply_maps(app.bufnr)
   if transcript.bufnr then
     apply_maps(transcript.bufnr)
     -- za on a tool-call header = the familiar fold key, re-bound to the same
     -- activation <CR> performs (tool-call folds are store state, not folds).
-    vim.keymap.set(
-      "n",
-      "za",
-      "<CR>",
-      { buffer = transcript.bufnr, remap = true, desc = "weave: toggle tool call" }
-    )
+    Keys.map(transcript.bufnr, "toggle_tool_call", "<CR>", { remap = true })
   end
   if input_bufnr then
     apply_maps(input_bufnr)

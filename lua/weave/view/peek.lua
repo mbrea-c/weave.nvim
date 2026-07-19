@@ -47,9 +47,7 @@ function M.open(text, title)
       pcall(vim.api.nvim_win_close, win, true)
     end
   end
-  for _, key in ipairs({ "q", "<Esc>" }) do
-    vim.keymap.set("n", key, close, { buffer = buf, nowait = true, desc = "weave: close peek" })
-  end
+  require("weave.keys").map(buf, "close_float", close, { nowait = true, desc = "weave: close peek" })
   return win
 end
 

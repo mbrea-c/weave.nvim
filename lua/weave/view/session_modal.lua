@@ -187,9 +187,7 @@ function M.open(opts)
     app.set_props(build_props())
   end
 
-  for _, lhs in ipairs({ "q", "<Esc>" }) do
-    vim.keymap.set("n", lhs, close, { buffer = app.bufnr, nowait = true, desc = "weave: close session modal" })
-  end
+  require("weave.keys").map(app.bufnr, "close_float", close, { nowait = true, desc = "weave: close session modal" })
   app.focus()
 
   return {
