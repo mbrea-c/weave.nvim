@@ -8,6 +8,8 @@
 -- Handlers follow the clankbox contract: take the decoded arguments table,
 -- return a string, raise an error() for an isError result the agent reads.
 
+local Snapshots = require("weave.tools.write_snapshots")
+
 local M = {}
 
 -- Read parity with builtin agent tools: cap unpaged reads, tell the agent how
@@ -308,6 +310,12 @@ M.write = {
       error("`content` must be a string", 0)
     end
     local target = resolve(args)
+    -- Before the content lands: a full-content write carries only the new
+    -- side, and once this returns there is no way back to what the file held.
+    -- See weave.tools.write_snapshots.
+    if target.path then
+      Snapshots.capture(target.path, args.content)
+    end
     local lines = content_lines(args.content)
     local where = land(target, lines, args.content)
     return ("wrote %d lines to %s"):format(#lines, where)

@@ -201,6 +201,10 @@ function M.setup(opts)
   end
   -- Seed the permission engine: setup-source presets + the active one.
   require("weave.permissions").setup(Config.permissions)
+  -- weave's own fs tools reach the agent over MCP, which strips the tool name
+  -- and the "edit" kind the builtin diff rendering keys on. Register before
+  -- the config-file overrides so a user spec can still replace these by name.
+  require("weave.view.renderers.fs_diff").install()
   -- Tool-call rendering overrides. This is the config-file door onto the same
   -- registry plugins call directly (weave.view.tool_call.register), so a
   -- plugin loaded after setup can still register. Re-running setup replaces

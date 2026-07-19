@@ -454,6 +454,23 @@ call's own result — the id weave's own task store minted. Nothing identifies
 the task on the way *in*: `rawInput` is exactly the arguments the tool
 declared, with no ACP or MCP correlation id anywhere in it.
 
+`weave.view.renderers.fs_diff` is the other builtin, registered automatically
+by `setup`, and it exists for the same reason: weave's `read`/`write`/`edit`
+reach the agent over MCP, so the tool call arrives with no tool name and no
+`kind = "edit"` — which is exactly what the builtin diff rendering keys on. It
+duck-types `rawInput` instead, and both its renderers draw through
+`weave.view.diff`, the same component the native ACP edit path uses.
+
+An `edit` call needs nothing else: `old_string` and `new_string` are both in
+`rawInput`. A `write` call carries only the new content, and by the time the
+transcript draws, the write has landed — reading the file back would just
+return that same content and diff to nothing. So the old side is captured
+*before* the handler runs (`weave.tools.write_snapshots`) and looked up by
+`(path, content)`, the pair both ends agree on. Snapshots are bounded and
+lookup is non-consuming, since a transcript entry re-renders on every flush;
+when one has been evicted the renderer declines the block rather than diffing
+against an empty file and claiming the agent wrote it from scratch.
+
 ### Permission presets
 
 `permissions` seeds the engine at `setup` time:
