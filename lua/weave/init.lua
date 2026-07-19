@@ -173,6 +173,13 @@ function M.setup(opts)
   end
   -- Seed the permission engine: setup-source presets + the active one.
   require("weave.permissions").setup(Config.permissions)
+  -- Tool-call rendering overrides. This is the config-file door onto the same
+  -- registry plugins call directly (weave.view.tool_call.register), so a
+  -- plugin loaded after setup can still register. Re-running setup replaces
+  -- these by name rather than stacking them.
+  for _, spec in ipairs(Config.tool_renderers or {}) do
+    require("weave.view.tool_call").register(spec)
+  end
   vim.api.nvim_create_user_command("Weave", function(cmd)
     if cmd.args == "sessions" then
       M.sessions()

@@ -8,10 +8,10 @@
 -- reactive/view/render.lua (transcript_lines).
 
 local ui = require("fibrous.inline.components")
-local Diff = require("weave.view.diff")
 local Keys = require("weave.keys")
 local Peek = require("weave.view.peek")
 local Theme = require("weave.view.theme")
+local ToolCall = require("weave.view.tool_call")
 local use_store = require("weave.view.use_store")
 
 local M = {}
@@ -40,57 +40,10 @@ local function one_line(text)
   return (tostring(text or ""):gsub("[\r\n]+", " "))
 end
 
---- Human-readable title for a tool call, with a fallback chain so the header
---- is never empty: the agent-supplied title (carried as `argument`) wins;
---- else the file path; else a last-resort id label. Verified against
---- providers that omit the title (e.g. OpenCode edits arrive with only
---- kind + rawInput).
---- @param tc table ToolCallBlock
---- @return string title
-local function tool_title(tc)
-  if tc.argument and tc.argument ~= "" then
-    return tc.argument
-  end
-  if tc.file_path and tc.file_path ~= "" then
-    return vim.fn.fnamemodify(tc.file_path, ":~:.")
-  end
-  return "tool call " .. tc.tool_call_id
-end
-M.tool_title = tool_title
-
---- Max lines rendered for a single raw input/output block when expanded. MCP
---- results can be huge; cap them so one tool call can't flood the transcript.
---- The full value is always in the store.
-local RAW_BLOCK_MAX_LINES = 40
-
---- Max lines for an inline diff preview. The full edit is on disk once
---- applied; this is a preview, not the source of truth.
-local DIFF_PREVIEW_MAX_LINES = 60
-
---- One indented, dimmed metadata line ("    kind: execute").
-local function meta_line(text)
-  return { comp = ui.label, props = { text = text, style = { text_hl = "@comment" } } }
-end
-
---- Append labels for a labeled, indented, truncated vim.inspect dump of an
---- arbitrary tool input/output table. No-op when the value is absent.
---- @param children table[] accumulator of component specs
---- @param label string e.g. "input" / "output"
---- @param value table|nil
-local function append_raw_block(children, label, value)
-  if value == nil then
-    return
-  end
-  children[#children + 1] = meta_line("    " .. label .. ":")
-  local lines = vim.split(vim.inspect(value), "\n")
-  local shown = math.min(#lines, RAW_BLOCK_MAX_LINES)
-  for i = 1, shown do
-    children[#children + 1] = { comp = ui.label, props = { text = "    │ " .. lines[i] } }
-  end
-  if #lines > shown then
-    children[#children + 1] = meta_line(string.format("    │ … %d more lines", #lines - shown))
-  end
-end
+-- Tool-call rendering (header/body/metadata subrenderers plus the override
+-- registry) lives in weave.view.tool_call; re-exported because the panel and
+-- specs reach for the title through here.
+M.tool_title = ToolCall.tool_title
 
 -- ── Entry components ─────────────────────────────────────────────────────────
 -- Each takes reference-stable props (the entry/block object out of the store,
@@ -149,80 +102,12 @@ function M.AgentEntry(_, props)
   }
 end
 
---- One tool call: always a rich header row (chevron, status glyph, kind
---- glyph + tag, title) that toggles expansion on <CR>/click; an inline diff
---- preview for edits (gated by the show_diff pref, passed as a scalar prop so
---- the memo bailout invalidates when it flips); metadata/raw-I/O/body rows
---- only when expanded.
+--- One tool call. Rendering (and any registered override) lives in
+--- weave.view.tool_call — see its header for the subrenderer/override
+--- contract. This just forwards the store slice it was memo'd on.
 --- @param props { store: weave.store.SessionStore, block: table, expanded: boolean, awaiting: boolean, show_diff: boolean }
 function M.ToolCallEntry(_, props)
-  local tc = props.block
-  local effective_status = props.awaiting and "awaiting_permission" or (tc.status or "pending")
-  local status_icon = Theme.STATUS_ICON[effective_status] or "○"
-  local kind_icon = Theme.KIND_ICON[tc.kind or "other"] or Theme.KIND_ICON.other
-  local chevron = props.expanded and Theme.CHEVRON.expanded or Theme.CHEVRON.collapsed
-  -- Header + [kind] tag share the status colour; the tag is bold so the tool
-  -- type stays emphasized while the whole header signals state at a glance.
-  local header_hl = Theme.HEADER_HL[effective_status] or "Function"
-  local tag_hl = Theme.KIND_TAG_HL[effective_status] or "Function"
-
-  local children = {
-    {
-      comp = ui.button,
-      props = {
-        theme = false, -- bare header, no button chrome
-        label = {
-          { chevron .. " ", hl = "@comment" },
-          { status_icon .. " ", hl = header_hl },
-          { kind_icon, hl = header_hl },
-          { "[" .. one_line(tc.kind or "tool") .. "] ", hl = tag_hl },
-          { one_line(tool_title(tc)), hl = header_hl },
-        },
-        on_press = function()
-          props.store:toggle_tool_call(tc.tool_call_id)
-        end,
-      },
-    },
-  }
-
-  -- The diff renders inline (not behind the expand toggle) so an edit shows
-  -- what changed at a glance. Expand reveals the SECONDARY metadata below.
-  if tc.diff and props.show_diff ~= false then
-    children[#children + 1] = {
-      comp = Diff.Diff,
-      props = {
-        old = tc.diff.old,
-        new = tc.diff.new,
-        max_lines = DIFF_PREVIEW_MAX_LINES,
-        indent = "    ",
-      },
-    }
-  end
-
-  if props.expanded then
-    if tc.kind then
-      children[#children + 1] = meta_line("    kind: " .. tc.kind)
-    end
-    if tc.file_path then
-      children[#children + 1] = meta_line("    file: " .. tc.file_path)
-    end
-    children[#children + 1] = meta_line("    status: " .. (tc.status or "pending"))
-
-    -- Raw input/output: the only detail MCP/other tools provide (they send
-    -- no content/body). Rendered for every kind that carries them.
-    append_raw_block(children, "input", tc.input)
-    append_raw_block(children, "output", tc.output)
-
-    for _, body_line in ipairs(tc.body or {}) do
-      -- A body element may itself contain newlines (it's content, not a
-      -- label); paragraphs handle those, keeping the "│" gutter per row.
-      for _, physical in ipairs(vim.split(body_line, "\n")) do
-        children[#children + 1] = { comp = ui.label, props = { text = "    │ " .. physical } }
-      end
-    end
-  end
-
-  return { comp = ui.col, props = {}, children = children }
+  return { comp = ToolCall.Dispatch, props = props }
 end
 
 --- The HEAD permission request with its option buttons, plus a "1 of N" line

@@ -404,6 +404,15 @@ function ACPClient:__build_tool_call_message(update)
     message.output = update.rawOutput
   end
 
+  -- ACP's extension slot. Carried through because it is the only place a
+  -- provider could ever put a real TOOL NAME — the wire format has none, so
+  -- tool-renderer matchers (weave.view.tool_renderers) are stuck duck-typing
+  -- rawInput today. Free to preserve, and it's the hook that makes a proper
+  -- name-based match possible the day a provider populates it.
+  if type(update._meta) == "table" then
+    message.meta = update._meta
+  end
+
   if type(update.content) == "table" then
     local body_parts = {}
     for _, content in ipairs(update.content) do

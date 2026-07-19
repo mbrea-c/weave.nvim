@@ -48,6 +48,7 @@
 --- @field sandbox weave.SandboxConfig
 --- @field view weave.ViewConfig Default panel geometry (width / sidebar_width / prompt_height)
 --- @field keys table<string, weave.UserConfig.KeymapValue> Key(s) per named action (see weave.keys ACTIONS); `false` disables one
+--- @field tool_renderers weave.view.ToolRenderer[] Per-tool-call rendering overrides (see weave.view.tool_call)
 local ConfigDefault = {
   debug = false,
 
@@ -211,6 +212,14 @@ local ConfigDefault = {
   tools = {
     enabled = true,
   },
+
+  -- Per-tool-call rendering overrides: each entry is { name, match, render,
+  -- priority? }, where `match` is a predicate over the tool-call block (ACP
+  -- carries no tool name — see weave.view.tool_call) and `render` is a
+  -- fibrous component. Highest priority wins, ties break newest-first, and no
+  -- match falls through to the builtin rendering. External plugins use
+  -- weave.view.tool_call.register directly instead, which works at any time.
+  tool_renderers = {},
 
   -- The client-side permission engine (weave.permissions): `preset` picks the
   -- active preset at startup, `presets` adds saved rule configurations beside

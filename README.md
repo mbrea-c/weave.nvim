@@ -322,6 +322,73 @@ the stdio shim run by this very nvim — carrying weave's own tool suite:
 shell tasks (surfaced in the sidebar's *Terminal tasks* section). Every call
 is gated by the permission engine as `weave:<tool>` (see below).
 
+### Tool call rendering
+
+Every tool call in the transcript is drawn by `weave.view.tool_call.Entry`,
+which is parameterized by three subrenderers you can swap individually:
+
+| prop | what it draws |
+| --- | --- |
+| `render_header` | the chevron / status glyph / kind tag / title row; pressing it toggles expansion |
+| `render_body` | directly under the header, **always visible** — the call's primary display (the builtin draws the edit diff here) |
+| `render_metadata` | the `<CR>`-toggleable detail: kind, file, status, raw input/output, content body |
+
+Register an override with a **match predicate** and a `render` component:
+
+```lua
+local ToolCall = require("weave.view.tool_call")
+
+ToolCall.register({
+  name = "my.plugin:tests",           -- unique; re-registering replaces
+  priority = 10,                      -- optional, default 0
+  match = function(block)
+    return block.input ~= nil and block.input.command == "make test"
+  end,
+  render = function(_, props)
+    -- swap ONE part, keep the rest of the entry
+    return {
+      comp = ToolCall.Entry,
+      props = vim.tbl_extend("force", props, { render_body = MyTestResults }),
+    }
+  end,
+})
+```
+
+To own the **entire** entry, header included, simply don't delegate to
+`ToolCall.Entry` — return whatever component tree you like. There is no flag
+for this; it falls out of `render` being an ordinary fibrous component. Being
+a real component is also what lets a renderer hold `use_state` and
+`use_effect`, which is how the builtin task renderer streams live output.
+
+`render` and every subrenderer receive the same props: `block` (the normalized
+tool call), `store`, `expanded`, `awaiting`, `show_diff`.
+
+The same registry is reachable from `setup` for config-file use, though
+plugins should call `register` directly since it works at any time:
+
+```lua
+require("weave").setup({ tool_renderers = { spec, ... } })
+```
+
+**Matching is a predicate, not a name.** ACP tool calls carry no tool name —
+the wire fields are `toolCallId`, `title`, `kind`, `status`, `content`,
+`locations`, `rawInput`, `rawOutput`. `kind` is a coarse enum shared by every
+tool of that shape and `title` is agent-authored prose that providers word
+differently, so neither is a stable key. Matchers get the whole block and
+duck-type it, usually on `rawInput` shape. ACP's `_meta` extension slot is
+carried through as `block.meta` for the day a provider puts a real name there.
+
+**Precedence is priority-first, highest wins, ties broken by most recently
+registered.** Priority exists because registration order is decided by plugin
+load order, which nobody controls: without it two plugins that both match
+`kind == "execute"` would silently fight, and the winner could change between
+restarts. Weave's own renderers register at the default `0`, so a plugin at
+`10` reliably outranks them and one at `-10` reliably yields.
+
+No match — or a matcher that throws — falls through to the builtin rendering
+silently. A renderer that throws is contained to its own entry: the rest of
+the conversation keeps drawing and that entry shows the error.
+
 ### Permission presets
 
 `permissions` seeds the engine at `setup` time:
@@ -543,6 +610,8 @@ are reference-stable: a field's table is reassigned only when it changed, so
                            session_details (metadata + config dropdowns),
                            permissions_window (preset config + Lua editing),
                            terminal_tasks (running tasks, live task views),
+                           tool_call (tool-call rendering + the override
+                             registry), renderers/ (builtin overrides),
                            wave (thinking indicator), prefs, theme, use_store
 
 ## Development
