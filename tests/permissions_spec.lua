@@ -223,6 +223,21 @@ describe("permissions ${project} expansion", function()
     assert.equal("deny", Permissions.resolve({ tool = "weave:read", resource = "/etc/passwd" }))
   end)
 
+  it("`dir/**` covers the directory itself, so a cwd-rooted grep is not an ask", function()
+    Permissions.save_preset({
+      name = "scoped",
+      rules = {
+        { tool = "weave:grep", resource = "${project}/**", decision = "allow" },
+        { tool = "weave:grep", decision = "ask" },
+      },
+    })
+    Permissions.set_active("scoped")
+    assert.equal("allow", Permissions.resolve({ tool = "weave:grep", resource = "/home/me/proj" }))
+    assert.equal("allow", Permissions.resolve({ tool = "weave:grep", resource = "/home/me/proj/lua" }))
+    -- but a sibling that merely shares the prefix is still outside
+    assert.equal("ask", Permissions.resolve({ tool = "weave:grep", resource = "/home/me/projector" }))
+  end)
+
   it("a ${project} rule still never matches a resourceless action", function()
     Permissions.save_preset({
       name = "scoped",
@@ -432,7 +447,9 @@ describe("permissions cycle under a profile", function()
 
   it("does not filter to empty when nothing is compatible", function()
     Permissions.setup({
-      presets = { { name = "only", sandbox = { profile = "blackbox" }, rules = { { tool = "*", decision = "allow" } } } },
+      presets = {
+        { name = "only", sandbox = { profile = "blackbox" }, rules = { { tool = "*", decision = "allow" } } },
+      },
     })
     Permissions.set_profile("off")
     -- the builtins are unconstrained, so force the pathological case directly

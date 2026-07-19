@@ -125,12 +125,16 @@ local function default_restart(profile, callback)
 
   local restore = M.load_session_supported() and entry.session:session_id() or nil
   AgentInstance.set_profile_override(entry.provider, profile)
-  AgentInstance.stop(entry.provider)
 
+  -- No stop() here. Processes are keyed (provider, profile), so the new
+  -- session lands on a new process by construction, and killing the old one
+  -- would take down any OTHER session still sitting in it. reap() collects
+  -- it afterwards, once closing this session has made it an orphan.
   local ok, err = pcall(function()
     local fresh = Registry.add({ provider = entry.provider, restore = restore })
     Registry.select(fresh.key)
     Registry.close(entry.key)
+    AgentInstance.reap()
   end)
   if not ok then
     require("weave.utils.logger").notify("weave: agent restart failed — " .. tostring(err), vim.log.levels.ERROR)

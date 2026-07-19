@@ -102,9 +102,33 @@ function M._runtime_ro_paths()
   return paths
 end
 
+--- Degrade a requested profile to what this platform can actually deliver,
+--- warning once. Both resolve() and wrap() go through here so the profile
+--- weave REPORTS is the profile the agent RUNS at: claiming `blackbox` on a
+--- machine without bwrap would have the permissions UI and the sandboxed
+--- presets vouching for a confinement that is not there.
+--- @param profile string
+--- @return string
+local function degrade(profile)
+  if profile == "off" or M._available() then
+    return profile
+  end
+  if not notified then
+    notified = true
+    vim.notify(
+      ('weave: sandbox profile "%s" requested but no backend is available on this platform; agents run unsandboxed'):format(
+        profile
+      ),
+      vim.log.levels.WARN
+    )
+  end
+  return "off"
+end
+
 --- Merge the global `Config.sandbox` with a provider's override: scalars
 --- (profile, env_allowlist) — the provider wins; path lists — concatenated,
---- global first, so per-provider grants ADD to machine-wide ones.
+--- global first, so per-provider grants ADD to machine-wide ones. The
+--- resulting profile is the EFFECTIVE one (see degrade).
 --- @param provider_sandbox weave.SandboxConfig|nil
 --- @return weave.SandboxConfig
 function M.resolve(provider_sandbox)
@@ -117,7 +141,7 @@ function M.resolve(provider_sandbox)
     return out
   end
   return {
-    profile = p.profile or global.profile or "off",
+    profile = degrade(p.profile or global.profile or "off"),
     state_paths = cat(global.state_paths, p.state_paths),
     ro_paths = cat(global.ro_paths, p.ro_paths),
     env_allowlist = p.env_allowlist or global.env_allowlist,
@@ -147,16 +171,7 @@ function M.wrap(command, args, opts)
   if profile == "off" then
     return command, args or {}
   end
-  if not M._available() then
-    if not notified then
-      notified = true
-      vim.notify(
-        ('weave: sandbox profile "%s" requested but no backend is available on this platform; agents run unsandboxed'):format(
-          profile
-        ),
-        vim.log.levels.WARN
-      )
-    end
+  if degrade(profile) == "off" then
     return command, args or {}
   end
 

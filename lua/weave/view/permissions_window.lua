@@ -226,11 +226,15 @@ local function Window(ctx)
         Permissions.revoke_grant(i)
       end)
     end
-    rows[#rows + 1] = { comp = ui.row, props = { gap = 2 }, children = {
-      bare_button("[revoke all]", function()
-        Permissions.clear_overlay()
-      end),
-    } }
+    rows[#rows + 1] = {
+      comp = ui.row,
+      props = { gap = 2 },
+      children = {
+        bare_button("[revoke all]", function()
+          Permissions.clear_overlay()
+        end),
+      },
+    }
   end
 
   -- The running agent's confinement, shown as session STATE rather than as a

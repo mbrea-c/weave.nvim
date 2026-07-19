@@ -83,7 +83,17 @@ describe("tools wiring", function()
   it("register_into plants the fs and task tools", function()
     local server = fake_clankbox()
     Tools.register_into(server)
-    for _, name in ipairs({ "read", "write", "edit", "task_start", "task_status", "task_wait", "task_kill" }) do
+    for _, name in ipairs({
+      "read",
+      "write",
+      "edit",
+      "glob",
+      "grep",
+      "task_start",
+      "task_status",
+      "task_wait",
+      "task_kill",
+    }) do
       local def = server.tools[name]
       assert.is_not_nil(def)
       assert.equal("function", type(def.handler))

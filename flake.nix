@@ -33,18 +33,44 @@
       # neovim module, nixvim, lazy-via-nixpkgs, …) pulls it onto the runtimepath
       # automatically when you add weave. Consumers need only THIS input; they
       # get weave's own pinned fibrous, no version skew.
-      packages = forAllSystems (pkgs: rec {
-        default = weave;
-        weave = pkgs.vimUtils.buildVimPlugin {
-          pname = "weave";
-          version = self.shortRev or self.dirtyShortRev or "dev";
-          src = self;
-          dependencies = [ fibrous.packages.${pkgs.stdenv.hostPlatform.system}.default ];
-          # the real gate is the test suite (`nix flake check`); the generic
-          # require-check chokes on modules that need a running UI
-          doCheck = false;
-        };
-      });
+      packages = forAllSystems (
+        pkgs:
+        let
+          # External binaries weave shells out to at RUNTIME. A vim plugin has
+          # no wrapper to put them on PATH, so they cannot be plain
+          # buildInputs; they are exposed here for consumers to splice into
+          # whatever puts programs in front of Neovim (home-manager's
+          # `extraPackages`, nixvim's `extraPackages`, `environment.systemPackages`).
+          #
+          #   ripgrep     the `grep` / `glob` MCP tools (weave.tools.search).
+          #               Absent, grep errors and glob falls back to a slower
+          #               vim.fs walk.
+          #   bubblewrap  the sandbox backend (weave.sandbox). Absent, every
+          #               configured profile degrades to "off" with a warning
+          #               and the agent runs unconfined.
+          #
+          # Both are also resolvable by absolute path from config
+          # (`tools.ripgrep_path`), which is what a Nix-wrapped Neovim usually
+          # wants: its PATH is not the user's PATH.
+          runtimeDeps = [
+            pkgs.ripgrep
+            pkgs.bubblewrap
+          ];
+        in
+        rec {
+          default = weave;
+          weave = pkgs.vimUtils.buildVimPlugin {
+            pname = "weave";
+            version = self.shortRev or self.dirtyShortRev or "dev";
+            src = self;
+            dependencies = [ fibrous.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+            passthru = { inherit runtimeDeps; };
+            # the real gate is the test suite (`nix flake check`); the generic
+            # require-check chokes on modules that need a running UI
+            doCheck = false;
+          };
+        }
+      );
 
       # Runnable entry points, all against the flake's own snapshot of the
       # source (commit/stage changes to see them; use `make ...` against the
@@ -62,7 +88,16 @@
             program = pkgs.lib.getExe (
               pkgs.writeShellApplication {
                 inherit name text;
-                runtimeInputs = [ pkgs.neovim ] ++ extraInputs;
+                # ripgrep and bubblewrap are weave's runtime binaries (see
+                # packages.weave.passthru.runtimeDeps): every entry point below
+                # gets them, so the search tools and the sandbox behave the
+                # same under `nix run` as they do on a dev machine.
+                runtimeInputs = [
+                  pkgs.neovim
+                  pkgs.ripgrep
+                  pkgs.bubblewrap
+                ]
+                ++ extraInputs;
               }
             );
           };
@@ -138,9 +173,14 @@
         tests =
           pkgs.runCommandLocal "weave-tests"
             {
+              # ripgrep is here so the search-tool specs run their real-rg
+              # integration path rather than skipping it. bubblewrap is NOT:
+              # the sandbox specs are argv assertions, and a build sandbox
+              # cannot nest bwrap anyway.
               nativeBuildInputs = [
                 pkgs.neovim
                 pkgs.gnumake
+                pkgs.ripgrep
               ];
             }
             ''

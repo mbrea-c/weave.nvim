@@ -24,9 +24,10 @@
 --- disable the action entirely.
 --- @alias weave.UserConfig.KeymapValue string|false|(string|weave.UserConfig.KeymapEntry)[]
 
---- @class weave.ToolsConfig weave's own MCP tool suite (read/write/edit + task_*), hosted by clankbox
+--- @class weave.ToolsConfig weave's own MCP tool suite (read/write/edit, glob/grep, task_*), hosted by clankbox
 --- @field enabled boolean Register the suite into clankbox and hand every agent the clankbox server automatically
 --- @field clankbox_path? string Clankbox checkout root (the dir containing shim.lua); nil = auto-detect
+--- @field ripgrep_path? string Absolute path to `rg` for the glob/grep tools; nil = look on PATH
 
 --- @class weave.PermissionsConfig The client-side permission engine (weave.permissions)
 --- @field preset? string Active preset at startup; unset = "normal", or its sandboxed_* variant when a profile is on
@@ -205,10 +206,13 @@ local ConfigDefault = {
   -- where env is a list of { name, value }. Empty by default.
   mcp_servers = {},
 
-  -- weave's own MCP tool suite (read/write/edit + task lifecycle), hosted
-  -- by clankbox and appended to every agent's mcpServers automatically — see
-  -- design-agent-sandbox.md in the superproject. `clankbox_path` (the
-  -- checkout dir containing shim.lua) overrides auto-detection.
+  -- weave's own MCP tool suite (read/write/edit, glob/grep, task lifecycle),
+  -- hosted by clankbox and appended to every agent's mcpServers automatically
+  -- — see design-agent-sandbox.md in the superproject. `clankbox_path` (the
+  -- checkout dir containing shim.lua) overrides auto-detection, and
+  -- `ripgrep_path` does the same for the `rg` the search tools shell out to.
+  -- Both exist because under a Nix-wrapped Neovim the ambient PATH is not the
+  -- user's PATH.
   tools = {
     enabled = true,
   },

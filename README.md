@@ -26,6 +26,12 @@ prompt — is a pure `state → render` projection of it.
   plugin only launches and talks to them.
 - **Treesitter parsers `markdown` and `markdown_inline`** (recommended) — for
   the rendered markdown in agent replies.
+- **[ripgrep](https://github.com/BurntSushi/ripgrep)** (optional) — the
+  `glob`/`grep` MCP tools shell out to it. Without it `grep` errors and `glob`
+  falls back to a slower walk.
+- **[bubblewrap](https://github.com/containers/bubblewrap)** (optional, Linux)
+  — the [Sandbox](#sandbox) backend. Without it every configured profile
+  degrades to `off` with a warning.
 
 ---
 
@@ -46,6 +52,20 @@ or your own `buildVimPlugin` wiring).
 weave.url = "github:…/weave.nvim";  # repo URL TBD
 fibrous.url = "github:mbrea-c/fibrous.nvim";
 ```
+
+The two optional runtime binaries are exposed as
+`packages.weave.passthru.runtimeDeps` (`ripgrep`, `bubblewrap`). A vim plugin
+has no wrapper of its own to put programs on `PATH`, so splice them into
+whatever does — home-manager's `programs.neovim.extraPackages`, nixvim's
+`extraPackages`, or `environment.systemPackages`:
+
+```nix
+programs.neovim.extraPackages = weave.packages.${system}.weave.passthru.runtimeDeps;
+```
+
+Alternatively point `tools.ripgrep_path` at an absolute store path; a
+Nix-wrapped Neovim's `PATH` is not your shell's `PATH`, which is exactly why
+that option exists.
 
 ### lazy.nvim (or any plugin manager)
 
@@ -240,7 +260,7 @@ panel** button makes it the tab's selection. `q`/`<Esc>` closes.
 | `provider` | `string` | `"claude-agent-acp"` | Key of the `acp_providers` entry to start by default |
 | `acp_providers` | `table` | 13 built-ins | Agent launch definitions (see below) |
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
-| `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit + task lifecycle) via clankbox; `clankbox_path` overrides checkout auto-detection |
+| `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit, glob/grep, task lifecycle) via clankbox; `clankbox_path` and `ripgrep_path` override binary/checkout auto-detection |
 | `permissions` | `table` | `{ presets = {} }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
 | `sandbox` | `table` | `{ profile = "off" }` | Agent process confinement via bubblewrap (see [Sandbox](#sandbox)) |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
@@ -332,10 +352,26 @@ creation (this is not Neovim's own MCP connection). A provider entry's own
 
 With `tools.enabled` (the default) weave also appends a **clankbox** entry —
 the stdio shim run by this very nvim — carrying weave's own tool suite:
-`read`/`write`/`edit` with live-buffer awareness, and the
-`task_start`/`task_status`/`task_wait`/`task_kill` lifecycle over managed
-shell tasks (surfaced in the sidebar's *Terminal tasks* section). Every call
-is gated by the permission engine as `weave:<tool>` (see below).
+
+- `read`/`write`/`edit`, with live-buffer awareness: a file open in the
+  editor is read as you currently see it and written *through* the buffer.
+- `glob`/`grep`, discovery over [ripgrep](https://github.com/BurntSushi/ripgrep)
+  with Claude-compatible parameters (`output_mode`, `-i`, `-n`, `-A`/`-B`/`-C`,
+  `glob`, `type`, `multiline`, `head_limit`). Files with unsaved edits are
+  searched as they stand in the buffer — through a second `rg` on stdin, so a
+  file's results cannot change flavour just because it happens to be open.
+  Pass `buffers = "off"` for pure disk. Needs `rg` on Neovim's `PATH` or
+  `tools.ripgrep_path` set; without it `grep` errors and `glob` falls back to
+  a slower `vim.fn.glob` walk.
+- `task_start`/`task_status`/`task_wait`/`task_kill`, a lifecycle over managed
+  shell tasks (surfaced in the sidebar's *Terminal tasks* section).
+
+Every call is gated by the permission engine as `weave:<tool>` (see below).
+For `glob`/`grep` the gated resource is the search **root**, not the files
+matched: a deny rule on `*/secrets/*` blocks a search rooted inside that
+directory, but not a cwd-rooted search that surfaces content from within it.
+Gating per result would mean one prompt per file; content-level exclusion
+belongs in rg's own filters.
 
 ### Tool call rendering
 
@@ -519,7 +555,10 @@ aim-sandbox, and nesting user namespaces inside it is expected to fail.
 
 Backend support: Linux with `bwrap` on `PATH`. Anywhere else a configured
 profile degrades to `off` with a one-time warning — nothing breaks, the
-tools are offered rather than forced.
+tools are offered rather than forced. The degradation is applied when the
+profile is *resolved*, so everything downstream (the permissions window, the
+sandboxed presets, the sidebar) reports `off` too, rather than vouching for a
+confinement that is not there.
 
 #### Choosing a profile
 
@@ -532,12 +571,15 @@ running agent. Two places to choose one:
   profile as session state, with `[restart with profile…]` beside it. This
   is the only path that *reduces* confinement, and it always confirms first.
 
-Two caveats worth knowing before they look like bugs. One agent process is
-shared per provider, so a new session started while that provider is already
-running joins the existing process at *its* profile (weave warns when the
-requested profile differs). And a session restored into a different profile
-comes back without knowledge of any tasks that were running, and may carry
-history referencing paths it can no longer reach.
+Agent processes are pooled per **(provider, profile)** pair, not per provider:
+sessions of the same provider at the same profile share one process (which is
+what ACP intends), and asking for a different profile spawns a second one
+rather than silently joining the first at a confinement you did not ask for.
+A process is stopped once no session is left using it.
+
+One caveat worth knowing before it looks like a bug: a session restored into
+a different profile comes back without knowledge of any tasks that were
+running, and may carry history referencing paths it can no longer reach.
 
 Note that weave's own MCP tools run host-side, in Neovim, outside bwrap.
 Under `blackbox` they are a deliberate read channel out of the sandbox and
@@ -672,7 +714,8 @@ are reference-stable: a field's table is reassigned only when it changed, so
       task_store.lua       managed shell tasks (the task_* tool lifecycle)
       init.lua             setup() + :Weave, panels per tabpage
     lua/weave/tools/     the MCP tool suite hosted by clankbox: fs (read/
-                           write/edit, buffer-aware), tasks (task lifecycle),
+                           write/edit, buffer-aware), search (glob/grep over
+                           ripgrep, buffer-aware), tasks (task lifecycle),
                            gate (the permission wrap over every def)
     lua/weave/view/      fibrous components: transcript, sidebar, prompt,
                            panel (one docked pane, one mount; the transcript

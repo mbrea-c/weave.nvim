@@ -36,6 +36,17 @@ function M.register_into(server)
   server.register_tool("read", Gate.wrap("read", fs.read, { resource = fs_resource, kind = "read" }))
   server.register_tool("write", Gate.wrap("write", fs.write, { resource = fs_resource, kind = "edit" }))
   server.register_tool("edit", Gate.wrap("edit", fs.edit, { resource = fs_resource, kind = "edit" }))
+  -- Discovery. The gate's resource is the search ROOT, not the files matched:
+  -- gating per result would mean one prompt per file, so a deny rule on
+  -- `*/secrets/*` blocks a search rooted inside it but not a cwd-rooted
+  -- search that surfaces content from within it. Content-level exclusion
+  -- belongs in rg's own filters, not in the permission engine.
+  local search = require("weave.tools.search")
+  local search_resource = function(args)
+    return search.root(args)
+  end
+  server.register_tool("glob", Gate.wrap("glob", search.glob, { resource = search_resource, kind = "read" }))
+  server.register_tool("grep", Gate.wrap("grep", search.grep, { resource = search_resource, kind = "read" }))
   local tasks = require("weave.tools.tasks")
   local command = function(args)
     return type(args.command) == "string" and args.command or nil

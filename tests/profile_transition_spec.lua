@@ -28,7 +28,10 @@ describe("profile_transition.target_for", function()
       Transition.target_for({ sandbox = { profile = "workspace", mode = "or_stricter" } }, "off")
     )
     assert.equal("readonly", Transition.target_for({ sandbox = { profile = "readonly", mode = "exact" } }, "blackbox"))
-    assert.equal("workspace", Transition.target_for({ sandbox = { profile = "workspace", mode = "or_looser" } }, "blackbox"))
+    assert.equal(
+      "workspace",
+      Transition.target_for({ sandbox = { profile = "workspace", mode = "or_looser" } }, "blackbox")
+    )
   end)
 end)
 

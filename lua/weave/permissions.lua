@@ -244,6 +244,25 @@ local function expand(resource)
   return (resource:gsub("%${project}", (M.project_root():gsub("%%", "%%%%"))))
 end
 
+--- Match a rule's resource pattern against an action's resource.
+---
+--- `dir/**` means the directory AND everything under it. Plain glob matching
+--- gives only the latter, which reads fine until a tool's resource IS a
+--- directory: `grep` with no `path` resources at the project root, so
+--- `${project}/**` would miss the single most common search there is and drop
+--- it to "ask". Nobody writing that rule meant "everything except the
+--- directory itself".
+--- @param pattern string already expanded
+--- @param resource string
+--- @return boolean
+local function resource_matches(pattern, resource)
+  if M.glob_match(pattern, resource) then
+    return true
+  end
+  local dir = pattern:match("^(.*)/%*%*$")
+  return dir ~= nil and dir == resource
+end
+
 --- @param rule weave.permissions.Rule
 --- @param action weave.permissions.Action
 --- @return boolean
@@ -254,7 +273,7 @@ local function rule_matches(rule, action)
   if rule.resource == nil then
     return true
   end
-  return action.resource ~= nil and M.glob_match(expand(rule.resource), action.resource)
+  return action.resource ~= nil and resource_matches(expand(rule.resource), action.resource)
 end
 
 --- Deep-copy a preset so engine state never aliases caller tables.
@@ -392,17 +411,32 @@ function M.profile_rank(profile)
   return PROFILE_RANK[profile] or PROFILE_RANK.off
 end
 
---- The profile the running agent was spawned under, or the configured
---- default before anything spawns. The session layer calls `set_profile` at
---- spawn, because the config value can change while a process that predates
---- the change still holds an open session.
+--- The profile in force RIGHT NOW: the one the session you are looking at
+--- was actually spawned under.
+---
+--- Agent processes are keyed (provider, profile), so two sessions can be
+--- running at different confinements at the same time and "the current
+--- profile" is only meaningful relative to one of them. The selected session
+--- is the one the permissions UI describes and the one a ;;p selection acts
+--- on, so it is the one that answers here. Falling back, in order: the last
+--- spawn (set_profile, for the window between spawn and a registered
+--- session) and the configured default (before anything spawns at all).
 --- @return string
 function M.current_profile()
+  local ok, Registry = pcall(require, "weave.registry")
+  if ok then
+    local entry = Registry.selected() or Registry.list()[1]
+    local session = entry and entry.session
+    local client = session and session.client and session:client()
+    if client and client.sandbox_profile then
+      return client.sandbox_profile
+    end
+  end
   if current_profile then
     return current_profile
   end
-  local ok, sandbox = pcall(require, "weave.sandbox")
-  return (ok and sandbox.resolve().profile) or "off"
+  local sok, sandbox = pcall(require, "weave.sandbox")
+  return (sok and sandbox.resolve().profile) or "off"
 end
 
 --- @param profile string|nil nil restores the config default
