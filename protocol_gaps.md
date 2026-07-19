@@ -28,6 +28,14 @@ reported `sessionCapabilities = { close, fork, list, resume }`,
 
 ## Gaps
 
+_Update 2026-07-19:_ gaps 1 and 2 are moot as INTEGRATION paths. The fs and
+terminal client capabilities are on the deprecation path and the upcoming ACP
+v2 removes them (low adoption). Weave's editor integration goes through MCP
+tools plus optional sandboxing instead; see design-agent-sandbox.md in the
+superproject. Still real from gap 1: ignoring an incoming `fs/read_text_file`
+request without ANY response can hang a strict agent; the fix is to answer
+with a JSON-RPC error, not to implement the capability.
+
 ### 1. Editor filesystem access is declined — highest editor-integration value
 
 We advertise `fs.readTextFile = false`, `fs.writeTextFile = false`
