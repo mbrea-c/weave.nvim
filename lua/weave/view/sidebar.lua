@@ -511,8 +511,11 @@ function M.PermissionsSection(ctx, props)
     }
     for i, opt in ipairs(perm.request.options or {}) do
       local hl = M.permission_option_hl(perm, opt)
+      -- Wrapping, not a label: an always-option's label carries the resource
+      -- the rule would persist for, and truncating that hides WHICH path the
+      -- user is about to grant.
       rows[#rows + 1] = {
-        comp = ui.label,
+        comp = ui.paragraph,
         props = {
           text = string.format("[%d] %s", i, opt.name or opt.optionId),
           style = hl and { text_hl = hl } or nil,
