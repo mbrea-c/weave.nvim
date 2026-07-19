@@ -190,6 +190,15 @@ function M.Editor(ctx, props)
         text.set(txt)
       end,
       on_submit = save,
+      -- Bordered, like the prompt box: an empty unbordered input is literally
+      -- invisible — blank mirror rows on a blank canvas, with nothing to say
+      -- where to start typing.
+      style = {
+        border = {
+          "rounded",
+          title = { text = "Comment", align = "left" },
+        },
+      },
     },
   }
   rows[#rows + 1] = {
