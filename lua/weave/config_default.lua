@@ -9,6 +9,7 @@
 --- @field args? string[]
 --- @field env? table<string, string>
 --- @field mcpServers? weave.acp.McpServer[] Per-provider override of `mcp_servers`
+--- @field sandbox? weave.SandboxConfig Per-provider override of the global `sandbox` (scalars win, path lists add)
 
 --- @class weave.ViewConfig Default panel geometry; a per-open opts value overrides.
 --- @field width integer Total docked panel width (columns)
@@ -31,6 +32,12 @@
 --- @field preset? string Active preset at startup (default "normal")
 --- @field presets? weave.permissions.Preset[] Additional presets (the setup source; shadow builtins by name)
 
+--- @class weave.SandboxConfig Confinement for the spawned agent process (weave.sandbox; bwrap backend, Linux-only, degrades to "off" elsewhere)
+--- @field profile? "off"|"workspace"|"readonly"|"blackbox" What the project dir looks like from inside: rw / ro / absent
+--- @field state_paths? string[] Extra rw binds (agent state/auth dirs; known providers ship defaults), ~ ok, missing paths fine
+--- @field ro_paths? string[] Extra ro binds, same rules
+--- @field env_allowlist? string[] Keep only these inherited env vars (default: inherit everything, sandboxed or not)
+
 --- @class weave.UserConfig
 --- @field debug boolean Log to the debug file (utils/logger.lua)
 --- @field provider string Default provider (a key of `acp_providers`)
@@ -38,6 +45,7 @@
 --- @field mcp_servers weave.acp.McpServer[] MCP servers handed to EVERY provider over ACP (session/new), unless a provider sets its own `mcpServers`. The agent spawns/connects them.
 --- @field tools weave.ToolsConfig
 --- @field permissions weave.PermissionsConfig
+--- @field sandbox weave.SandboxConfig
 --- @field view weave.ViewConfig Default panel geometry (width / sidebar_width / prompt_height)
 --- @field keys table<string, weave.UserConfig.KeymapValue> Key(s) per named action (see weave.keys ACTIONS); `false` disables one
 local ConfigDefault = {
@@ -177,6 +185,9 @@ local ConfigDefault = {
       command = "kiro-cli",
       args = { "acp" },
       env = {},
+      -- Kiro wraps itself in aim-sandbox; nesting user namespaces inside it
+      -- is expected to fail, so it opts out of any global sandbox profile.
+      sandbox = { profile = "off" },
     },
 
     ["pi-acp"] = {
@@ -210,6 +221,18 @@ local ConfigDefault = {
   permissions = {
     preset = "normal",
     presets = {},
+  },
+
+  -- Agent process confinement (weave.sandbox): default off. "readonly" is
+  -- the sweet spot once you trust the MCP-tool fallback of your provider —
+  -- the agent reads the project directly, but every write and mutating
+  -- command must flow through the weave tools (and thus the permission
+  -- engine above). bwrap only; on platforms without it a configured profile
+  -- degrades to "off" with a one-time warning.
+  sandbox = {
+    profile = "off",
+    state_paths = {},
+    ro_paths = {},
   },
 }
 

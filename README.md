@@ -227,6 +227,7 @@ panel** button makes it the tab's selection. `q`/`<Esc>` closes.
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
 | `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit + task lifecycle) via clankbox; `clankbox_path` overrides checkout auto-detection |
 | `permissions` | `table` | `{ preset = "normal" }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
+| `sandbox` | `table` | `{ profile = "off" }` | Agent process confinement via bubblewrap (see [Sandbox](#sandbox)) |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
 | `view` | `table` | see below | Default panel geometry |
 | `keys` | `table` | see [Keybinds](#keybinds) | Key(s) per named action |
@@ -356,6 +357,72 @@ resolves its clankbox tools through `require("weave.permissions").resolve`.
 Presets from `setup` shadow builtins by name; presets saved in the
 configuration window (runtime) shadow both, reversibly.
 
+### Sandbox
+
+`sandbox` confines the **agent process itself** (and every MCP server it
+spawns, weave's tool shim included) with
+[bubblewrap](https://github.com/containers/bubblewrap). It is the enforcement
+half of the permission engine: with the project read-only at the filesystem
+level, the agent's builtin write/execute tools hit the wall and edits must
+flow through the `weave:*` MCP tools — where your permission rules apply.
+
+```lua
+require("weave").setup({
+  sandbox = {
+    profile = "readonly",            -- "off" (default) | "workspace" | "readonly" | "blackbox"
+    state_paths = { "~/.myagent" },  -- extra rw binds on top of shipped per-provider defaults
+    ro_paths = {},                   -- extra ro binds
+    env_allowlist = nil,             -- nil = inherit the full environment (default)
+  },
+  acp_providers = {
+    ["codex-acp"] = { sandbox = { profile = "off" } },  -- per-provider override
+  },
+})
+```
+
+Profiles, by what the project directory looks like from inside:
+
+| Profile | Project dir | Meaning |
+| --- | --- | --- |
+| `off` | untouched | No wrapping (the default) |
+| `workspace` | read-write | Pure containment: the rest of `$HOME` is hidden behind a tmpfs (except `state_paths`), the rest of the filesystem is read-only |
+| `readonly` | read-only | Same, plus writes inside the project fail — edits and commands must flow through the weave MCP tools |
+| `blackbox` | absent | Even reads go through weave, so the transcript shows every file the agent ever saw |
+
+In every sandboxed profile `/tmp`, `/dev` and `/proc` are private, the rest
+of the filesystem is bound read-only (`/nix/store`, `/etc/ssl`,
+`resolv.conf` keep working), and the **network is shared** — this is
+guardrails and tool-forcing, not an exfiltration boundary. Known providers
+ship rw grants for their state/auth dirs (`~/.claude` + `~/.claude.json`,
+`~/.gemini`, `~/.codex`, …) plus the XDG dirs matching the binary name;
+anything else goes in `state_paths` (all binds tolerate missing paths). The
+`$NVIM` socket and the clankbox checkout are bound automatically so the tool
+suite keeps working inside.
+
+The per-provider `sandbox` table overrides scalars (`profile`,
+`env_allowlist`) and **adds** its `state_paths`/`ro_paths` to the global
+ones. `kiro-acp` ships `profile = "off"`: Kiro self-sandboxes via
+aim-sandbox, and nesting user namespaces inside it is expected to fail.
+
+Backend support: Linux with `bwrap` on `PATH`. Anywhere else a configured
+profile degrades to `off` with a one-time warning — nothing breaks, the
+tools are offered rather than forced.
+
+Support matrix (what has actually been exercised, not what is expected to
+work):
+
+| Provider | Spawns sandboxed | Notes |
+| --- | --- | --- |
+| `claude-agent-acp` | verified, all three profiles | ACP handshake completes under `workspace`/`readonly`/`blackbox` |
+| `kiro-acp` | opted out | Ships `profile = "off"`: self-sandboxes via aim-sandbox, nested user namespaces are expected to fail |
+| everything else | untested | No reason to expect failure; the wrapper is provider-agnostic |
+
+Spawning is only half of it: whether an agent **recovers** into the weave
+MCP tools when its builtin write/execute tools hit the read-only wall is
+provider- and model-dependent, and is not something this plugin can
+guarantee. Try `readonly` with your provider before relying on it, and use
+`workspace` where you only want containment without tool redirection.
+
 ---
 
 ## Lua API
@@ -461,6 +528,8 @@ are reference-stable: a field's table is reassigned only when it changed, so
                              resolution through the engine)
       permissions.lua      the client-side permission engine: rules, presets
                              (builtin/setup/runtime), the active preset
+      sandbox.lua          bwrap argv rewrite for the agent spawn (profiles
+                             off/workspace/readonly/blackbox)
       session.lua          one conversation: client, turns, queue/steer/cancel
       registry.lua         active sessions (editor-global) + per-tab selection
       task_store.lua       managed shell tasks (the task_* tool lifecycle)

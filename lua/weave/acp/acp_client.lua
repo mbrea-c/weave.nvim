@@ -134,11 +134,18 @@ function ACPClient:_setup_transport()
   local transport_type = self.provider_config.transport_type or "stdio"
 
   if transport_type == "stdio" then
+    -- THE sandbox touch point: rewrite the provider argv per the resolved
+    -- profile (weave.sandbox). Everything below spawns whatever comes back.
+    local Sandbox = require("weave.sandbox")
+    local sandbox = Sandbox.resolve(self.provider_config.sandbox)
+    local command, args = Sandbox.wrap(self.provider_config.command, self.provider_config.args, sandbox)
+
     --- @type weave.acp.StdioTransportConfig
     local transport_config = {
-      command = self.provider_config.command,
-      args = self.provider_config.args,
+      command = command,
+      args = args,
       env = self.provider_config.env,
+      env_allowlist = sandbox.env_allowlist,
       enable_reconnect = self.provider_config.reconnect,
       max_reconnect_attempts = self.provider_config.max_reconnect_attempts,
     }

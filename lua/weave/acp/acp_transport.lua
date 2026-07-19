@@ -15,6 +15,7 @@ local M = {}
 --- @field command string Command to spawn agent
 --- @field args? string[] Arguments for agent command
 --- @field env? table<string, string|nil> Environment variables
+--- @field env_allowlist? string[] Keep only these inherited vars (config.env and the defaults still apply on top)
 --- @field enable_reconnect? boolean Enable auto-reconnect
 --- @field max_reconnect_attempts? number Maximum reconnection attempts
 
@@ -38,6 +39,59 @@ local IGNORE_STDERR_PATTERNS = {
 --- @return weave.acp.ResponseRaw|string decoded
 function M.decode_line(line)
   return pcall(vim.json.decode, line, { luanil = { object = true, array = true } })
+end
+
+--- The agent's environment, as the `KEY=value` array libuv wants. Inherit
+--- the FULL parent environment (Nix, AWS Bedrock, proxies, custom CA bundles
+--- all depend on it) — uv.spawn replaces the environment wholesale, so
+--- everything must be listed explicitly. `env_allowlist` (the sandbox
+--- config's opt-in tightening) filters that inheritance; the ACP defaults
+--- and `config.env` overrides apply after it either way.
+--- @param config weave.acp.StdioTransportConfig
+--- @return string[]
+function M.build_env(config)
+  local env_map = {}
+  for k, v in pairs(vim.fn.environ()) do
+    env_map[k] = v
+  end
+
+  if config.env_allowlist then
+    local keep = {}
+    for _, k in ipairs(config.env_allowlist) do
+      keep[k] = true
+    end
+    for k in pairs(env_map) do
+      if not keep[k] then
+        env_map[k] = nil
+      end
+    end
+  end
+
+  -- Add default variables for ACP providers (overwrites parent if present)
+  env_map["NODE_NO_WARNINGS"] = "1"
+  env_map["IS_AI_TERMINAL"] = "1"
+
+  -- NOTE: do NOT inject $NVIM into the AGENT's environment. Kiro (and likely
+  -- its aim-sandbox wrapper) treats a set $NVIM as "I'm running inside a
+  -- Neovim :terminal" and exits cleanly (code 0) instead of serving the ACP
+  -- session — breaking session creation entirely. An MCP server that needs
+  -- $NVIM (e.g. the clankbox shim) must receive it via its OWN McpServer.env
+  -- entry (EnvVariable[]), which reaches only that subprocess — see
+  -- Session:_resolve_mcp_servers. Verified: injecting $NVIM here disconnects
+  -- Kiro; passing it per-MCP-server works.
+
+  -- Apply user-provided env overrides/additions (overwrites defaults)
+  if config.env then
+    for k, v in pairs(config.env) do
+      env_map[k] = v
+    end
+  end
+
+  local final_env = {}
+  for k, v in pairs(env_map) do
+    table.insert(final_env, k .. "=" .. v)
+  end
+  return final_env
 end
 
 --- Create stdio transport for ACP communication
@@ -85,40 +139,7 @@ function M.create_stdio_transport(config, callbacks)
     -- Capture stderr for better error reporting
     local stderr_buffer = {}
     local args = vim.deepcopy(config.args or {})
-    local env = config.env
-
-    -- Inherit full parent environment to support Nix, AWS Bedrock, proxies, custom CA bundles, etc.
-    -- uv.spawn replaces the entire environment, so we must explicitly include everything
-    local env_map = {}
-    for k, v in pairs(vim.fn.environ()) do
-      env_map[k] = v
-    end
-
-    -- Add default variables for ACP providers (overwrites parent if present)
-    env_map["NODE_NO_WARNINGS"] = "1"
-    env_map["IS_AI_TERMINAL"] = "1"
-
-    -- NOTE: do NOT inject $NVIM into the AGENT's environment. Kiro (and likely
-    -- its aim-sandbox wrapper) treats a set $NVIM as "I'm running inside a
-    -- Neovim :terminal" and exits cleanly (code 0) instead of serving the ACP
-    -- session — breaking session creation entirely. An MCP server that needs
-    -- $NVIM (e.g. the nvim-mcp shim) must receive it via its OWN McpServer.env
-    -- entry (EnvVariable[]), which reaches only that subprocess — see
-    -- Session:_resolve_mcp_servers. Verified: injecting $NVIM here disconnects
-    -- Kiro; passing it per-MCP-server works.
-
-    -- Apply user-provided env overrides/additions (overwrites defaults)
-    if env then
-      for k, v in pairs(env) do
-        env_map[k] = v
-      end
-    end
-
-    -- Serialize map to array format expected by libuv
-    local final_env = {}
-    for k, v in pairs(env_map) do
-      table.insert(final_env, k .. "=" .. v)
-    end
+    local final_env = M.build_env(config)
 
     --- @diagnostic disable-next-line: missing-fields
     local handle, pid = uv.spawn(config.command, {
