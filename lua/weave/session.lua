@@ -99,6 +99,19 @@ function Session:is_ready()
   return self._client ~= nil and self._session_id ~= nil
 end
 
+--- The ACP client behind this session, for callers that need to read the
+--- provider's capabilities (e.g. loadSession before an agent restart).
+--- @return weave.acp.ACPClient|nil
+function Session:client()
+  return self._client
+end
+
+--- The live ACP session id, or nil before session/new has answered.
+--- @return string|nil
+function Session:session_id()
+  return self._session_id
+end
+
 --- The callback table wiring a panel's user actions to this session.
 --- @return table callbacks panel.open-compatible
 function Session:view_handlers()

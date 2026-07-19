@@ -29,7 +29,7 @@
 --- @field clankbox_path? string Clankbox checkout root (the dir containing shim.lua); nil = auto-detect
 
 --- @class weave.PermissionsConfig The client-side permission engine (weave.permissions)
---- @field preset? string Active preset at startup (default "normal")
+--- @field preset? string Active preset at startup; unset = "normal", or its sandboxed_* variant when a profile is on
 --- @field presets? weave.permissions.Preset[] Additional presets (the setup source; shadow builtins by name)
 
 --- @class weave.SandboxConfig Confinement for the spawned agent process (weave.sandbox; bwrap backend, Linux-only, degrades to "off" elsewhere)
@@ -227,8 +227,11 @@ local ConfigDefault = {
   -- Rule shape: { tool = "<glob>", resource = "<glob>"|nil, decision =
   -- "allow"|"deny"|"ask" } — see lua/weave/permissions.lua for the action
   -- vocabulary (acp:<kind>, weave:<tool>, <plugin>:<tool>).
+  -- `preset` is deliberately UNSET here rather than defaulted to "normal": an
+  -- absent value means "no preference", which is what lets a configured
+  -- sandbox profile select the matching sandboxed_* variant automatically.
+  -- Setting it pins the choice under every profile.
   permissions = {
-    preset = "normal",
     presets = {},
   },
 

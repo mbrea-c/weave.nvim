@@ -140,6 +140,13 @@ function ACPClient:_setup_transport()
     local sandbox = Sandbox.resolve(self.provider_config.sandbox)
     local command, args = Sandbox.wrap(self.provider_config.command, self.provider_config.args, sandbox)
 
+    -- The profile is frozen into the argv from here on, so this is also where
+    -- the permission engine learns which one the LIVE agent is confined by.
+    -- Reading it back off the config later would claim a confinement the
+    -- running process may not have.
+    require("weave.permissions").set_profile(sandbox.profile)
+    self.sandbox_profile = sandbox.profile
+
     --- @type weave.acp.StdioTransportConfig
     local transport_config = {
       command = command,
@@ -607,6 +614,10 @@ end
 --- @param mcp_servers? weave.acp.McpServer[] MCP servers for the agent to spawn (session/new mcpServers). Defaults to none.
 function ACPClient:create_session(handlers, callback, mcp_servers)
   local cwd = vim.fn.getcwd()
+  -- The session's cwd is what ${project} means in permission rules, pinned
+  -- here so a later :cd cannot silently move the boundary a grant was made
+  -- against.
+  require("weave.permissions").set_project_root(cwd)
 
   self:_send_request("session/new", {
     cwd = cwd,

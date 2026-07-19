@@ -150,7 +150,7 @@ describe("tools permission gate", function()
     assert.equal("allow_once", perm.request.options[1].kind)
 
     store:pop_permission()
-    perm.respond("allow")
+    perm.respond("allow_once")
     assert.truthy(text_of(result):find("task 1 started", 1, true))
   end)
 
@@ -215,8 +215,79 @@ describe("tools permission gate", function()
     end)
     local perm = store:get_permission()
     store:pop_permission()
-    perm.respond("allow")
+    perm.respond("allow_once")
     assert.is_true(result.isError)
     assert.truthy(text_of(result):find("file not found", 1, true))
+  end)
+
+  describe("always answers", function()
+    local root
+
+    before_each(function()
+      root = vim.fn.tempname()
+      vim.fn.mkdir(root, "p")
+      Permissions.set_project_root(root)
+    end)
+
+    local function ask_write(path)
+      local store = SessionStore:new()
+      Gate._ask_store = function()
+        return store
+      end
+      Permissions.save_preset({
+        name = "confirm-writes",
+        rules = {
+          { tool = "weave:write", decision = "ask" },
+          { tool = "*", decision = "allow" },
+        },
+      })
+      Permissions.set_active("confirm-writes")
+      local result
+      wrapped_tools().write.handler({ path = path, content = "x" }, function(ret)
+        result = ret
+      end)
+      local perm = store:get_permission()
+      store:pop_permission()
+      return perm, function()
+        return result
+      end
+    end
+
+    it("offers four options and labels the always pair by the scope it grants", function()
+      local perm = ask_write(root .. "/a.txt")
+      local kinds = {}
+      for i, opt in ipairs(perm.request.options) do
+        kinds[i] = opt.kind
+      end
+      assert.same({ "allow_once", "allow_always", "reject_once", "reject_always" }, kinds)
+      assert.equal("Allow for project", perm.request.options[2].name)
+      assert.equal("Reject for project", perm.request.options[4].name)
+    end)
+
+    it("allow_always grants the project and stops the asking", function()
+      ask_write(root .. "/a.txt").respond("allow_always")
+      assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = root .. "/b.txt" }))
+      assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/etc/hosts" }))
+    end)
+
+    it("reject_always refuses this call and denies the next one outright", function()
+      local perm, result = ask_write(root .. "/a.txt")
+      perm.respond("reject_always")
+      assert.is_true(result().isError)
+      assert.equal("deny", Permissions.resolve({ tool = "weave:write", resource = root .. "/b.txt" }))
+    end)
+
+    it("an always answer outside the project does not generalise", function()
+      local outside = vim.fn.tempname() .. "-elsewhere/x.txt"
+      local perm = ask_write(outside)
+      assert.truthy(perm.request.options[2].name:find("Allow for ", 1, true))
+      assert.is_nil(perm.request.options[2].name:find("project", 1, true))
+      perm.respond("allow_always")
+      assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = outside }))
+      assert.equal(
+        "ask",
+        Permissions.resolve({ tool = "weave:write", resource = vim.fs.dirname(outside) .. "/sibling.txt" })
+      )
+    end)
   end)
 end)

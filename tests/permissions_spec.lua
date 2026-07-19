@@ -36,7 +36,14 @@ describe("permissions engine", function()
     for _, p in ipairs(Permissions.presets()) do
       names[#names + 1] = p.name
     end
-    assert.same({ "normal", "auto", "allow_edits" }, names)
+    assert.same({
+      "normal",
+      "auto",
+      "allow_edits",
+      "sandboxed_normal",
+      "sandboxed_auto",
+      "sandboxed_allow_edits",
+    }, names)
     assert.equal("normal", Permissions.active().name)
     assert.equal("Normal (ask)", Permissions.active().label)
   end)
@@ -104,7 +111,15 @@ describe("permissions engine", function()
     for _, p in ipairs(Permissions.presets()) do
       names[#names + 1] = p.name
     end
-    assert.same({ "normal", "auto", "allow_edits", "team" }, names)
+    assert.same({
+      "normal",
+      "auto",
+      "allow_edits",
+      "sandboxed_normal",
+      "sandboxed_auto",
+      "sandboxed_allow_edits",
+      "team",
+    }, names)
     assert.equal("team", Permissions.active().name)
     assert.equal("setup", Permissions.get("team").source)
     assert.equal("allow", Permissions.resolve({ tool = "acp:execute" }))
@@ -124,7 +139,14 @@ describe("permissions engine", function()
     for _, p in ipairs(Permissions.presets()) do
       names[#names + 1] = p.name
     end
-    assert.same({ "normal", "auto", "allow_edits" }, names)
+    assert.same({
+      "normal",
+      "auto",
+      "allow_edits",
+      "sandboxed_normal",
+      "sandboxed_auto",
+      "sandboxed_allow_edits",
+    }, names)
     assert.equal("runtime", Permissions.get("auto").source)
 
     Permissions.set_active("auto")
@@ -177,5 +199,310 @@ describe("permissions engine", function()
       Permissions.set_active("yolo")
     end, "yolo")
     assert.equal("normal", Permissions.active().name)
+  end)
+end)
+
+describe("permissions ${project} expansion", function()
+  before_each(function()
+    Permissions.set_project_root("/home/me/proj")
+  end)
+  after_each(function()
+    Permissions._reset()
+  end)
+
+  it("expands ${project} in a resource glob to the project root", function()
+    Permissions.save_preset({
+      name = "scoped",
+      rules = {
+        { tool = "weave:read", resource = "${project}/**", decision = "allow" },
+        { tool = "weave:read", decision = "deny" },
+      },
+    })
+    Permissions.set_active("scoped")
+    assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = "/home/me/proj/lua/x.lua" }))
+    assert.equal("deny", Permissions.resolve({ tool = "weave:read", resource = "/etc/passwd" }))
+  end)
+
+  it("a ${project} rule still never matches a resourceless action", function()
+    Permissions.save_preset({
+      name = "scoped",
+      rules = { { tool = "weave:*", resource = "${project}/**", decision = "allow" } },
+    })
+    Permissions.set_active("scoped")
+    assert.equal("ask", Permissions.resolve({ tool = "weave:task_status" }))
+  end)
+
+  it("falls back to the cwd when no root was set", function()
+    Permissions._reset()
+    Permissions.save_preset({
+      name = "scoped",
+      rules = { { tool = "weave:read", resource = "${project}/**", decision = "allow" } },
+    })
+    Permissions.set_active("scoped")
+    assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = vim.fn.getcwd() .. "/init.lua" }))
+  end)
+end)
+
+describe("permissions sandboxed builtins", function()
+  before_each(function()
+    Permissions.set_project_root("/home/me/proj")
+  end)
+  after_each(function()
+    Permissions._reset()
+  end)
+
+  it("ships three sandboxed variants after the legacy three", function()
+    local names = {}
+    for _, p in ipairs(Permissions.presets()) do
+      names[#names + 1] = p.name
+    end
+    assert.same({
+      "normal",
+      "auto",
+      "allow_edits",
+      "sandboxed_normal",
+      "sandboxed_auto",
+      "sandboxed_allow_edits",
+    }, names)
+  end)
+
+  it("sandboxed_normal allows reads inside the project and asks outside it", function()
+    Permissions.set_active("sandboxed_normal")
+    assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = "/home/me/proj/a.lua" }))
+    assert.equal("ask", Permissions.resolve({ tool = "weave:read", resource = "/etc/passwd" }))
+    assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
+    assert.equal("ask", Permissions.resolve({ tool = "acp:edit" }))
+  end)
+
+  it("the resourceless task query tools are allowed, not caught by the catch-all ask", function()
+    for _, preset in ipairs({ "sandboxed_normal", "sandboxed_auto", "sandboxed_allow_edits" }) do
+      Permissions.set_active(preset)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:task_status" }))
+      assert.equal("allow", Permissions.resolve({ tool = "weave:task_wait" }))
+      assert.equal("allow", Permissions.resolve({ tool = "weave:task_kill" }))
+    end
+  end)
+
+  it("sandboxed_allow_edits allows writes inside the project only", function()
+    Permissions.set_active("sandboxed_allow_edits")
+    assert.equal("allow", Permissions.resolve({ tool = "acp:edit" }))
+    assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
+    assert.equal("allow", Permissions.resolve({ tool = "weave:edit", resource = "/home/me/proj/a.lua" }))
+    assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/etc/hosts" }))
+  end)
+
+  it("sandboxed_auto allows any weave tool inside the project, asks outside", function()
+    Permissions.set_active("sandboxed_auto")
+    assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
+    assert.equal("allow", Permissions.resolve({ tool = "acp:execute" }))
+    assert.equal("ask", Permissions.resolve({ tool = "weave:read", resource = "/etc/passwd" }))
+  end)
+end)
+
+describe("permissions sandbox requirements", function()
+  after_each(function()
+    Permissions._reset()
+  end)
+
+  it("orders the profiles by confinement", function()
+    assert.is_true(Permissions.profile_rank("off") < Permissions.profile_rank("workspace"))
+    assert.is_true(Permissions.profile_rank("workspace") < Permissions.profile_rank("readonly"))
+    assert.is_true(Permissions.profile_rank("readonly") < Permissions.profile_rank("blackbox"))
+  end)
+
+  it("a preset with no sandbox field is compatible with every profile", function()
+    for _, profile in ipairs({ "off", "workspace", "readonly", "blackbox" }) do
+      assert.is_true(Permissions.preset_compatible(Permissions.get("normal"), profile))
+    end
+  end)
+
+  it("or_stricter is satisfied by the named profile or anything stricter", function()
+    Permissions.save_preset({
+      name = "p",
+      sandbox = { profile = "readonly", mode = "or_stricter" },
+      rules = { { tool = "*", decision = "allow" } },
+    })
+    local p = Permissions.get("p")
+    assert.is_false(Permissions.preset_compatible(p, "off"))
+    assert.is_false(Permissions.preset_compatible(p, "workspace"))
+    assert.is_true(Permissions.preset_compatible(p, "readonly"))
+    assert.is_true(Permissions.preset_compatible(p, "blackbox"))
+  end)
+
+  it("or_stricter is the default when mode is omitted", function()
+    Permissions.save_preset({
+      name = "p",
+      sandbox = { profile = "readonly" },
+      rules = { { tool = "*", decision = "allow" } },
+    })
+    assert.is_false(Permissions.preset_compatible(Permissions.get("p"), "workspace"))
+    assert.is_true(Permissions.preset_compatible(Permissions.get("p"), "blackbox"))
+  end)
+
+  it("exact is satisfied only by that profile", function()
+    Permissions.save_preset({
+      name = "p",
+      sandbox = { profile = "readonly", mode = "exact" },
+      rules = { { tool = "*", decision = "allow" } },
+    })
+    local p = Permissions.get("p")
+    assert.is_false(Permissions.preset_compatible(p, "workspace"))
+    assert.is_true(Permissions.preset_compatible(p, "readonly"))
+    assert.is_false(Permissions.preset_compatible(p, "blackbox"))
+  end)
+
+  it("or_looser is satisfied by the named profile or anything looser", function()
+    Permissions.save_preset({
+      name = "p",
+      sandbox = { profile = "readonly", mode = "or_looser" },
+      rules = { { tool = "*", decision = "allow" } },
+    })
+    local p = Permissions.get("p")
+    assert.is_true(Permissions.preset_compatible(p, "off"))
+    assert.is_true(Permissions.preset_compatible(p, "readonly"))
+    assert.is_false(Permissions.preset_compatible(p, "blackbox"))
+  end)
+
+  it("reports a reason naming the requirement and the current profile", function()
+    Permissions.save_preset({
+      name = "p",
+      sandbox = { profile = "readonly", mode = "or_stricter" },
+      rules = { { tool = "*", decision = "allow" } },
+    })
+    local ok, reason = Permissions.preset_compatible(Permissions.get("p"), "off")
+    assert.is_false(ok)
+    assert.truthy(reason:match("readonly"))
+    assert.truthy(reason:match("off"))
+  end)
+
+  it("validates the sandbox field loudly", function()
+    assert.has_error(function()
+      Permissions.save_preset({ name = "p", sandbox = { profile = "yolo" }, rules = {} })
+    end, "profile")
+    assert.has_error(function()
+      Permissions.save_preset({ name = "p", sandbox = { profile = "off", mode = "maybe" }, rules = {} })
+    end, "mode")
+  end)
+
+  it("survives the round trip through save_preset", function()
+    Permissions.save_preset({
+      name = "p",
+      sandbox = { profile = "blackbox", mode = "exact" },
+      rules = { { tool = "*", decision = "allow" } },
+    })
+    assert.same({ profile = "blackbox", mode = "exact" }, Permissions.get("p").sandbox)
+  end)
+end)
+
+describe("permissions cycle under a profile", function()
+  after_each(function()
+    Permissions._reset()
+  end)
+
+  it("skips presets incompatible with the current profile", function()
+    Permissions.set_profile("off")
+    local names = {}
+    for _, p in ipairs(Permissions.compatible_presets()) do
+      names[#names + 1] = p.name
+    end
+    assert.same({ "normal", "auto", "allow_edits" }, names)
+
+    Permissions.set_profile("workspace")
+    names = {}
+    for _, p in ipairs(Permissions.compatible_presets()) do
+      names[#names + 1] = p.name
+    end
+    assert.same({
+      "normal",
+      "auto",
+      "allow_edits",
+      "sandboxed_normal",
+      "sandboxed_auto",
+      "sandboxed_allow_edits",
+    }, names)
+  end)
+
+  it("cycle() never lands on an incompatible preset", function()
+    Permissions.set_profile("off")
+    for _ = 1, 6 do
+      local p = Permissions.cycle()
+      assert.is_true(Permissions.preset_compatible(p, "off"))
+    end
+  end)
+
+  it("does not filter to empty when nothing is compatible", function()
+    Permissions.setup({
+      presets = { { name = "only", sandbox = { profile = "blackbox" }, rules = { { tool = "*", decision = "allow" } } } },
+    })
+    Permissions.set_profile("off")
+    -- the builtins are unconstrained, so force the pathological case directly
+    assert.is_true(#Permissions.compatible_presets("off") > 0)
+    assert.is_true(#Permissions.compatible_presets("blackbox") > 0)
+  end)
+end)
+
+describe("permissions grant overlay", function()
+  before_each(function()
+    Permissions.set_project_root("/home/me/proj")
+  end)
+  after_each(function()
+    Permissions._reset()
+  end)
+
+  it("starts empty and resolves through the active preset", function()
+    Permissions.set_active("sandboxed_normal")
+    assert.same({}, Permissions.grants())
+    assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
+  end)
+
+  it("an overlay rule beats a conflicting preset rule", function()
+    Permissions.set_active("sandboxed_normal")
+    Permissions.add_grant({ tool = "weave:write", resource = "${project}/**", decision = "allow" })
+    assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
+    assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/etc/hosts" }))
+  end)
+
+  it("survives a preset switch and is cleared by clear_overlay", function()
+    Permissions.add_grant({ tool = "weave:write", resource = "${project}/**", decision = "allow" })
+    Permissions.set_active("sandboxed_normal")
+    assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
+    Permissions.clear_overlay()
+    assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
+  end)
+
+  it("revoke_grant drops one rule and notifies", function()
+    local fired = 0
+    Permissions.subscribe(function()
+      fired = fired + 1
+    end)
+    Permissions.add_grant({ tool = "weave:write", resource = "${project}/**", decision = "allow" })
+    Permissions.add_grant({ tool = "weave:read", resource = "/etc/hosts", decision = "deny" })
+    assert.equal(2, #Permissions.grants())
+    Permissions.revoke_grant(1)
+    assert.equal(1, #Permissions.grants())
+    assert.equal("weave:read", Permissions.grants()[1].tool)
+    assert.equal(3, fired)
+  end)
+
+  it("validates a grant like any other rule", function()
+    assert.has_error(function()
+      Permissions.add_grant({ tool = "weave:write", decision = "maybe" })
+    end, "decision")
+  end)
+
+  it("grant_rule scopes to the project inside it and to the exact resource outside", function()
+    assert.same(
+      { tool = "weave:read", resource = "${project}/**", decision = "allow" },
+      Permissions.grant_rule({ tool = "weave:read", resource = "/home/me/proj/a.lua" }, "allow")
+    )
+    assert.same(
+      { tool = "weave:read", resource = "/home/other/.config/x", decision = "deny" },
+      Permissions.grant_rule({ tool = "weave:read", resource = "/home/other/.config/x" }, "deny")
+    )
+    -- a resourceless action grants by tool name alone
+    assert.same(
+      { tool = "weave:task_start", decision = "allow" },
+      Permissions.grant_rule({ tool = "weave:task_start" }, "allow")
+    )
   end)
 end)

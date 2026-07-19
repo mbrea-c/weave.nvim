@@ -170,19 +170,34 @@ agent can read, an `ask` surfaces in the same sidebar queue as an ACP
 request.
 
 `;;p` cycles the active preset; the prompt border colour is an ambient
-reminder. Three builtin presets re-encode the historical modes: **normal**
-(every ACP request asks), **auto** (allow everything), **allow edits** (ACP
-edit calls auto-allow, the rest ask). Client-side tools default to allow in
-all three — rules targeting `weave:*` (or another plugin's `<plugin>:*`
-tools) are the opt-in tightening.
+reminder. Six builtin presets ship. Three re-encode the historical modes:
+**normal** (every ACP request asks), **auto** (allow everything), **allow
+edits** (ACP edit calls auto-allow, the rest ask); client-side tools default
+to allow in all three. Three **sandboxed** variants mirror them for use with
+a [sandbox profile](#sandbox) — same shapes, but weave's own tools are no
+longer exempt: reads and searches inside the project are allowed, everything
+else `weave:*` asks. When a profile is configured and you have not set
+`permissions.preset`, the matching sandboxed variant is selected for you.
+
+Resource globs may contain `${project}`, which expands to the session's cwd,
+so "inside the project" is expressible in a static preset table.
+
+Answering an `ask` for a weave tool offers four options: allow/reject once,
+and allow/reject **for project**. The "always" pair records a **session
+grant** — a rule consulted ahead of the active preset, listed with a per-row
+`[revoke]` in the configuration window, and discarded on exit. Grants never
+rewrite the preset, so `normal` keeps meaning what it means everywhere else.
+Inside the project a grant covers the project; outside it, only that exact
+path.
 
 Activating the sidebar's **Permissions** header opens the **preset
 configuration window**: every preset (builtin / setup / runtime) with the
-active one marked — a row activates it — plus the active preset's rules.
-`[edit]` opens the active preset as a Lua table in a scratch float (`:w`
-applies it as a *runtime* preset, shadowing a builtin of the same name;
-`[delete]` reverts to the shadowed definition), `[new]` starts from a
-template. Runtime presets live in memory for now.
+active one marked — a row activates it — plus the active preset's rules, any
+session grants, and the running agent's sandbox profile. `[edit]` opens the
+active preset as a Lua table in a scratch float (`:w` applies it as a
+*runtime* preset, shadowing a builtin of the same name; `[delete]` reverts to
+the shadowed definition), `[new]` starts from a template. Runtime presets
+live in memory for now.
 
 ### Sessions
 
@@ -226,7 +241,7 @@ panel** button makes it the tab's selection. `q`/`<Esc>` closes.
 | `acp_providers` | `table` | 13 built-ins | Agent launch definitions (see below) |
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
 | `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit + task lifecycle) via clankbox; `clankbox_path` overrides checkout auto-detection |
-| `permissions` | `table` | `{ preset = "normal" }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
+| `permissions` | `table` | `{ presets = {} }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
 | `sandbox` | `table` | `{ profile = "off" }` | Agent process confinement via bubblewrap (see [Sandbox](#sandbox)) |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
 | `view` | `table` | see below | Default panel geometry |
@@ -404,7 +419,7 @@ declared, with no ACP or MCP correlation id anywhere in it.
 ```lua
 require("weave").setup({
   permissions = {
-    preset = "normal",           -- active at startup
+    preset = "normal",           -- active at startup (unset = normal, or its sandboxed variant under a profile)
     presets = {                  -- the "setup" preset source
       {
         name = "docs-only",
@@ -431,6 +446,29 @@ buffer ref, or command line), and `<plugin>:<tool>` for any other plugin that
 resolves its clankbox tools through `require("weave.permissions").resolve`.
 Presets from `setup` shadow builtins by name; presets saved in the
 configuration window (runtime) shadow both, reversibly.
+
+A preset may declare what confinement its rules assume:
+
+```lua
+{
+  name = "audit",
+  sandbox = { profile = "readonly", mode = "or_stricter" },
+  rules = { ... },
+}
+```
+
+`mode` is `or_stricter` (the default: that profile or anything more
+confining), `exact`, or `or_looser`. Profiles are totally ordered by
+confinement: `off < workspace < readonly < blackbox`. A preset with no
+`sandbox` field fits every profile.
+
+The requirement is declarative — the engine compares, it never applies a
+profile. `;;p` silently skips presets the running profile does not satisfy
+(cycling is cheap and must never restart anything); they still appear in the
+configuration window, greyed with their reason, and selecting one offers the
+agent restart needed to satisfy it. The confirmation text depends on the
+direction and on whether the provider supports `session/load` — without it,
+restarting loses the conversation, and the prompt says so.
 
 ### Sandbox
 
@@ -482,6 +520,30 @@ aim-sandbox, and nesting user namespaces inside it is expected to fail.
 Backend support: Linux with `bwrap` on `PATH`. Anywhere else a configured
 profile degrades to `off` with a one-time warning — nothing breaks, the
 tools are offered rather than forced.
+
+#### Choosing a profile
+
+The bwrap argv is built once, at spawn, so a profile cannot change on a
+running agent. Two places to choose one:
+
+- **+ new session** asks for a profile after the provider. Nothing has
+  spawned yet, so this choice is free.
+- The permissions window's **Sandbox profile** row shows the running agent's
+  profile as session state, with `[restart with profile…]` beside it. This
+  is the only path that *reduces* confinement, and it always confirms first.
+
+Two caveats worth knowing before they look like bugs. One agent process is
+shared per provider, so a new session started while that provider is already
+running joins the existing process at *its* profile (weave warns when the
+requested profile differs). And a session restored into a different profile
+comes back without knowledge of any tasks that were running, and may carry
+history referencing paths it can no longer reach.
+
+Note that weave's own MCP tools run host-side, in Neovim, outside bwrap.
+Under `blackbox` they are a deliberate read channel out of the sandbox and
+the agent's only route to the project. The profile confines the agent
+*process*; what it plus the permission engine buys is that every such read is
+mediated and visible.
 
 Support matrix (what has actually been exercised, not what is expected to
 work):

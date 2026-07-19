@@ -40,10 +40,17 @@ local M = {}
 --- @field resource? string Glob over the resource; a rule with one never matches an action without one
 --- @field decision weave.permissions.Decision
 
+--- @alias weave.permissions.RequirementMode "or_stricter"|"exact"|"or_looser"
+
+--- @class weave.permissions.SandboxRequirement What confinement a preset's rules assume
+--- @field profile "off"|"workspace"|"readonly"|"blackbox"
+--- @field mode? weave.permissions.RequirementMode Default "or_stricter"
+
 --- @class weave.permissions.Preset
 --- @field name string Unique id; a later source shadows an earlier one of the same name
 --- @field label? string Human label for the sidebar/UI (defaults to name)
 --- @field rules weave.permissions.Rule[] Evaluated in order, first match wins
+--- @field sandbox? weave.permissions.SandboxRequirement Declarative: the engine compares, it never applies a profile
 --- @field source? "builtin"|"setup"|"runtime" Assigned by the engine, not the caller
 
 --- @class weave.permissions.Action
@@ -51,6 +58,19 @@ local M = {}
 --- @field resource? string The thing acted on (path, command line, buffer ref)
 
 local DECISIONS = { allow = true, deny = true, ask = true }
+
+-- The sandbox profiles ordered by CONFINEMENT, which is what makes "at least
+-- this strict" a comparison instead of a table of special cases:
+--   off < workspace < readonly < blackbox
+-- (no sandbox / project rw / project ro / project absent).
+local PROFILE_RANK = { off = 1, workspace = 2, readonly = 3, blackbox = 4 }
+local MODES = { or_stricter = true, exact = true, or_looser = true }
+
+-- Rules are static tables in Lua and in config, so they cannot name the
+-- project root literally. `${project}` in a resource glob expands to it at
+-- resolve time — without this, "inside the project" is inexpressible and the
+-- sandboxed presets below collapse to tool-name-only rules.
+local PROJECT_TOKEN = "${project}"
 
 -- The legacy permission modes, re-encoded (same names, labels and cycle
 -- order, so ;;p muscle memory and the prompt-border palette carry over).
@@ -86,6 +106,70 @@ local BUILTIN = {
       { tool = "*", decision = "allow" },
     },
   },
+  -- ── The sandboxed variants ────────────────────────────────────────────────
+  --
+  -- Same three shapes, same cycle order, with the client-side exemption
+  -- removed: once a profile confines the agent PROCESS, weave's own tools stop
+  -- being a free channel around it. Note what they deliberately do NOT do —
+  -- they never tighten acp:*, so the agent-side flow is unchanged.
+  --
+  -- The task query tools are listed one by one above the weave:* catch-all on
+  -- purpose. tools/init.lua registers them with no resource extractor, and a
+  -- resource-bearing rule never matches a resourceless action, so a
+  -- `{ tool = "weave:*", resource = "${project}/**" }` line would sail past
+  -- them into the ask below and make the agent ask permission to read a task's
+  -- exit code.
+  {
+    name = "sandboxed_normal",
+    label = "Sandboxed (ask)",
+    source = "builtin",
+    sandbox = { profile = "workspace", mode = "or_stricter" },
+    rules = {
+      { tool = "acp:*", decision = "ask" },
+      { tool = "weave:read", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:glob", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:grep", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:task_status", decision = "allow" },
+      { tool = "weave:task_wait", decision = "allow" },
+      { tool = "weave:task_kill", decision = "allow" },
+      { tool = "weave:*", decision = "ask" },
+      { tool = "*", decision = "allow" },
+    },
+  },
+  {
+    name = "sandboxed_auto",
+    label = "Sandboxed (auto)",
+    source = "builtin",
+    sandbox = { profile = "workspace", mode = "or_stricter" },
+    rules = {
+      { tool = "weave:task_status", decision = "allow" },
+      { tool = "weave:task_wait", decision = "allow" },
+      { tool = "weave:task_kill", decision = "allow" },
+      { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:*", decision = "ask" },
+      { tool = "*", decision = "allow" },
+    },
+  },
+  {
+    name = "sandboxed_allow_edits",
+    label = "Sandboxed (allow edits)",
+    source = "builtin",
+    sandbox = { profile = "workspace", mode = "or_stricter" },
+    rules = {
+      { tool = "acp:edit", decision = "allow" },
+      { tool = "acp:*", decision = "ask" },
+      { tool = "weave:read", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:glob", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:grep", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:write", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:edit", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:task_status", decision = "allow" },
+      { tool = "weave:task_wait", decision = "allow" },
+      { tool = "weave:task_kill", decision = "allow" },
+      { tool = "weave:*", decision = "ask" },
+      { tool = "*", decision = "allow" },
+    },
+  },
 }
 
 --- @type weave.permissions.Preset[] from setup(); shadows builtin by name
@@ -93,6 +177,12 @@ local setup_presets = {}
 --- @type weave.permissions.Preset[] from save_preset(); shadows both
 local runtime_presets = {}
 local active_name = "normal"
+--- @type weave.permissions.Rule[] the grant overlay; consulted BEFORE the active preset
+local overlay = {}
+--- @type string|nil project root for ${project}; nil = ask the editor
+local project_root = nil
+--- @type string|nil the RUNNING session's profile; nil = ask the config
+local current_profile = nil
 --- @type fun()[]
 local subscribers = {}
 
@@ -130,6 +220,30 @@ function M.glob_match(glob, text)
   return text:match("^" .. pat .. "$") ~= nil
 end
 
+--- The project root `${project}` expands to. Defaults to the editor's cwd;
+--- the session layer sets it explicitly so a rule means the same thing
+--- whatever the user has :cd'd to since.
+--- @return string
+function M.project_root()
+  return project_root or vim.fn.getcwd()
+end
+
+--- @param root string|nil nil restores the cwd default
+function M.set_project_root(root)
+  project_root = root
+end
+
+--- Expand `${project}` in a resource glob. Cheap enough to do per resolve,
+--- and doing it lazily is what keeps presets serialisable.
+--- @param resource string
+--- @return string
+local function expand(resource)
+  if not resource:find(PROJECT_TOKEN, 1, true) then
+    return resource
+  end
+  return (resource:gsub("%${project}", (M.project_root():gsub("%%", "%%%%"))))
+end
+
 --- @param rule weave.permissions.Rule
 --- @param action weave.permissions.Action
 --- @return boolean
@@ -140,7 +254,7 @@ local function rule_matches(rule, action)
   if rule.resource == nil then
     return true
   end
-  return action.resource ~= nil and M.glob_match(rule.resource, action.resource)
+  return action.resource ~= nil and M.glob_match(expand(rule.resource), action.resource)
 end
 
 --- Deep-copy a preset so engine state never aliases caller tables.
@@ -152,7 +266,26 @@ local function own(preset, source)
   for i, r in ipairs(preset.rules or {}) do
     rules[i] = { tool = r.tool, resource = r.resource, decision = r.decision }
   end
-  return { name = preset.name, label = preset.label, rules = rules, source = source }
+  local sandbox = preset.sandbox and { profile = preset.sandbox.profile, mode = preset.sandbox.mode } or nil
+  return { name = preset.name, label = preset.label, rules = rules, sandbox = sandbox, source = source }
+end
+
+--- Validate one rule in isolation (shared by presets and grants).
+--- @param rule table
+--- @param where string prefix for the error message
+local function validate_rule(rule, where)
+  if type(rule.tool) ~= "string" or rule.tool == "" then
+    error(("weave.permissions: %s: `tool` must be a glob string"):format(where), 0)
+  end
+  if rule.resource ~= nil and type(rule.resource) ~= "string" then
+    error(("weave.permissions: %s: `resource` must be a glob string"):format(where), 0)
+  end
+  if not DECISIONS[rule.decision] then
+    error(
+      ("weave.permissions: %s: `decision` must be allow/deny/ask, got %s"):format(where, vim.inspect(rule.decision)),
+      0
+    )
+  end
 end
 
 --- Validate a caller-supplied preset, loudly (a typo'd decision must not
@@ -166,18 +299,24 @@ local function validate(preset)
     error(("weave.permissions: preset %q: `rules` must be a list"):format(preset.name), 0)
   end
   for i, rule in ipairs(preset.rules or {}) do
-    if type(rule.tool) ~= "string" or rule.tool == "" then
-      error(("weave.permissions: preset %q rule %d: `tool` must be a glob string"):format(preset.name, i), 0)
-    end
-    if rule.resource ~= nil and type(rule.resource) ~= "string" then
-      error(("weave.permissions: preset %q rule %d: `resource` must be a glob string"):format(preset.name, i), 0)
-    end
-    if not DECISIONS[rule.decision] then
+    validate_rule(rule, ("preset %q rule %d"):format(preset.name, i))
+  end
+  local sandbox = preset.sandbox
+  if sandbox ~= nil then
+    if type(sandbox) ~= "table" or not PROFILE_RANK[sandbox.profile] then
       error(
-        ("weave.permissions: preset %q rule %d: `decision` must be allow/deny/ask, got %s"):format(
+        ("weave.permissions: preset %q: `sandbox.profile` must be off/workspace/readonly/blackbox, got %s"):format(
           preset.name,
-          i,
-          vim.inspect(rule.decision)
+          vim.inspect(type(sandbox) == "table" and sandbox.profile or sandbox)
+        ),
+        0
+      )
+    end
+    if sandbox.mode ~= nil and not MODES[sandbox.mode] then
+      error(
+        ("weave.permissions: preset %q: `sandbox.mode` must be or_stricter/exact/or_looser, got %s"):format(
+          preset.name,
+          vim.inspect(sandbox.mode)
         ),
         0
       )
@@ -243,12 +382,92 @@ function M.set_active(name)
   notify()
 end
 
---- Advance to the next preset in the effective order (the ;;p cycle) and
---- return it.
+--- ── Sandbox profiles ────────────────────────────────────────────────────────
+
+--- Confinement rank; higher is stricter. Unknown profiles rank as `off`, so a
+--- typo loosens visibly rather than silently claiming confinement.
+--- @param profile string|nil
+--- @return integer
+function M.profile_rank(profile)
+  return PROFILE_RANK[profile] or PROFILE_RANK.off
+end
+
+--- The profile the running agent was spawned under, or the configured
+--- default before anything spawns. The session layer calls `set_profile` at
+--- spawn, because the config value can change while a process that predates
+--- the change still holds an open session.
+--- @return string
+function M.current_profile()
+  if current_profile then
+    return current_profile
+  end
+  local ok, sandbox = pcall(require, "weave.sandbox")
+  return (ok and sandbox.resolve().profile) or "off"
+end
+
+--- @param profile string|nil nil restores the config default
+function M.set_profile(profile)
+  if current_profile == profile then
+    return
+  end
+  current_profile = profile
+  notify()
+end
+
+--- Does this preset's declared requirement accept `profile`? Presets with no
+--- requirement accept everything, so every builtin stays reachable.
+--- @param preset weave.permissions.Preset
+--- @param profile? string defaults to the current profile
+--- @return boolean ok, string|nil reason
+function M.preset_compatible(preset, profile)
+  local req = preset and preset.sandbox
+  if not req then
+    return true, nil
+  end
+  profile = profile or M.current_profile()
+  local mode = req.mode or "or_stricter"
+  local want, have = M.profile_rank(req.profile), M.profile_rank(profile)
+  local ok
+  if mode == "exact" then
+    ok = have == want
+  elseif mode == "or_looser" then
+    ok = have <= want
+  else
+    ok = have >= want
+  end
+  if ok then
+    return true, nil
+  end
+  local phrasing = ({ or_stricter = " or stricter", or_looser = " or looser", exact = " exactly" })[mode]
+  return false, ("requires sandbox %s%s; current: %s"):format(req.profile, phrasing, profile)
+end
+
+--- The presets `;;p` may land on: the effective list minus the ones the
+--- current profile does not satisfy. Guard: never filter to empty — a cycle
+--- that lands nowhere reads as a broken keybind, so a fully-incompatible list
+--- is returned whole and the UI explains itself instead.
+--- @param profile? string
+--- @return weave.permissions.Preset[]
+function M.compatible_presets(profile)
+  local all = M.presets()
+  local out = {}
+  for _, p in ipairs(all) do
+    if M.preset_compatible(p, profile) then
+      out[#out + 1] = p
+    end
+  end
+  return #out > 0 and out or all
+end
+
+--- Advance to the next COMPATIBLE preset in the effective order (the ;;p
+--- cycle) and return it. Cycling is cheap, frequent and non-destructive: it
+--- never restarts an agent and never prompts, so incompatible presets are
+--- skipped silently here and surfaced (greyed, with a reason) in the
+--- permissions window instead.
 --- @return weave.permissions.Preset
 function M.cycle()
-  local list = M.presets()
-  local idx = 1
+  local list = M.compatible_presets()
+  local idx = 0
   for i, p in ipairs(list) do
     if p.name == active_name then
       idx = i
@@ -260,17 +479,90 @@ function M.cycle()
   return next_preset
 end
 
---- Resolve an action against the active preset: the first matching rule's
---- decision, or "ask" when none matches.
+--- Resolve an action: the grant overlay first, then the active preset, then
+--- the engine-wide "ask". First matching rule's decision wins.
 --- @param action weave.permissions.Action
 --- @return weave.permissions.Decision decision, weave.permissions.Rule|nil rule
 function M.resolve(action)
-  for _, rule in ipairs(M.active().rules or {}) do
-    if rule_matches(rule, action) then
-      return rule.decision, rule
+  for _, list in ipairs({ overlay, M.active().rules or {} }) do
+    for _, rule in ipairs(list) do
+      if rule_matches(rule, action) then
+        return rule.decision, rule
+      end
     end
   end
   return "ask", nil
+end
+
+--- ── The grant overlay ───────────────────────────────────────────────────────
+---
+--- Answering "allow for project" on a gate prompt writes here, NOT into the
+--- active preset. Redefining `normal` as a side effect of one keystroke would
+--- mean `normal` no longer means what it means in the docs or on anyone
+--- else's machine, and cycling away and back would not clear it. A separate
+--- overlay keeps preset semantics exactly as shipped and keeps grants visibly
+--- a thing sitting on top, with somewhere to list and revoke them.
+---
+--- Session-scoped: discarded on exit, promoted to a named preset by an
+--- explicit action. A durable filesystem grant created by pressing `;;2` is
+--- how people end up with a permission set whose origin they cannot account
+--- for.
+
+--- @return weave.permissions.Rule[] a copy; mutate through add/revoke
+function M.grants()
+  local out = {}
+  for i, r in ipairs(overlay) do
+    out[i] = { tool = r.tool, resource = r.resource, decision = r.decision }
+  end
+  return out
+end
+
+--- Append a grant. Newest last, so an older grant keeps winning — a grant is
+--- an answer to a question, and re-answering it the same way is a no-op.
+--- @param rule weave.permissions.Rule
+function M.add_grant(rule)
+  validate_rule(rule, "grant")
+  overlay[#overlay + 1] = { tool = rule.tool, resource = rule.resource, decision = rule.decision }
+  notify()
+end
+
+--- @param index integer 1-based, as listed by grants()
+function M.revoke_grant(index)
+  if not overlay[index] then
+    error(("weave.permissions: no grant at index %d"):format(index), 0)
+  end
+  table.remove(overlay, index)
+  notify()
+end
+
+function M.clear_overlay()
+  if #overlay == 0 then
+    return
+  end
+  overlay = {}
+  notify()
+end
+
+--- The rule an "always" answer to `action` should produce. Granting exactly
+--- what was asked is close to worthless for fs and search tools — an agent
+--- rarely reads the same path twice, so the user is asked again on the next
+--- file. The useful unit is the one the sandbox already reasons in: the
+--- project. Outside it we fall back to the exact resource, so a grant over
+--- ~/.config does not silently generalise to all of ~.
+--- @param action weave.permissions.Action
+--- @param decision weave.permissions.Decision
+--- @return weave.permissions.Rule
+function M.grant_rule(action, decision)
+  if action.resource == nil then
+    return { tool = action.tool, decision = decision }
+  end
+  local root = M.project_root()
+  local inside = action.resource:sub(1, #root + 1) == root .. "/"
+  return {
+    tool = action.tool,
+    resource = inside and (PROJECT_TOKEN .. "/**") or action.resource,
+    decision = decision,
+  }
 end
 
 --- Create or replace a RUNTIME preset (the config window's save path). A
@@ -322,6 +614,11 @@ function M.setup(cfg)
       error(("weave.permissions: unknown active preset %q in setup"):format(cfg.preset), 0)
     end
     active_name = cfg.preset
+  elseif M.current_profile() ~= "off" and M.get("sandboxed_" .. active_name) then
+    -- A profile is on and the user expressed no preference: default to the
+    -- matching sandboxed variant, since the plain ones exempt weave's own
+    -- tools from the confinement the profile was turned on for.
+    active_name = "sandboxed_" .. active_name
   end
   notify()
 end
@@ -330,7 +627,10 @@ end
 function M._reset()
   setup_presets = {}
   runtime_presets = {}
+  overlay = {}
   active_name = "normal"
+  project_root = nil
+  current_profile = nil
   subscribers = {}
 end
 

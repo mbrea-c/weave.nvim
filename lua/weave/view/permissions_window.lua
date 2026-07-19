@@ -140,19 +140,52 @@ end
 
 --- One preset row: the active marker + label as an activate button, the
 --- source tag dimmed beside it.
+---
+--- A preset the current sandbox profile does not satisfy is shown GREYED with
+--- its reason, and stays selectable. Silence belongs in the ;;p cycle, not in
+--- this list: a preset appearing in neither is indistinguishable from one
+--- that does not exist, and the user never learns that turning on a profile
+--- would unlock it. Activating one routes through profile_transition, which
+--- confirms the restart before anything is applied.
 --- @param p weave.permissions.Preset
 --- @param active_name string
 local function preset_row(p, active_name)
   local marker = p.name == active_name and "●" or "○"
+  local ok, reason = Permissions.preset_compatible(p)
+  local label = ("%s %s"):format(marker, p.label or p.name)
+  local children = {
+    ok and bare_button(label, function()
+      Permissions.set_active(p.name)
+    end) or {
+      comp = ui.button,
+      props = {
+        label = label,
+        theme = false,
+        style = { text_hl = "@comment", _hover = { hl = "FibrousHover" } },
+        on_press = function()
+          require("weave.profile_transition").select_preset(p.name)
+        end,
+      },
+    },
+    dim(p.source or "?"),
+  }
+  if reason then
+    children[#children + 1] = dim("(" .. reason .. ")")
+  end
+  return { comp = ui.row, props = { gap = 2 }, children = children }
+end
+
+--- @param rule weave.permissions.Rule
+--- @param on_revoke fun()
+local function grant_row(rule, on_revoke)
+  local text = ("  %-5s  %s"):format(rule.decision, rule.tool)
+  if rule.resource then
+    text = text .. "  " .. rule.resource
+  end
   return {
     comp = ui.row,
     props = { gap = 2 },
-    children = {
-      bare_button(("%s %s"):format(marker, p.label or p.name), function()
-        Permissions.set_active(p.name)
-      end),
-      dim(p.source or "?"),
-    },
+    children = { { comp = ui.label, props = { text = text } }, bare_button("[revoke]", on_revoke) },
   }
 end
 
@@ -180,6 +213,49 @@ local function Window(ctx)
   for _, rule in ipairs(active.rules or {}) do
     rows[#rows + 1] = rule_row(rule)
   end
+
+  -- Session grants: a grant the user cannot see is a grant they cannot
+  -- revoke. Deliberately a separate list from the preset's rules — answering
+  -- "allow for project" on a prompt must never silently redefine `normal`.
+  local grants = Permissions.grants()
+  if #grants > 0 then
+    rows[#rows + 1] = blank()
+    rows[#rows + 1] = header(("Session grants (%d)"):format(#grants))
+    for i, rule in ipairs(grants) do
+      rows[#rows + 1] = grant_row(rule, function()
+        Permissions.revoke_grant(i)
+      end)
+    end
+    rows[#rows + 1] = { comp = ui.row, props = { gap = 2 }, children = {
+      bare_button("[revoke all]", function()
+        Permissions.clear_overlay()
+      end),
+    } }
+  end
+
+  -- The running agent's confinement, shown as session STATE rather than as a
+  -- toggle: the bwrap argv was built at spawn, so anything that reads as "I
+  -- turned on blackbox" while a process spawned under `off` still holds an
+  -- open session is a confinement claim that is not true.
+  rows[#rows + 1] = blank()
+  rows[#rows + 1] = header("Sandbox profile")
+  local profile = Permissions.current_profile()
+  rows[#rows + 1] = {
+    comp = ui.row,
+    props = { gap = 2 },
+    children = {
+      { comp = ui.label, props = { text = "  " .. profile } },
+      bare_button("[restart with profile…]", function()
+        local Transition = require("weave.profile_transition")
+        vim.ui.select({ "off", "workspace", "readonly", "blackbox" }, { prompt = "Sandbox profile" }, function(choice)
+          if not choice or choice == profile then
+            return
+          end
+          Transition.request_profile(choice)
+        end)
+      end),
+    },
+  }
 
   rows[#rows + 1] = blank()
   local buttons = {

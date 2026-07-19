@@ -9,13 +9,16 @@
 --   deny  — answer an isError result naming the action and the preset, so
 --           the agent knows the client refused and can route around it.
 --   ask   — enqueue a synthetic, ACP-shaped permission request into the
---           current session's store: the sidebar renders it and ;;1/;;2
---           answer it exactly like an agent-side request. Anything but the
---           allow option (including a drain's nil) refuses the call.
+--           current session's store: the sidebar renders it and ;;1..;;4
+--           answer it exactly like an agent-side request. Anything but an
+--           allow option (including a drain's nil) refuses the call, and the
+--           two "always" options additionally record a grant.
 --
--- Under the builtin presets everything client-side resolves allow, so the
--- gate is inert until a rule targets weave:* — the agent-side ACP flow
--- already mediates these calls as acp:* actions.
+-- Under the three legacy presets everything client-side resolves allow, so
+-- the gate is inert there — the agent-side ACP flow already mediates these
+-- calls as acp:* actions. It comes alive under the sandboxed_* presets,
+-- where weave's tools stop being exempt from the confinement a sandbox
+-- profile was turned on for.
 
 local Permissions = require("weave.permissions")
 
@@ -48,6 +51,23 @@ local function describe(action)
     return ("%s (%s)"):format(action.tool, action.resource)
   end
   return action.tool
+end
+
+--- What an "always" answer actually commits to, said in the prompt rather
+--- than in documentation nobody reads: the grant is project-wide inside the
+--- project and path-exact outside it.
+--- @param action weave.permissions.Action
+--- @param verb "Allow"|"Reject"
+--- @return string
+local function always_label(action, verb)
+  local rule = Permissions.grant_rule(action, "allow")
+  if rule.resource == nil then
+    return verb .. " always"
+  end
+  if rule.resource:find("${project}", 1, true) then
+    return verb .. " for project"
+  end
+  return ("%s for %s"):format(verb, vim.fn.fnamemodify(rule.resource, ":~"))
 end
 
 --- Wrap a raw clankbox tool def behind the permission engine.
@@ -107,13 +127,29 @@ function M.wrap(name, def, opts)
             title = ("weave tool %s%s"):format(name, action.resource and (": " .. action.resource) or ""),
             kind = opts.kind,
           },
+          -- Four options, in ACP's own `kind` vocabulary so the sidebar
+          -- renderer and the ;;1..;;9 answer keys need no changes. The
+          -- "always" pair writes a grant into the permission overlay rather
+          -- than redefining the active preset — see Permissions.grant_rule
+          -- for why the scope is the project and not the exact resource.
+          -- reject_always matters more here than in the ACP flow: under a
+          -- sandbox profile weave's tools are the agent's only route to the
+          -- filesystem, so "stop asking me AND stop trying" is a thing users
+          -- want and currently cannot say.
           options = {
-            { optionId = "allow", name = "Allow", kind = "allow_once" },
-            { optionId = "reject", name = "Reject", kind = "reject_once" },
+            { optionId = "allow_once", name = "Allow once", kind = "allow_once" },
+            { optionId = "allow_always", name = always_label(action, "Allow"), kind = "allow_always" },
+            { optionId = "reject_once", name = "Reject once", kind = "reject_once" },
+            { optionId = "reject_always", name = always_label(action, "Reject"), kind = "reject_always" },
           },
         },
         respond = function(option_id)
-          if option_id ~= "allow" then
+          if option_id == "allow_always" then
+            Permissions.add_grant(Permissions.grant_rule(action, "allow"))
+          elseif option_id == "reject_always" then
+            Permissions.add_grant(Permissions.grant_rule(action, "deny"))
+          end
+          if option_id ~= "allow_once" and option_id ~= "allow_always" then
             return respond(refusal(("permission not granted: the user declined %s"):format(describe(action))))
           end
           -- we're past clankbox's pcall now: contain tool errors ourselves,
