@@ -10,6 +10,7 @@
 
 local ui = require("fibrous.inline.components")
 local SessionStore = require("weave.session_store")
+local Feedback = require("weave.view.feedback")
 local TerminalTasks = require("weave.view.terminal_tasks")
 local Theme = require("weave.view.theme")
 local octant = require("weave.view.octant")
@@ -549,6 +550,10 @@ function M.Sidebar(_, props)
       { comp = M.TasksSection, props = { store = props.store, width = props.sidebar_width } },
       -- terminal tasks sit ABOVE permissions (design-agent-sandbox.md, 0c)
       { comp = TerminalTasks.Section, props = { width = props.sidebar_width } },
+      -- inline code feedback sits below terminal tasks: it is a draft the user
+      -- is composing, not agent activity, so it reads as the last thing before
+      -- a permission prompt interrupts everything.
+      { comp = Feedback.Section, props = { width = props.sidebar_width } },
       { comp = M.PermissionsSection, props = { store = props.store } },
     },
   }

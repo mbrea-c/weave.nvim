@@ -255,6 +255,97 @@ type; `<C-n>`/`<C-p>` move the selection, `<CR>`/`<C-y>` apply it. Opened
 from the modal for a session that is not the tab's current one, an **Open in
 panel** button makes it the tab's selection. `q`/`<Esc>` closes.
 
+### Inline code feedback
+
+Review code where it lives. Comment a line (or a visual selection) directly in
+the source buffer, and the comments collect into one **code feedback** draft
+that is sent to the agent as a single message.
+
+weave sets **no keymaps** for this. They would be global normal- and
+visual-mode bindings over every buffer in the editor, which is further than a
+chat plugin should reach on its own, so bind them yourself:
+
+```lua
+local feedback = require("weave.feedback")
+vim.keymap.set("n", ";;cc", feedback.comment_line, { desc = "weave: comment this line" })
+vim.keymap.set("x", ";;cc", feedback.comment_selection, { desc = "weave: comment this selection" })
+vim.keymap.set("n", ";;ce", feedback.edit_comment, { desc = "weave: edit the comment here" })
+```
+
+Commenting highlights the span (`WeaveCodeFeedback`, a yellow background by
+default — `:highlight` it to taste) and opens a small editor float for the
+comment body, with **save** / **delete** / **cancel** buttons; `<CR>` in normal
+mode saves. Backing out of a comment you never wrote removes it, so no
+highlight is stranded. Saving an empty body deletes the comment too, which
+makes "clear the box and save" a working way to drop one.
+
+The open draft appears in the sidebar below **Terminal tasks**, one row per
+comment (`file:line  body`), each opening that comment for editing, plus
+**send feedback** and **discard** buttons.
+
+Comments are anchored with **extmarks**, not line numbers, so they follow the
+code as it moves — including when the agent edits above them. A comment whose
+code is deleted outright is marked `⚠` in the sidebar and sent labelled
+*stale*, rather than silently pointing at whatever moved into its place.
+Extmarks die when a buffer unloads, so on reload weave re-finds each comment by
+searching for the text it quoted; comments whose code is genuinely gone stay
+orphaned rather than being dropped.
+
+What the agent receives is the file and line range, the quoted code (fenced,
+with the buffer's filetype), and your comment:
+
+````text
+Inline code feedback (1 comment):
+
+1. lua/weave/session.lua:461
+```lua
+function Session:submit(text)
+```
+why is this queued rather than steered?
+````
+
+#### Extending it
+
+Two separate extension points.
+
+**Producing comments.** Anything can add to the open draft — this is how a
+plugin like perijove contributes comments from its own UI. No registration
+needed:
+
+```lua
+require("weave.feedback").add({
+  bufnr = 0,
+  range = { lnum = 12, end_lnum = 14 },  -- optional col/end_col for a partial span
+  body = "this cell reruns on every render",
+  source = "perijove",                   -- attributed in the sent message
+})
+```
+
+Comments from every source bundle into the **same** draft and are sent
+together.
+
+**Receiving a sent draft.** A *sink* is where "send" delivers to. weave ships
+one named `weave` (prompts the current session, queued behind an in-flight turn
+like anything you type) and it is the default. Register your own to become a
+target:
+
+```lua
+require("weave.feedback").register_sink({
+  name = "perijove",
+  label = "the notebook kernel",
+  send = function(text, item)
+    -- return true on success, or nil + an error message
+    return do_something(text)
+  end,
+})
+
+require("weave.feedback").send({ sink = "perijove" })
+```
+
+Registering an existing name replaces it rather than stacking. A sink that
+returns an error or throws is reported and **the draft is kept**, so a failed
+send never loses hand-written comments.
+
 ---
 
 ## Configuration
@@ -640,8 +731,9 @@ guarantee. Try `readonly` with your provider before relying on it, and use
 
 The public surface is three layers: the `require("weave")` module, the
 **Session** object it hands out, and the session's **store** (a read-only
-snapshot you can subscribe to). Everything else under `lua/weave/` — the view
-components, the ACP plumbing, the registry — is internal.
+snapshot you can subscribe to), plus `require("weave.feedback")` for inline
+code feedback. Everything else under `lua/weave/` — the view components, the
+ACP plumbing, the registry — is internal.
 
 ### The module
 
@@ -715,6 +807,30 @@ NOT store state — it lives in the editor-global engine,
 are reference-stable: a field's table is reassigned only when it changed, so
 `old.entries ~= new.entries` is a cheap "did content change" test.
 
+### Inline code feedback
+
+```lua
+local feedback = require("weave.feedback")
+
+feedback.comment_line(opts)       -- comment the cursor line, open the editor
+feedback.comment_selection(opts)  -- comment the visual selection, open the editor
+feedback.edit_comment(opts)       -- reopen the comment under the cursor
+feedback.add(opts)                -- attach a comment with NO editor (for plugins)
+
+feedback.send(opts)               -- format the draft and hand it to a sink
+feedback.discard()                -- drop the draft and its highlights
+feedback.draft()                  -- the open item, or nil
+feedback.subscribe(fn)            -- called on every draft change; returns unsubscribe
+
+feedback.register_sink(spec)      -- add a send target
+```
+
+`add` takes `{ bufnr, range = { lnum, end_lnum, col?, end_col? }, body?, source? }`
+and returns the comment (or `nil, err`). `comment_line` / `comment_selection` /
+`edit_comment` accept `{ source?, open? }`, where `open(id)` replaces the editor
+float — useful in tests. `send` accepts `{ sink? }`, defaulting to `"weave"`.
+See [Inline code feedback](#inline-code-feedback) above for the full picture.
+
 ### Commands
 
 | Command | Action |
@@ -744,6 +860,12 @@ are reference-stable: a field's table is reassigned only when it changed, so
       session.lua          one conversation: client, turns, queue/steer/cancel
       registry.lua         active sessions (editor-global) + per-tab selection
       task_store.lua       managed shell tasks (the task_* tool lifecycle)
+      feedback.lua         inline code feedback: the PUBLIC API users bind
+      feedback_store.lua   the one open draft — comments from every source
+      feedback_anchors.lua extmark anchoring + the yellow highlight, so a
+                             comment follows its code as the agent edits
+      feedback_format.lua  draft → the message the agent reads
+      feedback_sinks.lua   where a sent draft goes (registry + the weave sink)
       init.lua             setup() + :Weave, panels per tabpage
     lua/weave/tools/     the MCP tool suite hosted by clankbox: fs (read/
                            write/edit, buffer-aware), search (glob/grep over
@@ -755,6 +877,7 @@ are reference-stable: a field's table is reassigned only when it changed, so
                            session_details (metadata + config dropdowns),
                            permissions_window (preset config + Lua editing),
                            terminal_tasks (running tasks, live task views),
+                           feedback (code feedback section + comment editor),
                            tool_call (tool-call rendering + the override
                              registry), renderers/ (builtin overrides),
                            wave (thinking indicator), prefs, theme, use_store

@@ -175,6 +175,15 @@ vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.normal, { link = "FloatBorder", defaul
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.auto, { fg = "#e0af68", default = true })
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.allow_edits, { fg = "#bb9af7", default = true })
 
+-- Inline code feedback: the span a user has attached a comment to, highlighted
+-- in the CODE buffer itself (not in weave's own windows), so it has to be
+-- legible over an arbitrary colourscheme's syntax highlighting. Both fg and bg
+-- are therefore set explicitly rather than tinting the bg alone and hoping the
+-- theme's foregrounds stay readable on yellow. default = true, so a user who
+-- finds a solid amber block too loud over their code can link this anywhere.
+M.CODE_FEEDBACK_HL = "WeaveCodeFeedback"
+vim.api.nvim_set_hl(0, M.CODE_FEEDBACK_HL, { fg = "#1a1b26", bg = "#e0af68", default = true })
+
 -- Busy-water indicator. The height ramp is four groups (WeaveWater1..4, dim →
 -- bright by fill height) plus a label group; UNLIKE the other groups these are
 -- ANIMATED — view/water.lua rewrites their fg every frame while the sim runs,
