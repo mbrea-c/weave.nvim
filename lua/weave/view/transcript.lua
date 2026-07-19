@@ -148,7 +148,11 @@ function M.PermissionBlock(_, props)
       },
     }
   end
-  children[#children + 1] = { comp = ui.row, props = { gap = 1 }, children = buttons }
+  -- A column, not a row: labels carry the resource an "always" rule persists
+  -- for, and a row lays its children on one line with the overflow clipped
+  -- (fibrous rows do not flex-wrap), so long options lost their tail off the
+  -- right edge. Stacked they always fit, and it matches the sidebar's list.
+  children[#children + 1] = { comp = ui.col, props = {}, children = buttons }
 
   return {
     comp = ui.col,
