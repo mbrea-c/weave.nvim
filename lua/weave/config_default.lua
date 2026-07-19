@@ -27,12 +27,17 @@
 --- @field enabled boolean Register the suite into clankbox and hand every agent the clankbox server automatically
 --- @field clankbox_path? string Clankbox checkout root (the dir containing shim.lua); nil = auto-detect
 
+--- @class weave.PermissionsConfig The client-side permission engine (weave.permissions)
+--- @field preset? string Active preset at startup (default "normal")
+--- @field presets? weave.permissions.Preset[] Additional presets (the setup source; shadow builtins by name)
+
 --- @class weave.UserConfig
 --- @field debug boolean Log to the debug file (utils/logger.lua)
 --- @field provider string Default provider (a key of `acp_providers`)
 --- @field acp_providers table<string, weave.acp.ACPProviderConfig|nil>
 --- @field mcp_servers weave.acp.McpServer[] MCP servers handed to EVERY provider over ACP (session/new), unless a provider sets its own `mcpServers`. The agent spawns/connects them.
 --- @field tools weave.ToolsConfig
+--- @field permissions weave.PermissionsConfig
 --- @field view weave.ViewConfig Default panel geometry (width / sidebar_width / prompt_height)
 --- @field keys table<string, weave.UserConfig.KeymapValue> Key(s) per named action (see weave.keys ACTIONS); `false` disables one
 local ConfigDefault = {
@@ -194,6 +199,17 @@ local ConfigDefault = {
   -- checkout dir containing shim.lua) overrides auto-detection.
   tools = {
     enabled = true,
+  },
+
+  -- The client-side permission engine (weave.permissions): `preset` picks the
+  -- active preset at startup, `presets` adds saved rule configurations beside
+  -- the builtin normal/auto/allow_edits (same name = shadow the builtin).
+  -- Rule shape: { tool = "<glob>", resource = "<glob>"|nil, decision =
+  -- "allow"|"deny"|"ask" } — see lua/weave/permissions.lua for the action
+  -- vocabulary (acp:<kind>, weave:<tool>, <plugin>:<tool>).
+  permissions = {
+    preset = "normal",
+    presets = {},
   },
 }
 

@@ -5,6 +5,7 @@
 
 local mount = require("fibrous.inline.mount")
 
+local Permissions = require("weave.permissions")
 local SessionStore = require("weave.session_store")
 local Prefs = require("weave.view.prefs")
 local sidebar = require("weave.view.sidebar")
@@ -81,7 +82,7 @@ describe("view.sidebar", function()
     assert.truthy(text:find("Terminal tasks", 1, true))
     assert.truthy(text:find("(none running)", 1, true))
     assert.truthy(text:find("Permissions", 1, true))
-    assert.truthy(text:find("Mode: Normal (ask)  (;;p)", 1, true))
+    assert.truthy(text:find("Preset: Normal (ask)  (;;p)", 1, true))
     -- the terminal-tasks section sits ABOVE permissions (design-agent-sandbox.md)
     local term_row = locate(handle.bufnr, "Terminal tasks")
     local perm_row = locate(handle.bufnr, "Permissions")
@@ -188,9 +189,10 @@ describe("view.sidebar", function()
     assert.truthy(text:find("Mode: dev", 1, true))
     assert.falsy(text:find("(connecting…)", 1, true))
 
-    store:cycle_permission_mode()
-    assert.truthy(text_of(handle.bufnr):find("Mode: Auto (allow all)  (;;p)", 1, true))
+    Permissions.cycle() -- the engine, not the store: the preset is editor-global
+    assert.truthy(text_of(handle.bufnr):find("Preset: Auto (allow all)  (;;p)", 1, true))
     handle.unmount()
+    Permissions._reset()
   end)
 
   it("activating the Session section opens the details handler (requests.md)", function()
@@ -213,6 +215,29 @@ describe("view.sidebar", function()
     press_on(handle, "Mode: dev")
     assert.equal(2, opened)
     handle.unmount()
+  end)
+
+  it("activating the Permissions header opens the preset configuration window", function()
+    local store = SessionStore:new()
+    local handle = mount_sidebar(store)
+    press_on(handle, "Permissions")
+    local found
+    vim.wait(5000, function()
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if win ~= handle.winid and vim.api.nvim_win_get_config(win).relative == "editor" then
+          local b = vim.api.nvim_win_get_buf(win)
+          if table.concat(vim.api.nvim_buf_get_lines(b, 0, -1, false), "\n"):find("Permission presets", 1, true) then
+            found = win
+            return true
+          end
+        end
+      end
+      return false
+    end, 10)
+    assert.is_not_nil(found, "the permission preset window")
+    pcall(vim.api.nvim_win_close, found, true)
+    handle.unmount()
+    Permissions._reset()
   end)
 
   it("plan tasks: status glyphs with coloured icons; done/failed text struck through", function()

@@ -27,6 +27,7 @@ local ui = require("fibrous.inline.components")
 local Keys = require("weave.keys")
 local Theme = require("weave.view.theme")
 local Water = require("weave.view.water")
+local use_permissions = require("weave.view.use_permissions")
 local use_store = require("weave.view.use_store")
 
 local M = {}
@@ -171,6 +172,8 @@ end
 ---   the prompt's own wiring, so the shell can add panel keymaps to it.
 function M.Prompt(ctx, props)
   local state = use_store(ctx, props.store)
+  -- the active permission preset colours the border + title (ambient cue)
+  local preset = use_permissions(ctx)
   local store = props.store
   local queued = state.queued
   local history = state.history
@@ -363,8 +366,10 @@ function M.Prompt(ctx, props)
         border = {
           "rounded",
           title = {
-            text = "Prompt (" .. (Theme.PROMPT_TITLE_EXTRA[state.permission_mode] or "normal") .. ")",
-            hl = Theme.PROMPT_BORDER_HL[state.permission_mode] or Theme.PROMPT_BORDER_HL.normal,
+            -- builtin presets keep their shipped titles/colours; a custom
+            -- preset shows its label over the neutral border
+            text = "Prompt (" .. (Theme.PROMPT_TITLE_EXTRA[preset.name] or preset.label or preset.name) .. ")",
+            hl = Theme.PROMPT_BORDER_HL[preset.name] or Theme.PROMPT_BORDER_HL.normal,
             align = "left",
           },
         },

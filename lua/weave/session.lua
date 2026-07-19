@@ -130,10 +130,12 @@ function Session:view_handlers()
   }
 end
 
---- Cycle the permission mode (Normal → Auto → Allow-edits → …) and notify.
+--- Cycle the active permission preset (editor-global, weave.permissions) and
+--- notify. Kept under the historical action name: ;;p used to cycle the
+--- session-level permission MODE, which the presets re-encode.
 function Session:cycle_permission_mode()
-  local mode = self._store:cycle_permission_mode()
-  Logger.notify("Permission mode: " .. (SessionStore.PERMISSION_MODE_LABEL[mode] or mode), vim.log.levels.INFO)
+  local preset = require("weave.permissions").cycle()
+  Logger.notify("Permission preset: " .. (preset.label or preset.name), vim.log.levels.INFO)
 end
 
 --- Connect to the provider and create the ACP session — or, with

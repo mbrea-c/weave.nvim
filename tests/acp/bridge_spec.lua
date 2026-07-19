@@ -4,6 +4,7 @@
 -- logic is this spec.
 
 local AcpBridge = require("weave.acp_bridge")
+local Permissions = require("weave.permissions")
 local SessionStore = require("weave.session_store")
 
 local function setup(opts)
@@ -162,7 +163,11 @@ describe("acp_bridge permissions", function()
     { optionId = "always", kind = "allow_always" },
   }
 
-  it("normal mode enqueues (preserving the active status) and respond routes to the agent callback", function()
+  after_each(function()
+    Permissions._reset()
+  end)
+
+  it("normal preset enqueues (preserving the active status) and respond routes to the agent callback", function()
     local store, handlers = setup()
     store:set_status("generating") -- the turn is live when the approval is asked for
     local answered
@@ -178,9 +183,9 @@ describe("acp_bridge permissions", function()
     assert.equal(1, store.state.permission_count)
   end)
 
-  it("auto mode answers with the agent's own allow option, enqueuing nothing", function()
+  it("an allow resolution answers with the agent's own allow option, enqueuing nothing", function()
     local store, handlers = setup()
-    store:set_permission_mode("auto")
+    Permissions.set_active("auto")
     local answered
     handlers.on_request_permission({ toolCall = { toolCallId = "t1" }, options = ALLOW }, function(option_id)
       answered = option_id
@@ -190,9 +195,9 @@ describe("acp_bridge permissions", function()
     assert.is_nil(store.state.permission)
   end)
 
-  it("auto mode still surfaces requests carrying no allow option", function()
+  it("allow still surfaces requests carrying no allow option", function()
     local store, handlers = setup()
-    store:set_permission_mode("auto")
+    Permissions.set_active("auto")
     local answered
     handlers.on_request_permission(
       { toolCall = { toolCallId = "t1" }, options = { { optionId = "no", kind = "reject_once" } } },
@@ -202,6 +207,91 @@ describe("acp_bridge permissions", function()
     )
     assert.is_nil(answered)
     assert.equal(1, store.state.permission_count)
+  end)
+
+  it("allow_edits auto-allows edit tool calls and surfaces the rest", function()
+    local store, handlers = setup()
+    Permissions.set_active("allow_edits")
+    local answered
+    handlers.on_request_permission(
+      { toolCall = { toolCallId = "t1", kind = "edit" }, options = ALLOW },
+      function(option_id)
+        answered = option_id
+      end
+    )
+    assert.equal("once", answered)
+    handlers.on_request_permission(
+      { toolCall = { toolCallId = "t2", kind = "execute" }, options = ALLOW },
+      function() end
+    )
+    assert.equal(1, store.state.permission_count)
+  end)
+
+  it("a deny resolution answers with the agent's reject option, or cancels without one", function()
+    local store, handlers = setup()
+    Permissions.save_preset({
+      name = "no-exec",
+      rules = {
+        { tool = "acp:execute", decision = "deny" },
+        { tool = "*", decision = "ask" },
+      },
+    })
+    Permissions.set_active("no-exec")
+    local answered = "unset"
+    handlers.on_request_permission({
+      toolCall = { toolCallId = "t1", kind = "execute" },
+      options = {
+        { optionId = "yes", kind = "allow_once" },
+        { optionId = "no", kind = "reject_once" },
+      },
+    }, function(option_id)
+      answered = option_id
+    end)
+    assert.equal("no", answered)
+    assert.equal(0, store.state.permission_count)
+
+    -- no reject option offered → cancelled (respond nil), never a guessed id
+    answered = "unset"
+    handlers.on_request_permission(
+      { toolCall = { toolCallId = "t2", kind = "execute" }, options = { ALLOW[1] } },
+      function(option_id)
+        answered = option_id
+      end
+    )
+    assert.is_nil(answered)
+    assert.equal(0, store.state.permission_count)
+  end)
+
+  it("rules see the request's resource: the command line or the first location path", function()
+    local store, handlers = setup()
+    Permissions.save_preset({
+      name = "guarded",
+      rules = {
+        { tool = "acp:execute", resource = "rm *", decision = "deny" },
+        { tool = "acp:*", decision = "allow" },
+      },
+    })
+    Permissions.set_active("guarded")
+    local answered = "unset"
+    handlers.on_request_permission({
+      toolCall = { toolCallId = "t1", kind = "execute", rawInput = { command = "rm -rf build" } },
+      options = {
+        { optionId = "yes", kind = "allow_once" },
+        { optionId = "no", kind = "reject_once" },
+      },
+    }, function(option_id)
+      answered = option_id
+    end)
+    assert.equal("no", answered)
+
+    handlers.on_request_permission({
+      toolCall = { toolCallId = "t2", kind = "edit", locations = { { path = "/tmp/notes.md" } } },
+      options = ALLOW,
+    }, function(option_id)
+      answered = option_id
+    end)
+    assert.equal("once", answered)
+    assert.equal(0, store.state.permission_count)
   end)
 end)
 

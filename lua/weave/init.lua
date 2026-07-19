@@ -171,6 +171,8 @@ function M.setup(opts)
   if not (Config.tools and Config.tools.enabled == false) then
     require("weave.tools").ensure_registered()
   end
+  -- Seed the permission engine: setup-source presets + the active one.
+  require("weave.permissions").setup(Config.permissions)
   vim.api.nvim_create_user_command("Weave", function(cmd)
     if cmd.args == "sessions" then
       M.sessions()

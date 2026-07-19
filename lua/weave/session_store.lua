@@ -41,7 +41,6 @@
 --- @field editing_queued integer|nil Id of the queued prompt the box is currently editing; the drain HOLDS while it is at the head (a prompt is never sent from under the user)
 --- @field history string[] Sent prompts, oldest -> newest, for prompt-box recall (consecutive dups collapsed)
 --- @field meta weave.store.SessionMeta Provider/agent/model/mode metadata
---- @field permission_mode weave.store.PermissionMode How incoming permission requests are answered
 --- @field hint string Rotating UI hint shown in the sidebar (rotated each turn)
 --- @field commands table[] Slash-command completion items (always includes /new)
 --- @field usage weave.store.Usage|nil Session usage (context tokens + cost) from usage_update; nil until first reported
@@ -72,7 +71,7 @@ local HINTS = {
   ";;t thinking · ;;d edit diffs · ;;c prettify markdown · ;;f follow",
   "Prompts sent mid-turn are queued and run when the turn ends",
   ";;1..;;9 answer a permission prompt by its option number",
-  ";;p cycles permission mode (ask · auto · allow-edits)",
+  ";;p cycles permission presets",
   "/new starts a fresh conversation",
 }
 
@@ -146,77 +145,10 @@ end
 -- them, surface one, and guarantee every queued closure is eventually called
 -- (answered or cancelled).
 
--- ── Permission modes ────────────────────────────────────────────────────────
---
--- A session-level policy for how incoming `session/request_permission`
--- requests are answered. Lives in the store (session-scoped, shared across
--- views, rendered in the sidebar); consulted by the bridge via
--- `auto_option_for`.
---
---   normal      — every request is surfaced to the user.
---   auto        — auto-allow ALL requests.
---   allow_edits — auto-allow EDIT tool calls; everything else is surfaced.
---
--- Auto-allowing never fabricates an outcome: it selects one of the request's
--- OWN options (preferring kind "allow_once", else "allow_always"). If a
--- request carries no allow option, it falls through to the user regardless of
--- mode — we never invent an optionId the agent didn't offer.
---
--- WHY allow_ONCE, not allow_always: "allow_always" tells the AGENT to persist
--- a standing grant for that tool. If the mode auto-selected it, switching
--- back to Normal would NOT restore prompting — the agent keeps the permanent
--- grant forever. "allow_once" grants exactly this invocation, so the mode is
--- the only thing keeping tools auto-allowed: turn it off and the next request
--- prompts again. The mode must be fully reversible.
---- @alias weave.store.PermissionMode "normal" | "auto" | "allow_edits"
-
---- Ordered for cycling in the UI.
---- @type weave.store.PermissionMode[]
-local PERMISSION_MODES = { "normal", "auto", "allow_edits" }
-
---- Short human label per mode for the sidebar.
---- @type table<weave.store.PermissionMode, string>
-local PERMISSION_MODE_LABEL = {
-  normal = "Normal (ask)",
-  auto = "Auto (allow all)",
-  allow_edits = "Allow edits",
-}
-
---- Pick the agent-offered option to auto-select for `request` under `mode`,
---- or nil to surface the request to the user. Pure (no store access) so it's
---- unit-testable. Prefers "allow_once", then "allow_always" (see the WHY note
---- above); returns nil if the mode doesn't auto-allow this request or no
---- allow option exists.
---- @param request table The ACP RequestPermission params
---- @param mode weave.store.PermissionMode
---- @return string|nil option_id
-local function auto_option_for(request, mode)
-  if mode == "normal" or not request then
-    return nil
-  end
-
-  if mode == "allow_edits" then
-    local tc = request.toolCall
-    if not (tc and tc.kind == "edit") then
-      return nil -- only edits auto-allow in this mode
-    end
-  end
-  -- mode == "auto" allows everything; allow_edits has passed the edit gate.
-
-  -- Match on the ACP-standard PermissionOptionKind (allow_once/allow_always/
-  -- reject_once/reject_always). The spec calls `kind` a "hint", so a provider
-  -- COULD omit or mis-set it: if no allow_* kind is found we return nil and
-  -- surface the request to the user — never guess an option to auto-allow.
-  local fallback
-  for _, opt in ipairs(request.options or {}) do
-    if opt.kind == "allow_once" then
-      return opt.optionId -- reversible grant, prefer it (see WHY note)
-    elseif opt.kind == "allow_always" and not fallback then
-      fallback = opt.optionId -- only if the agent offers no once-option
-    end
-  end
-  return fallback
-end
+-- Permission POLICY (which requests are auto-answered, and how) lives in the
+-- editor-global engine, weave.permissions — the bridge resolves every
+-- request through the active preset there. This store only owns the QUEUE of
+-- requests that resolution surfaced to the user.
 
 --- Reorder a permission request's options so the ALLOW options come first —
 --- the ;;1 slot always approves, whatever order the provider sent them in
@@ -254,11 +186,7 @@ end
 local SessionStore = {}
 SessionStore.__index = SessionStore
 
--- Mode metadata + the pure decision, exposed for the bridge, the view, and
--- unit tests.
-SessionStore.PERMISSION_MODES = PERMISSION_MODES
-SessionStore.PERMISSION_MODE_LABEL = PERMISSION_MODE_LABEL
-SessionStore.auto_option_for = auto_option_for
+-- Exposed for the view and unit tests.
 SessionStore.order_permission_options = order_permission_options
 SessionStore.HINTS = HINTS
 
@@ -284,7 +212,6 @@ function SessionStore:new()
       queued = {},
       history = {},
       meta = {},
-      permission_mode = "normal",
       hint = random_hint(),
       commands = to_completion_items({}),
       usage = nil,
@@ -570,38 +497,6 @@ function SessionStore:_publish_permission_head()
     draft.permission = self._permission_queue[1]
     draft.permission_count = #self._permission_queue
   end)
-end
-
---- Current permission mode (read synchronously by the bridge).
---- @return weave.store.PermissionMode
-function SessionStore:get_permission_mode()
-  return self.state.permission_mode
-end
-
---- Set the permission mode (validated against PERMISSION_MODES; ignored if not).
---- @param mode weave.store.PermissionMode
-function SessionStore:set_permission_mode(mode)
-  if PERMISSION_MODE_LABEL[mode] then
-    self:_commit(function(draft)
-      draft.permission_mode = mode
-    end)
-  end
-end
-
---- Advance to the next permission mode (for a cycle keybind) and return it.
---- @return weave.store.PermissionMode mode The new mode
-function SessionStore:cycle_permission_mode()
-  local current = self.state.permission_mode
-  local idx = 1
-  for i, m in ipairs(PERMISSION_MODES) do
-    if m == current then
-      idx = i
-      break
-    end
-  end
-  local next_mode = PERMISSION_MODES[(idx % #PERMISSION_MODES) + 1]
-  self:set_permission_mode(next_mode)
-  return next_mode
 end
 
 --- Enqueue a permission request (FIFO). Never overwrites an in-flight request

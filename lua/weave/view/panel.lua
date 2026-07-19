@@ -115,7 +115,7 @@ function M.open(opts)
   local on_cancel = opts.on_cancel or function() end
   local on_permission = opts.on_permission or default_permission_answer(store)
   local on_cycle = opts.on_cycle_permission_mode or function()
-    store:cycle_permission_mode()
+    require("weave.permissions").cycle()
   end
   local on_pick_model = opts.on_pick_model or function() end
   local on_pick_mode = opts.on_pick_mode or function() end

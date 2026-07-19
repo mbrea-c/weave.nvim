@@ -46,7 +46,6 @@ describe("session_store initial state", function()
     assert.same({}, s.queued)
     assert.same({}, s.history)
     assert.same({}, s.meta)
-    assert.equal("normal", s.permission_mode)
   end)
 end)
 
@@ -435,58 +434,9 @@ describe("session_store permission queue", function()
   end)
 end)
 
-describe("session_store permission modes", function()
-  it("set validates against the known modes", function()
-    local store = SessionStore:new()
-    store:set_permission_mode("auto")
-    assert.equal("auto", store.state.permission_mode)
-    store:set_permission_mode("yolo")
-    assert.equal("auto", store.state.permission_mode)
-  end)
-
-  it("cycle steps normal → auto → allow_edits → normal", function()
-    local store = SessionStore:new()
-    assert.equal("auto", store:cycle_permission_mode())
-    assert.equal("allow_edits", store:cycle_permission_mode())
-    assert.equal("normal", store:cycle_permission_mode())
-    assert.equal("normal", store.state.permission_mode)
-  end)
-
-  it("exposes the mode list and labels on the module", function()
-    assert.same({ "normal", "auto", "allow_edits" }, SessionStore.PERMISSION_MODES)
-    assert.equal("string", type(SessionStore.PERMISSION_MODE_LABEL.normal))
-  end)
-end)
-
-describe("session_store auto_option_for (pure)", function()
-  local auto_option_for = SessionStore.auto_option_for
-  local function req(kind, options)
-    return { toolCall = { toolCallId = "t", kind = kind }, options = options }
-  end
-  local ALLOW = {
-    { optionId = "once", kind = "allow_once" },
-    { optionId = "always", kind = "allow_always" },
-  }
-
-  it("normal surfaces everything", function()
-    assert.is_nil(auto_option_for(req("edit", ALLOW), "normal"))
-  end)
-
-  it("auto prefers allow_once, falls back to allow_always", function()
-    assert.equal("once", auto_option_for(req("execute", ALLOW), "auto"))
-    assert.equal("always", auto_option_for(req("execute", { ALLOW[2] }), "auto"))
-  end)
-
-  it("never invents an option the agent didn't offer", function()
-    assert.is_nil(auto_option_for(req("execute", { { optionId = "no", kind = "reject_once" } }), "auto"))
-    assert.is_nil(auto_option_for(req("execute", nil), "auto"))
-  end)
-
-  it("allow_edits gates on the tool call kind", function()
-    assert.equal("once", auto_option_for(req("edit", ALLOW), "allow_edits"))
-    assert.is_nil(auto_option_for(req("execute", ALLOW), "allow_edits"))
-  end)
-end)
+-- Permission POLICY (modes/presets, auto-answering) moved to the editor-
+-- global engine — see tests/permissions_spec.lua and the resolution tests in
+-- tests/acp/bridge_spec.lua. The store only owns the request QUEUE above.
 
 describe("session_store queued prompts", function()
   it("enqueue/dequeue is FIFO with a reassigned list", function()

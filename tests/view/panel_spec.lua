@@ -5,6 +5,7 @@
 -- fibrous owns everything window-shaped (the container's interaction layer
 -- drives tool-call toggles inside the transcript).
 
+local Permissions = require("weave.permissions")
 local SessionStore = require("weave.session_store")
 local Prefs = require("weave.view.prefs")
 local panel = require("weave.view.panel")
@@ -276,9 +277,11 @@ describe("view.panel shell", function()
     press(";;2")
     assert.equal(2, perm_index)
 
-    -- ;;p cycles the permission mode (default wiring, straight to the store)
+    -- ;;p cycles the active permission preset (default wiring, straight to
+    -- the editor-global engine)
     press(";;p")
-    assert.equal("auto", store.state.permission_mode)
+    assert.equal("auto", Permissions.active().name)
+    Permissions._reset()
     handle.close()
   end)
 

@@ -96,10 +96,10 @@ The panel is **one docked pane** with three regions:
   thinking blocks, tool calls (with inline diff previews), and permission
   requests. It scrolls independently. It's a fibrous *container*: `<CR>` steps
   into it, `h/j/k/l` at its edges step back out, `<C-d>/<C-u>` page inside.
-- **Sidebar** — session metadata, view toggles, the current permission mode,
-  the task list, and any pending permission request.
+- **Sidebar** — session metadata, view toggles, the active permission preset,
+  the task list, running terminal tasks, and any pending permission request.
 - **Prompt** — the input box. Its border colour reflects the active permission
-  mode; an animated indicator shows when the agent is working.
+  preset; an animated indicator shows when the agent is working.
 
 Closing the pane (`:q` / `<C-w>q`) closes the panel but **leaves the session
 running** — reopen with `:Weave`.
@@ -124,7 +124,7 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | `;;d` | `toggle_diffs` | Toggle edit diffs |
 | `;;c` | `toggle_conceal` | Toggle markdown prettifying (conceal) |
 | `;;f` | `toggle_follow` | Toggle follow-streaming (auto-scroll) |
-| `;;p` | `cycle_permission_mode` | Cycle permission mode |
+| `;;p` | `cycle_permission_mode` | Cycle permission preset |
 | `;;m` / `;;M` | `pick_model` / `pick_mode` | Pick model / pick mode |
 | `;;1` … `;;9` | `permission_prefix` + digit | Answer a permission request with option N |
 | `;;r` | `restore_session` | Restore a saved session in place |
@@ -159,9 +159,30 @@ order as the turn ends. The prompt box is a movable edit-cursor over that stack:
 
 When an agent wants to run a tool that needs approval, a permission request
 appears in the transcript and sidebar with numbered options — answer with
-`;;1`…`;;9`. The **permission mode** (`;;p` to cycle) controls how much is
-auto-approved; the prompt border colour is an ambient reminder of the current
-mode.
+`;;1`…`;;9`. How much is auto-answered is decided by the **client-side
+permission engine** (`weave.permissions`): editor-global, generic **rules**
+of the form *(tool glob, optional resource glob, decision allow/deny/ask)*,
+grouped into named **presets**. The first matching rule of the active preset
+wins; both ACP permission requests (as `acp:<kind>` with the file path or
+command line as the resource) and weave's own MCP tools (as `weave:<tool>`)
+resolve through the same rule set — a denied MCP call returns an error the
+agent can read, an `ask` surfaces in the same sidebar queue as an ACP
+request.
+
+`;;p` cycles the active preset; the prompt border colour is an ambient
+reminder. Three builtin presets re-encode the historical modes: **normal**
+(every ACP request asks), **auto** (allow everything), **allow edits** (ACP
+edit calls auto-allow, the rest ask). Client-side tools default to allow in
+all three — rules targeting `weave:*` (or another plugin's `<plugin>:*`
+tools) are the opt-in tightening.
+
+Activating the sidebar's **Permissions** header opens the **preset
+configuration window**: every preset (builtin / setup / runtime) with the
+active one marked — a row activates it — plus the active preset's rules.
+`[edit]` opens the active preset as a Lua table in a scratch float (`:w`
+applies it as a *runtime* preset, shadowing a builtin of the same name;
+`[delete]` reverts to the shadowed definition), `[new]` starts from a
+template. Runtime presets live in memory for now.
 
 ### Sessions
 
@@ -185,7 +206,7 @@ conversation in the panel.
 
 Activating the sidebar's **Session** section (`<CR>` on the metadata block),
 or a row's `ⓘ` in the session modal, opens the **session details window**:
-the full metadata (provider, agent, session id, status, permission mode,
+the full metadata (provider, agent, session id, status, permission preset,
 context usage) plus a dropdown for every config the agent lets you change —
 model, mode, thinking effort, whatever the provider advertises (ACP
 `configOptions`, or the legacy models/modes shape). Dropdowns filter as you
@@ -204,6 +225,8 @@ panel** button makes it the tab's selection. `q`/`<Esc>` closes.
 | `provider` | `string` | `"claude-agent-acp"` | Key of the `acp_providers` entry to start by default |
 | `acp_providers` | `table` | 13 built-ins | Agent launch definitions (see below) |
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
+| `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit + task lifecycle) via clankbox; `clankbox_path` overrides checkout auto-detection |
+| `permissions` | `table` | `{ preset = "normal" }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
 | `view` | `table` | see below | Default panel geometry |
 | `keys` | `table` | see [Keybinds](#keybinds) | Key(s) per named action |
@@ -291,6 +314,48 @@ creation (this is not Neovim's own MCP connection). A provider entry's own
 `mcpServers` overrides the global list for that provider. Each entry is
 `{ name, command, args, env }` where `env` is a list of `{ name, value }`.
 
+With `tools.enabled` (the default) weave also appends a **clankbox** entry —
+the stdio shim run by this very nvim — carrying weave's own tool suite:
+`read`/`write`/`edit` with live-buffer awareness, and the
+`task_start`/`task_status`/`task_wait`/`task_kill` lifecycle over managed
+shell tasks (surfaced in the sidebar's *Terminal tasks* section). Every call
+is gated by the permission engine as `weave:<tool>` (see below).
+
+### Permission presets
+
+`permissions` seeds the engine at `setup` time:
+
+```lua
+require("weave").setup({
+  permissions = {
+    preset = "normal",           -- active at startup
+    presets = {                  -- the "setup" preset source
+      {
+        name = "docs-only",
+        label = "Docs only",
+        rules = {
+          { tool = "weave:write", resource = "*.md", decision = "allow" },
+          { tool = "weave:write", decision = "deny" },
+          { tool = "acp:*", decision = "ask" },
+          { tool = "*", decision = "allow" },
+        },
+      },
+    },
+  },
+})
+```
+
+Rules are evaluated in order, first match wins; no match resolves `ask`.
+Globs are whole-string, `*` matching any run (across `/`, so `"/etc/*"`
+covers the subtree and `"git *"` is a command prefix) and `?` one character.
+Action names are namespaced: `acp:<kind>` (an ACP permission request — kind
+`edit`, `execute`, `read`, …, resource = first location path or the command
+line), `weave:<tool>` (the tool suite above — resource = absolute path,
+buffer ref, or command line), and `<plugin>:<tool>` for any other plugin that
+resolves its clankbox tools through `require("weave.permissions").resolve`.
+Presets from `setup` shadow builtins by name; presets saved in the
+configuration window (runtime) shadow both, reversibly.
+
 ---
 
 ## Lua API
@@ -333,7 +398,7 @@ session:submit(text)             -- send (queued while a turn is running)
 session:steer(text)              -- interrupt the running turn and send NOW
 session:cancel()                 -- cancel the running turn (keeps the queue)
 session:respond_permission(n)    -- answer the pending permission, option n
-session:cycle_permission_mode()  -- normal → auto → allow-edits → …
+session:cycle_permission_mode()  -- next permission preset (editor-global)
 
 session:config_kinds()           -- what the agent lets you change: a list of
                                  -- { key, label, current, available = { { id, label }, … } }
@@ -364,8 +429,11 @@ end)
 The snapshot's main fields: `entries` (the transcript timeline), `tool_calls`
 (by id), `status` (`"idle" | "busy" | …`), `plan` (the task list), `queued` +
 `history` (prompt queue and sent prompts), `permission` (the pending request's
-head) + `permission_mode`, `usage` (context tokens), `meta` (provider / agent /
-model / mode / session id), `commands` (advertised slash commands). Snapshots
+head), `usage` (context tokens), `meta` (provider / agent / model / mode /
+session id), `commands` (advertised slash commands). The permission preset is
+NOT store state — it lives in the editor-global engine,
+`require("weave.permissions")` (`active()`, `set_active(name)`, `cycle()`,
+`resolve(action)`, `save_preset(p)`, `subscribe(fn)`). Snapshots
 are reference-stable: a field's table is reassigned only when it changed, so
 `old.entries ~= new.entries` is a cheap "did content change" test.
 
@@ -389,15 +457,24 @@ are reference-stable: a field's table is reassigned only when it changed, so
                            buffer maps / fibrous on_key), see Keybinds above
     lua/weave/
       session_store.lua    plain-Lua state snapshots + subscribers (the SSOT)
-      acp_bridge.lua       ACP callbacks → store mutations
+      acp_bridge.lua       ACP callbacks → store mutations (+ permission
+                             resolution through the engine)
+      permissions.lua      the client-side permission engine: rules, presets
+                             (builtin/setup/runtime), the active preset
       session.lua          one conversation: client, turns, queue/steer/cancel
       registry.lua         active sessions (editor-global) + per-tab selection
+      task_store.lua       managed shell tasks (the task_* tool lifecycle)
       init.lua             setup() + :Weave, panels per tabpage
+    lua/weave/tools/     the MCP tool suite hosted by clankbox: fs (read/
+                           write/edit, buffer-aware), tasks (task lifecycle),
+                           gate (the permission wrap over every def)
     lua/weave/view/      fibrous components: transcript, sidebar, prompt,
                            panel (one docked pane, one mount; the transcript
                            is a fibrous ui.container), session_modal,
-                           session_details (metadata + config dropdowns), wave
-                           (thinking indicator), prefs, theme, use_store
+                           session_details (metadata + config dropdowns),
+                           permissions_window (preset config + Lua editing),
+                           terminal_tasks (running tasks, live task views),
+                           wave (thinking indicator), prefs, theme, use_store
 
 ## Development
 

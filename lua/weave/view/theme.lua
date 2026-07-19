@@ -147,10 +147,11 @@ vim.api.nvim_create_autocmd("ColorScheme", {
   callback = define_task_done_hl,
 })
 
--- Prompt border per permission mode: an ambient reminder of how permission
--- requests are being answered while typing. normal looks unchanged
--- (FloatBorder); auto is amber (everything allowed), allow_edits purple —
--- the mode palette from STATUS_DEFAULT_FG.
+-- Prompt border per permission PRESET (keyed by preset name; custom presets
+-- fall back to normal): an ambient reminder of how permission requests are
+-- being answered while typing. normal looks unchanged (FloatBorder); auto is
+-- amber (everything allowed), allow_edits purple — the mode palette from
+-- STATUS_DEFAULT_FG.
 M.PROMPT_BORDER_HL = {
   normal = "WeavePromptBorderNormal",
   auto = "WeavePromptBorderAuto",

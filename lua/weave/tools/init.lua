@@ -11,18 +11,39 @@ local M = {}
 
 local registered = false
 
---- Plant the suite into anything exposing register_tool(name, def).
+--- The fs tools' resource for the permission engine: the ABSOLUTE path (so
+--- resource globs match however the agent spelled it), or the buffer ref as
+--- passed (rules match buffer names via suffix globs).
+--- @param args table
+--- @return string|nil
+local function fs_resource(args)
+  if args.buffer ~= nil then
+    return tostring(args.buffer)
+  end
+  if type(args.path) == "string" and args.path ~= "" then
+    return vim.fn.fnamemodify(args.path, ":p")
+  end
+  return nil
+end
+
+--- Plant the suite into anything exposing register_tool(name, def). Every
+--- def goes in wrapped behind the client-side permission engine (weave.
+--- tools.gate) as weave:<tool>; under the builtin presets the gate is inert.
 --- @param server { register_tool: fun(name: string, def: table) }
 function M.register_into(server)
+  local Gate = require("weave.tools.gate")
   local fs = require("weave.tools.fs")
-  server.register_tool("read", fs.read)
-  server.register_tool("write", fs.write)
-  server.register_tool("edit", fs.edit)
+  server.register_tool("read", Gate.wrap("read", fs.read, { resource = fs_resource, kind = "read" }))
+  server.register_tool("write", Gate.wrap("write", fs.write, { resource = fs_resource, kind = "edit" }))
+  server.register_tool("edit", Gate.wrap("edit", fs.edit, { resource = fs_resource, kind = "edit" }))
   local tasks = require("weave.tools.tasks")
-  server.register_tool("task_start", tasks.start)
-  server.register_tool("task_status", tasks.status)
-  server.register_tool("task_wait", tasks.wait)
-  server.register_tool("task_kill", tasks.kill)
+  local command = function(args)
+    return type(args.command) == "string" and args.command or nil
+  end
+  server.register_tool("task_start", Gate.wrap("task_start", tasks.start, { resource = command, kind = "execute" }))
+  server.register_tool("task_status", Gate.wrap("task_status", tasks.status, { kind = "execute" }))
+  server.register_tool("task_wait", Gate.wrap("task_wait", tasks.wait, { kind = "execute" }))
+  server.register_tool("task_kill", Gate.wrap("task_kill", tasks.kill, { kind = "execute" }))
 end
 
 --- Register into clankbox when it is installed. Idempotent; called from

@@ -5,10 +5,74 @@
 -- Ported from agentic's reactive/acp_bridge.lua.
 
 local Logger = require("weave.utils.logger")
-local SessionStore = require("weave.session_store")
+local Permissions = require("weave.permissions")
 
 --- @class weave.AcpBridge
 local AcpBridge = {}
+
+-- ── Permission resolution ───────────────────────────────────────────────────
+--
+-- Every session/request_permission resolves through the client-side
+-- permission engine (weave.permissions): the request maps to a generic
+-- action (acp:<kind> plus a resource string) and the ACTIVE preset decides
+-- allow/deny/ask. Crucially, allow and deny never fabricate an outcome:
+-- they select one of the request's OWN options.
+--
+-- WHY allow_ONCE, not allow_always: "allow_always" tells the AGENT to
+-- persist a standing grant for that tool. If a preset auto-selected it,
+-- switching presets would NOT restore prompting — the agent keeps the
+-- permanent grant forever. "allow_once" grants exactly this invocation, so
+-- the preset is the only thing keeping tools auto-allowed: switch it and the
+-- next request prompts again. Presets must be fully reversible. The same
+-- holds for reject_once over reject_always on the deny side.
+
+--- The engine action for an ACP permission request: the tool-call kind under
+--- the acp: namespace, and the most concrete resource the request carries —
+--- the first location path (edits/reads), else the command line from
+--- rawInput (execute), else its file path fields.
+--- @param request table The ACP RequestPermission params
+--- @return weave.permissions.Action
+local function acp_action(request)
+  local tc = (request and request.toolCall) or {}
+  local resource
+  local loc = type(tc.locations) == "table" and tc.locations[1] or nil
+  if type(loc) == "table" and type(loc.path) == "string" then
+    resource = loc.path
+  end
+  local ri = tc.rawInput
+  if not resource and type(ri) == "table" then
+    for _, key in ipairs({ "command", "file_path", "path", "abs_path" }) do
+      if type(ri[key]) == "string" then
+        resource = ri[key]
+        break
+      end
+    end
+  end
+  return { tool = "acp:" .. (tc.kind or "other"), resource = resource }
+end
+
+--- The agent-offered option to answer `decision` with: allow prefers
+--- allow_once then allow_always; deny prefers reject_once then
+--- reject_always. The spec calls `kind` a "hint", so a provider COULD omit
+--- or mis-set it — nil when no matching kind is offered (allow then falls
+--- through to the user; deny falls back to the cancelled outcome). We never
+--- guess an optionId the agent didn't mark.
+--- @param options table[]|nil ACP PermissionOption[]
+--- @param decision "allow"|"deny"
+--- @return string|nil option_id
+local function option_for(options, decision)
+  local once = decision == "allow" and "allow_once" or "reject_once"
+  local always = decision == "allow" and "allow_always" or "reject_always"
+  local fallback
+  for _, opt in ipairs(options or {}) do
+    if opt.kind == once then
+      return opt.optionId -- reversible answer, prefer it (see WHY note)
+    elseif opt.kind == always and not fallback then
+      fallback = opt.optionId
+    end
+  end
+  return fallback
+end
 
 -- ── Kiro task-list adapter ──────────────────────────────────────────────────
 --
@@ -133,17 +197,24 @@ function AcpBridge.build_handlers(store, opts)
     end,
 
     on_request_permission = function(request, callback)
-      -- Permission mode may auto-answer this request (Auto / Allow-edits)
-      -- by selecting one of the agent's OWN allow options. We still want the
-      -- tool call to render (the user should see what was auto-allowed) —
-      -- but that arrives via on_tool_call/on_tool_call_update, not here, so
-      -- auto-answering simply skips the enqueue + surfacing. If no option is
-      -- chosen (Normal, or no allow option offered), fall through to the
-      -- queue as before. See PERMISSION_MODES in session_store.lua.
-      local auto_id = SessionStore.auto_option_for(request, store:get_permission_mode())
-      if auto_id then
-        callback(auto_id)
+      -- The active preset may answer this request without the user (see the
+      -- permission-resolution note above). The tool call still renders (the
+      -- user should see what was auto-answered) — that arrives via
+      -- on_tool_call/on_tool_call_update, not here, so answering simply
+      -- skips the enqueue + surfacing. An allow with no allow option falls
+      -- through to the queue (never guess); a deny with no reject option
+      -- answers the cancelled outcome (respond nil).
+      local decision = Permissions.resolve(acp_action(request))
+      if decision == "deny" then
+        callback(option_for(request.options, "deny"))
         return
+      end
+      if decision == "allow" then
+        local option_id = option_for(request.options, "allow")
+        if option_id then
+          callback(option_id)
+          return
+        end
       end
 
       -- Deliberately DON'T touch the status: the turn is still active (the agent

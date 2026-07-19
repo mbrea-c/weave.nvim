@@ -12,7 +12,7 @@
 
 local mount = require("fibrous.inline.mount")
 local ui = require("fibrous.inline.components")
-local SessionStore = require("weave.session_store")
+local use_permissions = require("weave.view.use_permissions")
 local use_store = require("weave.view.use_store")
 
 local M = {}
@@ -77,6 +77,7 @@ end
 --- @param props { store: weave.store.SessionStore, kinds: weave.session.ConfigKind[], on_set: fun(key: string, id: string), on_open?: fun() }
 local function Details(ctx, props)
   local state = use_store(ctx, props.store)
+  local preset = use_permissions(ctx)
   local meta = state.meta
 
   local rows = {
@@ -88,7 +89,7 @@ local function Details(ctx, props)
     { "Agent", meta.agent },
     { "Session", meta.session_id },
     { "Status", state.status },
-    { "Permissions", SessionStore.PERMISSION_MODE_LABEL[state.permission_mode] or state.permission_mode },
+    { "Permissions", preset.label or preset.name },
   }
   for _, pair in ipairs(facts) do
     if pair[2] then

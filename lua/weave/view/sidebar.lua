@@ -13,6 +13,7 @@ local SessionStore = require("weave.session_store")
 local TerminalTasks = require("weave.view.terminal_tasks")
 local Theme = require("weave.view.theme")
 local octant = require("weave.view.octant")
+local use_permissions = require("weave.view.use_permissions")
 local use_store = require("weave.view.use_store")
 
 local M = {}
@@ -444,17 +445,28 @@ function M.TasksSection(ctx, props)
   return { comp = ui.col, props = {}, children = rows }
 end
 
---- The active permission MODE (cycled with ;;p); plus the head request's
---- title + numbered options when one is pending (answered with ;;1..;;9 —
---- the numbers here are that keymap's legend).
+--- The active permission PRESET (engine-global, cycled with ;;p); plus the
+--- head request's title + numbered options when one is pending (answered
+--- with ;;1..;;9 — the numbers here are that keymap's legend). The header
+--- opens the preset configuration window.
 --- @param ctx table
 --- @param props { store: weave.store.SessionStore }
 function M.PermissionsSection(ctx, props)
   local state = use_store(ctx, props.store)
-  local mode_label = SessionStore.PERMISSION_MODE_LABEL[state.permission_mode] or state.permission_mode
+  local active = use_permissions(ctx)
   local rows = {
-    header("Permissions"),
-    { comp = ui.label, props = { text = "Mode: " .. mode_label .. "  (;;p)" } },
+    {
+      comp = ui.button,
+      props = {
+        label = "Permissions",
+        theme = false,
+        style = { text_hl = "Title", _hover = { hl = "FibrousHover" } },
+        on_press = function()
+          require("weave.view.permissions_window").open()
+        end,
+      },
+    },
+    { comp = ui.label, props = { text = "Preset: " .. (active.label or active.name) .. "  (;;p)" } },
   }
   local perm = state.permission
   if perm then

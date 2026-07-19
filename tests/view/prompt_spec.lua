@@ -6,6 +6,7 @@
 
 local mount = require("fibrous.inline.mount")
 
+local Permissions = require("weave.permissions")
 local SessionStore = require("weave.session_store")
 local prompt = require("weave.view.prompt")
 local Theme = require("weave.view.theme")
@@ -196,18 +197,20 @@ describe("view.prompt", function()
       return table.concat(vim.api.nvim_buf_get_lines(handle.bufnr, 0, -1, false), "\n")
     end
 
-    -- The permission mode tints the TITLE and names the mode in it; the border
-    -- edge itself stays a constant 'normal' hl. So in normal mode the title
-    -- reads "(normal)" and there's no auto tint anywhere.
+    -- The active permission preset tints the TITLE and names the preset in
+    -- it; the border edge itself stays a constant 'normal' hl. So on the
+    -- normal preset the title reads "(normal)" and there's no auto tint
+    -- anywhere.
     assert.truthy(text():find("(normal)", 1, true))
     assert.equal(0, #marks_with(handle.bufnr, Theme.PROMPT_BORDER_HL.auto))
 
-    store:cycle_permission_mode() -- normal → auto
-    -- the title gains the mode's colour + label; the border_hl is unchanged, so
-    -- an auto mark can ONLY come from the title
+    Permissions.cycle() -- normal → auto (the engine, not the store)
+    -- the title gains the preset's colour + label; the border_hl is
+    -- unchanged, so an auto mark can ONLY come from the title
     assert.truthy(text():find("(auto", 1, true))
     assert.is_true(#marks_with(handle.bufnr, Theme.PROMPT_BORDER_HL.auto) > 0)
     handle.unmount()
+    Permissions._reset()
   end)
 
   it("gives the input buffer the markdown filetype", function()
