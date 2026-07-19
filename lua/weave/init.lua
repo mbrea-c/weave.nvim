@@ -165,6 +165,12 @@ function M.setup(opts)
   for k, v in pairs(vim.tbl_deep_extend("force", Config, opts or {})) do
     Config[k] = v
   end
+  -- Plant weave's MCP tool suite into clankbox (soft dependency). Sessions
+  -- also ensure this lazily, but setup-time registration makes the tools
+  -- visible to shims connected before any weave session exists.
+  if not (Config.tools and Config.tools.enabled == false) then
+    require("weave.tools").ensure_registered()
+  end
   vim.api.nvim_create_user_command("Weave", function(cmd)
     if cmd.args == "sessions" then
       M.sessions()

@@ -23,11 +23,16 @@
 --- disable the action entirely.
 --- @alias weave.UserConfig.KeymapValue string|false|(string|weave.UserConfig.KeymapEntry)[]
 
+--- @class weave.ToolsConfig weave's own MCP tool suite (read/write/edit), hosted by clankbox
+--- @field enabled boolean Register the suite into clankbox and hand every agent the clankbox server automatically
+--- @field clankbox_path? string Clankbox checkout root (the dir containing shim.lua); nil = auto-detect
+
 --- @class weave.UserConfig
 --- @field debug boolean Log to the debug file (utils/logger.lua)
 --- @field provider string Default provider (a key of `acp_providers`)
 --- @field acp_providers table<string, weave.acp.ACPProviderConfig|nil>
 --- @field mcp_servers weave.acp.McpServer[] MCP servers handed to EVERY provider over ACP (session/new), unless a provider sets its own `mcpServers`. The agent spawns/connects them.
+--- @field tools weave.ToolsConfig
 --- @field view weave.ViewConfig Default panel geometry (width / sidebar_width / prompt_height)
 --- @field keys table<string, weave.UserConfig.KeymapValue> Key(s) per named action (see weave.keys ACTIONS); `false` disables one
 local ConfigDefault = {
@@ -182,6 +187,14 @@ local ConfigDefault = {
   -- our own Neovim MCP connection. Shape per entry: { name, command, args, env }
   -- where env is a list of { name, value }. Empty by default.
   mcp_servers = {},
+
+  -- weave's own MCP tool suite (read/write/edit; task tools to come), hosted
+  -- by clankbox and appended to every agent's mcpServers automatically — see
+  -- design-agent-sandbox.md in the superproject. `clankbox_path` (the
+  -- checkout dir containing shim.lua) overrides auto-detection.
+  tools = {
+    enabled = true,
+  },
 }
 
 return ConfigDefault

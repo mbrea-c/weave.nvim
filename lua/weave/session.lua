@@ -394,6 +394,32 @@ function Session:_resolve_mcp_servers()
   local provider_cfg = Config.acp_providers[self._provider_name]
   local servers = (provider_cfg and provider_cfg.mcpServers) or Config.mcp_servers or {}
 
+  -- weave's own tool suite rides along as a clankbox entry (weave.tools),
+  -- unless disabled or the user already lists a clankbox server. Appended on
+  -- a copy: `servers` may be the live config table.
+  if not (Config.tools and Config.tools.enabled == false) then
+    local has_clankbox = false
+    for _, srv in ipairs(servers) do
+      if srv.name == "clankbox" then
+        has_clankbox = true
+        break
+      end
+    end
+    if not has_clankbox then
+      local Tools = require("weave.tools")
+      Tools.ensure_registered()
+      local entry = Tools.clankbox_server_entry()
+      if entry then
+        local merged = {}
+        for i, srv in ipairs(servers) do
+          merged[i] = srv
+        end
+        merged[#merged + 1] = entry
+        servers = merged
+      end
+    end
+  end
+
   local socket = vim.v.servername
   if not socket or socket == "" then
     return servers
