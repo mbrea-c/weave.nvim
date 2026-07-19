@@ -11,6 +11,14 @@
 --   mode · ;;1..;;9 answer permissions · ;;r restore a saved session ·
 --   ;;s the session modal (multiple sessions, per-tab selection) ·
 --   /new fresh conversation · :qa quits
+--
+-- A sample users.lua is opened beside the panel for INLINE CODE FEEDBACK:
+--   ;;cc on a line (or over a visual selection) comments it — the span turns
+--   yellow and an editor float opens for the comment body. ;;ce reopens the
+--   comment under the cursor. Comments from anywhere collect into one draft in
+--   the sidebar's "Code feedback" section; its send button (or ;;cs) hands the
+--   whole bundle to the agent as one message, quoted code and all.
+--   Comments are extmark-anchored: edit ABOVE one and it follows the code.
 
 -- Resolve paths from this file's own location, not the cwd, so the nix app
 -- (`-u /nix/store/...-source/demo/init.lua`) works from anywhere.
@@ -209,7 +217,10 @@ function client:send_prompt(sid, _prompt, callback)
         vim.defer_fn(function()
           h.on_session_update({
             sessionUpdate = "agent_message_chunk",
-            content = { text = allowed and "\n\nDone — the edit is applied." or "\n\nUnderstood — I left that file untouched." },
+            content = {
+              text = allowed and "\n\nDone — the edit is applied."
+                or "\n\nUnderstood — I left that file untouched.",
+            },
           })
           h.on_session_update({
             sessionUpdate = "plan",
@@ -250,12 +261,69 @@ function client:load_session(session_id, _cwd, _mcp, handlers, on_complete)
   })
   handlers.on_session_update({
     sessionUpdate = "agent_message_chunk",
-    content = { text = "This conversation was restored from disk — the provider replayed its history through the ordinary session updates, and the panel rendered it without spinning up the activity status." },
+    content = {
+      text = "This conversation was restored from disk — the provider replayed its history through the ordinary session updates, and the panel rendered it without spinning up the activity status.",
+    },
   })
   on_complete(nil, {
     models = { currentModelId = "scripted", availableModels = { { modelId = "scripted", name = "Scripted" } } },
   })
 end
+
+-- ── Something to comment on ──────────────────────────────────────────────────
+-- Inline code feedback needs real code in a real buffer. The sample is written
+-- into a fresh temp dir (NOT read out of the nix store) and made the cwd, so
+-- it is writable and the paths weave shows are short relative ones rather than
+-- a /nix/store/... mouthful.
+
+local SAMPLE = [[
+local M = {}
+
+local cache = {}
+
+--- Look up a user by id, memoized.
+function M.get_user(id)
+  if cache[id] then
+    return cache[id]
+  end
+  local row = M.db:query("SELECT * FROM users WHERE id = " .. id)
+  cache[id] = row
+  return row
+end
+
+--- Everyone in a team. Fans out one query per member.
+function M.team_members(team_id)
+  local ids = M.db:query("SELECT user_id FROM teams WHERE id = " .. team_id)
+  local out = {}
+  for _, id in ipairs(ids) do
+    out[#out + 1] = M.get_user(id)
+  end
+  return out
+end
+
+function M.invalidate()
+  cache = {}
+end
+
+return M
+]]
+
+local demo_dir = vim.fn.tempname()
+vim.fn.mkdir(demo_dir, "p")
+local sample = demo_dir .. "/users.lua"
+vim.fn.writefile(vim.split(SAMPLE, "\n"), sample)
+vim.cmd.cd(demo_dir)
+vim.cmd.edit(sample)
+
+-- weave binds nothing globally by design (see README), so the demo does it —
+-- which doubles as the copy-pasteable example.
+local feedback = require("weave.feedback")
+vim.keymap.set("n", ";;cc", feedback.comment_line, { desc = "weave: comment this line" })
+vim.keymap.set("x", ";;cc", feedback.comment_selection, { desc = "weave: comment this selection" })
+vim.keymap.set("n", ";;ce", feedback.edit_comment, { desc = "weave: edit the comment here" })
+vim.keymap.set("n", ";;cs", function()
+  feedback.send()
+end, { desc = "weave: send the code feedback" })
 
 -- ── Open it ──────────────────────────────────────────────────────────────────
 
