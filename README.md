@@ -389,6 +389,14 @@ No match — or a matcher that throws — falls through to the builtin rendering
 silently. A renderer that throws is contained to its own entry: the rest of
 the conversation keeps drawing and that entry shows the error.
 
+The builtin task renderer (`weave.view.renderers.task`, opt-in via
+`require("weave.view.renderers.task").install()`) is a worked example: it
+swaps `render_body` for a live view of the task's output, and identifies
+which task a call belongs to by reading the `task <id>` prefix out of the
+call's own result — the id weave's own task store minted. Nothing identifies
+the task on the way *in*: `rawInput` is exactly the arguments the tool
+declared, with no ACP or MCP correlation id anywhere in it.
+
 ### Permission presets
 
 `permissions` seeds the engine at `setup` time:

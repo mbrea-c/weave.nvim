@@ -4,8 +4,9 @@
 -- rawInput sitting behind an expand toggle.
 --
 -- This is opt-in — `require("weave.view.renderers.task").install()` — because
--- its matcher is a heuristic, and shipping a heuristic on by default would
--- silently swallow other tools' rendering. See the correlation note below.
+-- matching a call to its task is exact only once the call's own result has
+-- landed; before that it falls back to a command-line join. See the
+-- correlation note below.
 
 local ui = require("fibrous.inline.components")
 local TaskStore = require("weave.task_store")
@@ -18,21 +19,71 @@ local M = {}
 -- terminal. The full stream is one <CR> away in the task view float.
 M.PREVIEW_LINES = 8
 
---- ── The correlation problem ────────────────────────────────────────────────
+--- ── Correlating a tool call with its task ──────────────────────────────────
 ---
---- We want THIS tool call's task. We cannot ask for it: MCP calls arrive over
---- clankbox with no ACP session or tool_call_id attached (the same gap
---- tools/gate.lua works around for permission prompts), and the ACP tool call
---- carries no tool name. So the join is on the one field both sides share,
---- the command line, newest task first.
+--- Nothing identifies the task on the way IN. rawInput is exactly the
+--- arguments we declared in our own inputSchema (clankbox hands the handler
+--- `params.arguments` and nothing else) — command, cwd, blocking, timeout_ms.
+--- No ACP toolCallId, no MCP _meta.
 ---
---- That is a heuristic and it is wrong in an honest, bounded way: run the
---- same command twice and the older call re-points at the newer task. Fixing
---- it properly means giving clankbox calls a correlation id — see the
---- identity note in tool_call.lua.
+--- But the id travels OUT. Every task_start response opens with "task <id>"
+--- (tools/tasks.lua status_line), and that id is ours — the task store minted
+--- it. The provider reports the tool result back as rawOutput, so the block
+--- carries the exact task it started. No correlation id needed on either
+--- side.
+---
+--- Fallback: rawOutput is optional in ACP and not every provider populates it
+--- (and it is absent anyway between the call starting and its result landing,
+--- which is exactly when a live view is most interesting). So an
+--- output-derived id wins when present, and otherwise we join on the command
+--- line, newest task first. That fallback is a heuristic, and wrong in a
+--- bounded way: run the same command twice and the older call points at the
+--- newer task until its own output arrives and corrects it.
+
+--- Any text carried in an MCP tool result, whatever shape the provider used:
+--- a bare string, {content={{type="text",text=...}}}, or a plain field.
+--- @param output any rawOutput off the block
+--- @return string
+local function output_text(output)
+  if type(output) == "string" then
+    return output
+  end
+  if type(output) ~= "table" then
+    return ""
+  end
+  local parts = {}
+  for _, item in ipairs(output.content or {}) do
+    if type(item) == "table" and type(item.text) == "string" then
+      parts[#parts + 1] = item.text
+    end
+  end
+  if #parts == 0 then
+    for _, key in ipairs({ "text", "output", "result" }) do
+      if type(output[key]) == "string" then
+        parts[#parts + 1] = output[key]
+      end
+    end
+  end
+  return table.concat(parts, "\n")
+end
+
+--- The task id this call reported starting, from its own result text.
+--- @param block table
+--- @return integer|nil
+function M.task_id_from_output(block)
+  local id = output_text(block.output):match("^task (%d+)")
+  return id and tonumber(id) or nil
+end
+
 --- @param block table
 --- @return weave.Task|nil
 function M.task_for(block)
+  local id = M.task_id_from_output(block)
+  if id then
+    -- Exact: the task this very call started.
+    return TaskStore.get(id)
+  end
+
   local command = type(block.input) == "table" and block.input.command
   if type(command) ~= "string" then
     return nil

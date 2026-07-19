@@ -426,4 +426,50 @@ describe("view.renderers.task", function()
     assert.is_nil(ToolCall.resolve({ kind = "execute", input = { command = "never ran this" } }))
     assert.is_nil(ToolCall.resolve({ kind = "execute", input = {} }))
   end)
+
+  -- Nothing identifies the task on the way in (rawInput is just our declared
+  -- schema fields), but task_start's own result opens with "task <id>", and
+  -- that id came from our store. Two calls of the SAME command is the case
+  -- the command-line fallback gets wrong and the output join gets right.
+  describe("correlating a call with its task", function()
+    it("reads the exact task id out of the call's own result", function()
+      local first = assert(TaskStore.start({ command = "sleep 5" }))
+      local second = assert(TaskStore.start({ command = "sleep 5" }))
+      assert.is_true(first.id ~= second.id)
+
+      local block = {
+        input = { command = "sleep 5" },
+        output = { content = { { type = "text", text = ("task %d started (pid 1): sleep 5"):format(first.id) } } },
+      }
+      assert.equal(first.id, TaskRenderer.task_for(block).id)
+
+      -- without the output it can only guess, and guesses newest-first
+      block.output = nil
+      assert.equal(second.id, TaskRenderer.task_for(block).id)
+
+      TaskStore.kill(first.id)
+      TaskStore.kill(second.id)
+    end)
+
+    it("reads the id from a bare-string result too (provider shapes vary)", function()
+      local task = assert(TaskStore.start({ command = "sleep 5" }))
+      assert.equal(
+        task.id,
+        TaskRenderer.task_for({ output = ("task %d: running (pid 2)"):format(task.id) }).id
+      )
+      TaskStore.kill(task.id)
+    end)
+
+    it("ignores output that isn't one of ours", function()
+      assert.is_nil(TaskRenderer.task_id_from_output({ output = { content = { { text = "wrote 3 lines" } } } }))
+      assert.is_nil(TaskRenderer.task_id_from_output({ output = "the task 7 you mentioned" }))
+      assert.is_nil(TaskRenderer.task_id_from_output({}))
+    end)
+
+    it("declines when the reported task is gone, rather than matching by command", function()
+      -- a replayed transcript from a previous session: the id is real in the
+      -- text but nothing in this store answers to it
+      assert.is_nil(TaskRenderer.task_for({ input = { command = "sleep 5" }, output = "task 999 started (pid 3)" }))
+    end)
+  end)
 end)
