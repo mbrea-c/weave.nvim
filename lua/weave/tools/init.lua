@@ -18,6 +18,11 @@ function M.register_into(server)
   server.register_tool("read", fs.read)
   server.register_tool("write", fs.write)
   server.register_tool("edit", fs.edit)
+  local tasks = require("weave.tools.tasks")
+  server.register_tool("task_start", tasks.start)
+  server.register_tool("task_status", tasks.status)
+  server.register_tool("task_wait", tasks.wait)
+  server.register_tool("task_kill", tasks.kill)
 end
 
 --- Register into clankbox when it is installed. Idempotent; called from

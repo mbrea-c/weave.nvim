@@ -23,7 +23,7 @@
 --- disable the action entirely.
 --- @alias weave.UserConfig.KeymapValue string|false|(string|weave.UserConfig.KeymapEntry)[]
 
---- @class weave.ToolsConfig weave's own MCP tool suite (read/write/edit), hosted by clankbox
+--- @class weave.ToolsConfig weave's own MCP tool suite (read/write/edit + task_*), hosted by clankbox
 --- @field enabled boolean Register the suite into clankbox and hand every agent the clankbox server automatically
 --- @field clankbox_path? string Clankbox checkout root (the dir containing shim.lua); nil = auto-detect
 
@@ -188,7 +188,7 @@ local ConfigDefault = {
   -- where env is a list of { name, value }. Empty by default.
   mcp_servers = {},
 
-  -- weave's own MCP tool suite (read/write/edit; task tools to come), hosted
+  -- weave's own MCP tool suite (read/write/edit + task lifecycle), hosted
   -- by clankbox and appended to every agent's mcpServers automatically — see
   -- design-agent-sandbox.md in the superproject. `clankbox_path` (the
   -- checkout dir containing shim.lua) overrides auto-detection.
