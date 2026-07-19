@@ -81,10 +81,13 @@ describe("weave entrypoint", function()
     local client = fake_client()
     local before = #vim.api.nvim_list_wins()
 
-    weave.toggle({ get_instance = function(_n, on_ready)
-      on_ready(client)
-      return client
-    end, width = 45 })
+    weave.toggle({
+      get_instance = function(_n, on_ready)
+        on_ready(client)
+        return client
+      end,
+      width = 45,
+    })
     pump()
     assert.is_true(weave.is_open())
 
@@ -152,10 +155,13 @@ describe("weave entrypoint", function()
 
   it("a prompt submitted in the panel reaches the agent", function()
     local client = fake_client()
-    weave.open({ get_instance = function(_n, on_ready)
-      on_ready(client)
-      return client
-    end, width = 45 })
+    weave.open({
+      get_instance = function(_n, on_ready)
+        on_ready(client)
+        return client
+      end,
+      width = 45,
+    })
     pump()
 
     press("iship it")

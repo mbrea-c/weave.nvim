@@ -108,10 +108,7 @@ describe("view.sidebar", function()
     -- 1 full + level-3 (left column, bottom 3 rows).
     assert.equal("█" .. octant.glyph(octant.col_fill(3)) .. (" "):rep(8), row(0.1375, 10))
     -- 0.1875 = 15 sub → 1 full + level-7 (left full ▌ + right bottom 3 rows)
-    assert.equal(
-      "█" .. octant.glyph(octant.col_fill(4) + octant.col_fill(3) * 16) .. (" "):rep(8),
-      row(0.1875, 10)
-    )
+    assert.equal("█" .. octant.glyph(octant.col_fill(4) + octant.col_fill(3) * 16) .. (" "):rep(8), row(0.1875, 10))
   end)
 
   it("projects usage live: a context bar + centered used/total (percent), and cost when charged", function()

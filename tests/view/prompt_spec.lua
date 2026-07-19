@@ -469,9 +469,11 @@ describe("view.prompt queue + history", function()
     store:enqueue_prompt("alpha")
     store:enqueue_prompt("bravo")
     local steered = {}
-    local handle = mount_tall(store, { on_steer = function(t)
-      steered[#steered + 1] = t
-    end })
+    local handle = mount_tall(store, {
+      on_steer = function(t)
+        steered[#steered + 1] = t
+      end,
+    })
     local sub = subwin_of(handle)
     vim.api.nvim_set_current_win(sub)
     pump()

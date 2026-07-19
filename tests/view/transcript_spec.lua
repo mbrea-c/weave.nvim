@@ -63,15 +63,7 @@ end
 
 local function tool_header(status, kind, title, expanded)
   local chevron = expanded and Theme.CHEVRON.expanded or Theme.CHEVRON.collapsed
-  return chevron
-    .. " "
-    .. Theme.STATUS_ICON[status]
-    .. " "
-    .. Theme.KIND_ICON[kind]
-    .. "["
-    .. kind
-    .. "] "
-    .. title
+  return chevron .. " " .. Theme.STATUS_ICON[status] .. " " .. Theme.KIND_ICON[kind] .. "[" .. kind .. "] " .. title
 end
 
 describe("view.transcript entries", function()

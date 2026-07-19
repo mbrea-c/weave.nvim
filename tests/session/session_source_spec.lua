@@ -19,9 +19,17 @@ describe("weave.session_source kiro filesystem fallback", function()
   end)
 
   it("keeps only cwd-matching, titled sessions and maps their fields", function()
-    write_index(dir, "s1", { session_id = "s1", cwd = "/work/proj", title = "Fix the parser", updated_at = "2026-07-01T10:00:00Z" })
+    write_index(
+      dir,
+      "s1",
+      { session_id = "s1", cwd = "/work/proj", title = "Fix the parser", updated_at = "2026-07-01T10:00:00Z" }
+    )
     -- different cwd → excluded
-    write_index(dir, "s2", { session_id = "s2", cwd = "/work/other", title = "Elsewhere", updated_at = "2026-07-02T10:00:00Z" })
+    write_index(
+      dir,
+      "s2",
+      { session_id = "s2", cwd = "/work/other", title = "Elsewhere", updated_at = "2026-07-02T10:00:00Z" }
+    )
     -- empty (never-prompted) session, no title → excluded
     write_index(dir, "s3", { session_id = "s3", cwd = "/work/proj", title = "", updated_at = "2026-07-03T10:00:00Z" })
 

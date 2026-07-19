@@ -17,13 +17,21 @@ local M = {}
 ---------------------------------------------------------------------------
 
 local function deep_equal(a, b)
-  if a == b then return true end
-  if type(a) ~= "table" or type(b) ~= "table" then return false end
+  if a == b then
+    return true
+  end
+  if type(a) ~= "table" or type(b) ~= "table" then
+    return false
+  end
   for k, v in pairs(a) do
-    if not deep_equal(v, b[k]) then return false end
+    if not deep_equal(v, b[k]) then
+      return false
+    end
   end
   for k in pairs(b) do
-    if a[k] == nil then return false end
+    if a[k] == nil then
+      return false
+    end
   end
   return true
 end
@@ -61,27 +69,39 @@ function assert_t.same(expected, got)
 end
 
 function assert_t.is_true(v)
-  if v ~= true then fail(("expected true, got %s"):format(pretty(v))) end
+  if v ~= true then
+    fail(("expected true, got %s"):format(pretty(v)))
+  end
 end
 
 function assert_t.is_false(v)
-  if v ~= false then fail(("expected false, got %s"):format(pretty(v))) end
+  if v ~= false then
+    fail(("expected false, got %s"):format(pretty(v)))
+  end
 end
 
 function assert_t.truthy(v)
-  if not v then fail(("expected truthy, got %s"):format(pretty(v))) end
+  if not v then
+    fail(("expected truthy, got %s"):format(pretty(v)))
+  end
 end
 
 function assert_t.falsy(v)
-  if v then fail(("expected falsy, got %s"):format(pretty(v))) end
+  if v then
+    fail(("expected falsy, got %s"):format(pretty(v)))
+  end
 end
 
 function assert_t.is_nil(v)
-  if v ~= nil then fail(("expected nil, got %s"):format(pretty(v))) end
+  if v ~= nil then
+    fail(("expected nil, got %s"):format(pretty(v)))
+  end
 end
 
 function assert_t.is_not_nil(v)
-  if v == nil then fail("expected non-nil, got nil") end
+  if v == nil then
+    fail("expected non-nil, got nil")
+  end
 end
 
 -- reference (identity) equality, distinct from `equal` for clarity at call site
@@ -93,7 +113,9 @@ end
 
 function assert_t.has_error(fn, expected_substr)
   local ok, err = pcall(fn)
-  if ok then fail("expected function to error, but it did not") end
+  if ok then
+    fail("expected function to error, but it did not")
+  end
   if expected_substr then
     local msg = type(err) == "table" and (err.message or pretty(err)) or tostring(err)
     if not msg:find(expected_substr, 1, true) then
@@ -159,11 +181,15 @@ local function run_node(node, befores, afters, path, results)
     local full = path .. " " .. node.name
     -- run befores outer->inner
     local ok, err = pcall(function()
-      for _, b in ipairs(befores) do b() end
+      for _, b in ipairs(befores) do
+        b()
+      end
       node.fn()
     end)
     -- run afters inner->outer regardless of test outcome
-    for i = #afters, 1, -1 do pcall(afters[i]) end
+    for i = #afters, 1, -1 do
+      pcall(afters[i])
+    end
     if ok then
       results.passed = results.passed + 1
       io.write(".")
