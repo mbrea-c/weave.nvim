@@ -230,7 +230,7 @@ local ConfigDefault = {
   -- the builtin normal/auto/allow_edits (same name = shadow the builtin).
   -- Rule shape: { tool = "<glob>", resource = "<glob>"|nil, decision =
   -- "allow"|"deny"|"ask" } — see lua/weave/permissions.lua for the action
-  -- vocabulary (acp:<kind>, weave:<tool>, <plugin>:<tool>).
+  -- vocabulary (acp:<kind>, weave:<tool>, mcp:<tool>, <plugin>:<tool>).
   -- `preset` is deliberately UNSET here rather than defaulted to "normal": an
   -- absent value means "no preference", which is what lets a configured
   -- sandbox profile select the matching sandboxed_* variant automatically.

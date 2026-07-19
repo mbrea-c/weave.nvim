@@ -11,6 +11,21 @@ local M = {}
 
 local registered = false
 
+--- The tools weave registers itself. Gate.wrap already mediates these, so the
+--- foreign-tool middleware skips them: gating twice would raise two prompts
+--- for one call.
+M.OWNS = {
+  read = true,
+  write = true,
+  edit = true,
+  glob = true,
+  grep = true,
+  task_start = true,
+  task_status = true,
+  task_wait = true,
+  task_kill = true,
+}
+
 --- The fs tools' resource for the permission engine: the ABSOLUTE path (so
 --- resource globs match however the agent spelled it), or the buffer ref as
 --- passed (rules match buffer names via suffix globs).
@@ -55,6 +70,13 @@ function M.register_into(server)
   server.register_tool("task_status", Gate.wrap("task_status", tasks.status, { kind = "execute" }))
   server.register_tool("task_wait", Gate.wrap("task_wait", tasks.wait, { kind = "execute" }))
   server.register_tool("task_kill", Gate.wrap("task_kill", tasks.kill, { kind = "execute" }))
+  -- Everything else the agent can reach over this host — clankbox's own
+  -- exec_lua, another plugin's tools — through the same engine, as mcp:<tool>.
+  -- Without this a sandbox profile is decorative: exec_lua runs arbitrary Lua
+  -- in the unsandboxed editor. Soft: an older clankbox has no `use`.
+  if type(server.use) == "function" then
+    server.use(Gate.middleware())
+  end
 end
 
 --- Register into clankbox when it is installed. Idempotent; called from

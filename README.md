@@ -189,6 +189,12 @@ resolve through the same rule set — a denied MCP call returns an error the
 agent can read, an `ask` surfaces in the same sidebar queue as an ACP
 request.
 
+In a prompt, the two **always** options are highlighted: answering one writes
+a rule into weave's permission store, so it decides every future call of that
+kind rather than just the one in front of you. The **once** options are not
+highlighted, and neither are the always options on an agent-side ACP request,
+whose bookkeeping is the agent's own and leaves weave's store untouched.
+
 `;;p` cycles the active preset; the prompt border colour is an ambient
 reminder. Six builtin presets ship. Three re-encode the historical modes:
 **normal** (every ACP request asks), **auto** (allow everything), **allow
@@ -478,8 +484,17 @@ covers the subtree and `"git *"` is a command prefix) and `?` one character.
 Action names are namespaced: `acp:<kind>` (an ACP permission request — kind
 `edit`, `execute`, `read`, …, resource = first location path or the command
 line), `weave:<tool>` (the tool suite above — resource = absolute path,
-buffer ref, or command line), and `<plugin>:<tool>` for any other plugin that
-resolves its clankbox tools through `require("weave.permissions").resolve`.
+buffer ref, or command line), `mcp:<tool>` (any OTHER tool reachable over the
+shared clankbox host — its own built-ins like `exec_lua`, plus other plugins'
+registrations — gated through clankbox's middleware chain, with no resource,
+since a foreign tool's arguments have no schema weave can read one out of),
+and `<plugin>:<tool>` for a plugin that resolves its own clankbox tools
+through `require("weave.permissions").resolve`.
+
+The `mcp:*` rules are what keep a sandbox profile meaningful: `exec_lua` runs
+arbitrary Lua in the **unsandboxed** editor, so left ungated it can read the
+project the sandbox masked. The `sandboxed_*` presets therefore `ask` on
+`mcp:*`; set it to `deny` if you would rather it not be offered at all.
 Presets from `setup` shadow builtins by name; presets saved in the
 configuration window (runtime) shadow both, reversibly.
 

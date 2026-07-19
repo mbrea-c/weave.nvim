@@ -133,6 +133,9 @@ local BUILTIN = {
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
       { tool = "weave:*", decision = "ask" },
+      -- Tools weave does not own (clankbox's exec_lua, other plugins'):
+      -- unmediated they undo the confinement this preset exists for.
+      { tool = "mcp:*", decision = "ask" },
       { tool = "*", decision = "allow" },
     },
   },
@@ -147,6 +150,9 @@ local BUILTIN = {
       { tool = "weave:task_kill", decision = "allow" },
       { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
       { tool = "weave:*", decision = "ask" },
+      -- Tools weave does not own (clankbox's exec_lua, other plugins'):
+      -- unmediated they undo the confinement this preset exists for.
+      { tool = "mcp:*", decision = "ask" },
       { tool = "*", decision = "allow" },
     },
   },
@@ -167,6 +173,9 @@ local BUILTIN = {
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
       { tool = "weave:*", decision = "ask" },
+      -- Tools weave does not own (clankbox's exec_lua, other plugins'):
+      -- unmediated they undo the confinement this preset exists for.
+      { tool = "mcp:*", decision = "ask" },
       { tool = "*", decision = "allow" },
     },
   },

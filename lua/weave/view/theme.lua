@@ -147,6 +147,13 @@ vim.api.nvim_create_autocmd("ColorScheme", {
   callback = define_task_done_hl,
 })
 
+-- Permission options that PERSIST: answering one writes a rule into weave's
+-- client-side permission store, so it changes how every future call resolves
+-- rather than just this one. Amber, the same "this is not the default path"
+-- signal the auto prompt border uses.
+M.PERMISSION_PERSIST_HL = "WeavePermissionPersist"
+vim.api.nvim_set_hl(0, M.PERMISSION_PERSIST_HL, { fg = "#e0af68", bold = true, default = true })
+
 -- Prompt border per permission PRESET (keyed by preset name; custom presets
 -- fall back to normal): an ambient reminder of how permission requests are
 -- being answered while typing. normal looks unchanged (FloatBorder); auto is

@@ -70,6 +70,107 @@ local function always_label(action, verb)
   return ("%s for %s"):format(verb, vim.fn.fnamemodify(rule.resource, ":~"))
 end
 
+--- The decision machinery, shared by wrap (weave's own tools) and middleware
+--- (everyone else's). `run` is what an allow MEANS to the caller: invoking
+--- the handler, or passing the call further down clankbox's chain.
+--- @param action weave.permissions.Action
+--- @param title string prompt title
+--- @param kind string|nil ACP ToolKind
+--- @param run fun()
+--- @param respond fun(ret: string|table)
+local function mediate(action, title, kind, run, respond)
+  local decision = Permissions.resolve(action)
+
+  if decision == "allow" then
+    return run() -- a sync throw propagates into clankbox's pcall
+  end
+
+  if decision == "deny" then
+    return respond(
+      refusal(
+        ("permission denied: %s is blocked by the active weave permission preset %q"):format(
+          describe(action),
+          Permissions.active().name
+        )
+      )
+    )
+  end
+
+  -- ask: surface through the session's existing permission queue
+  local store = M._ask_store()
+  if not store then
+    return respond(
+      refusal(
+        ("permission not granted: %s requires approval but there is no active weave session to ask"):format(
+          describe(action)
+        )
+      )
+    )
+  end
+  store:enqueue_permission({
+    -- Raised by weave rather than the agent, which is what makes the two
+    -- "always" answers below consequential: they write into OUR permission
+    -- store. The sidebar colours them on the strength of this flag — see
+    -- sidebar.permission_option_hl.
+    client_side = true,
+    request = {
+      toolCall = { title = title, kind = kind },
+      -- Four options, in ACP's own `kind` vocabulary so the sidebar
+      -- renderer and the ;;1..;;9 answer keys need no changes. The
+      -- "always" pair writes a grant into the permission overlay rather
+      -- than redefining the active preset — see Permissions.grant_rule
+      -- for why the scope is the project and not the exact resource.
+      -- reject_always matters more here than in the ACP flow: under a
+      -- sandbox profile weave's tools are the agent's only route to the
+      -- filesystem, so "stop asking me AND stop trying" is a thing users
+      -- want and currently cannot say.
+      options = {
+        { optionId = "allow_once", name = "Allow once", kind = "allow_once" },
+        { optionId = "allow_always", name = always_label(action, "Allow"), kind = "allow_always" },
+        { optionId = "reject_once", name = "Reject once", kind = "reject_once" },
+        { optionId = "reject_always", name = always_label(action, "Reject"), kind = "reject_always" },
+      },
+    },
+    respond = function(option_id)
+      if option_id == "allow_always" then
+        Permissions.add_grant(Permissions.grant_rule(action, "allow"))
+      elseif option_id == "reject_always" then
+        Permissions.add_grant(Permissions.grant_rule(action, "deny"))
+      end
+      if option_id ~= "allow_once" and option_id ~= "allow_always" then
+        return respond(refusal(("permission not granted: the user declined %s"):format(describe(action))))
+      end
+      -- we're past clankbox's pcall now: contain tool errors ourselves,
+      -- in its "Tool error:" isError shape
+      local ok, err = pcall(run)
+      if not ok then
+        respond(refusal("Tool error: " .. tostring(err)))
+      end
+    end,
+  })
+end
+
+--- Gate the tools weave does NOT own: clankbox's own built-ins and other
+--- plugins' registrations, which never pass through wrap and so reached the
+--- agent unmediated. That made a sandbox profile decorative — exec_lua runs
+--- arbitrary Lua in the UNSANDBOXED editor, which can read the masked
+--- project and even switch the active preset.
+---
+--- weave's own tools pass straight through, since wrap already mediated them
+--- and gating twice would prompt twice for one call. Everything else resolves
+--- as mcp:<tool> with NO resource: a foreign tool's arguments have no schema
+--- weave can read a resource out of, so rules key on the tool name alone.
+--- @return fun(ctx: table, respond: fun(ret: string|table), next: fun())
+function M.middleware()
+  return function(ctx, respond, next)
+    local ok, Tools = pcall(require, "weave.tools")
+    if ok and Tools.OWNS[ctx.name] then
+      return next()
+    end
+    mediate({ tool = "mcp:" .. ctx.name }, ("MCP tool %s"):format(ctx.name), "other", next, respond)
+  end
+end
+
 --- Wrap a raw clankbox tool def behind the permission engine.
 --- @param name string Bare tool name as registered ("read", "task_start", ...)
 --- @param def table The raw def (sync or async)
@@ -85,81 +186,14 @@ function M.wrap(name, def, opts)
     async = true,
     handler = function(args, respond)
       local action = { tool = "weave:" .. name, resource = opts.resource and opts.resource(args) or nil }
-      local decision = Permissions.resolve(action)
-
-      local function run()
+      local title = ("weave tool %s%s"):format(name, action.resource and (": " .. action.resource) or "")
+      mediate(action, title, opts.kind, function()
         if def.async then
           def.handler(args, respond)
         else
           respond(def.handler(args))
         end
-      end
-
-      if decision == "allow" then
-        return run() -- a sync throw propagates into clankbox's pcall
-      end
-
-      if decision == "deny" then
-        return respond(
-          refusal(
-            ("permission denied: %s is blocked by the active weave permission preset %q"):format(
-              describe(action),
-              Permissions.active().name
-            )
-          )
-        )
-      end
-
-      -- ask: surface through the session's existing permission queue
-      local store = M._ask_store()
-      if not store then
-        return respond(
-          refusal(
-            ("permission not granted: %s requires approval but there is no active weave session to ask"):format(
-              describe(action)
-            )
-          )
-        )
-      end
-      store:enqueue_permission({
-        request = {
-          toolCall = {
-            title = ("weave tool %s%s"):format(name, action.resource and (": " .. action.resource) or ""),
-            kind = opts.kind,
-          },
-          -- Four options, in ACP's own `kind` vocabulary so the sidebar
-          -- renderer and the ;;1..;;9 answer keys need no changes. The
-          -- "always" pair writes a grant into the permission overlay rather
-          -- than redefining the active preset — see Permissions.grant_rule
-          -- for why the scope is the project and not the exact resource.
-          -- reject_always matters more here than in the ACP flow: under a
-          -- sandbox profile weave's tools are the agent's only route to the
-          -- filesystem, so "stop asking me AND stop trying" is a thing users
-          -- want and currently cannot say.
-          options = {
-            { optionId = "allow_once", name = "Allow once", kind = "allow_once" },
-            { optionId = "allow_always", name = always_label(action, "Allow"), kind = "allow_always" },
-            { optionId = "reject_once", name = "Reject once", kind = "reject_once" },
-            { optionId = "reject_always", name = always_label(action, "Reject"), kind = "reject_always" },
-          },
-        },
-        respond = function(option_id)
-          if option_id == "allow_always" then
-            Permissions.add_grant(Permissions.grant_rule(action, "allow"))
-          elseif option_id == "reject_always" then
-            Permissions.add_grant(Permissions.grant_rule(action, "deny"))
-          end
-          if option_id ~= "allow_once" and option_id ~= "allow_always" then
-            return respond(refusal(("permission not granted: the user declined %s"):format(describe(action))))
-          end
-          -- we're past clankbox's pcall now: contain tool errors ourselves,
-          -- in its "Tool error:" isError shape
-          local ok, err = pcall(run)
-          if not ok then
-            respond(refusal("Tool error: " .. tostring(err)))
-          end
-        end,
-      })
+      end, respond)
     end,
   }
 end

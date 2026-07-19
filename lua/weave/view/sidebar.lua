@@ -445,6 +445,26 @@ function M.TasksSection(ctx, props)
   return { comp = ui.col, props = {}, children = rows }
 end
 
+--- Options that PERSIST get their own colour, because the four choices are
+--- not equally consequential: the "always" pair writes a rule into weave's
+--- permission store and so answers every future call of its kind, while the
+--- "once" pair decides this call only. Restricted to prompts weave raised
+--- (client_side): an agent-side ACP request's "always" is the agent's own
+--- bookkeeping and leaves our store untouched, so colouring it would claim
+--- something false.
+--- @param perm table the pending permission
+--- @param opt table one of request.options
+--- @return string|nil highlight group
+function M.permission_option_hl(perm, opt)
+  if not (perm and perm.client_side) then
+    return nil
+  end
+  if opt.kind == "allow_always" or opt.kind == "reject_always" then
+    return Theme.PERMISSION_PERSIST_HL
+  end
+  return nil
+end
+
 --- The active permission PRESET (engine-global, cycled with ;;p); plus the
 --- head request's title + numbered options when one is pending (answered
 --- with ;;1..;;9 — the numbers here are that keymap's legend). The header
@@ -490,7 +510,14 @@ function M.PermissionsSection(ctx, props)
       props = { text = tc.title or ("tool call " .. tostring(tc.toolCallId or "?")) },
     }
     for i, opt in ipairs(perm.request.options or {}) do
-      rows[#rows + 1] = { comp = ui.label, props = { text = string.format("[%d] %s", i, opt.name or opt.optionId) } }
+      local hl = M.permission_option_hl(perm, opt)
+      rows[#rows + 1] = {
+        comp = ui.label,
+        props = {
+          text = string.format("[%d] %s", i, opt.name or opt.optionId),
+          style = hl and { text_hl = hl } or nil,
+        },
+      }
     end
   end
   return { comp = ui.col, props = {}, children = rows }
