@@ -52,10 +52,17 @@
           # Both are also resolvable by absolute path from config
           # (`tools.ripgrep_path`), which is what a Nix-wrapped Neovim usually
           # wants: its PATH is not the user's PATH.
+          #
+          # bubblewrap's meta.platforms is Linux-only, so it is spliced in
+          # per-system rather than listed unconditionally: on darwin the
+          # derivation refuses to instantiate ("not supported on
+          # aarch64-darwin"), which takes down every consumer that splices
+          # these into a real package set. macOS gets the same
+          # degrade-to-"off" path as a Linux box with no bwrap installed.
           runtimeDeps = [
             pkgs.ripgrep
-            pkgs.bubblewrap
-          ];
+          ]
+          ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.bubblewrap;
         in
         rec {
           default = weave;
@@ -91,12 +98,13 @@
                 # ripgrep and bubblewrap are weave's runtime binaries (see
                 # packages.weave.passthru.runtimeDeps): every entry point below
                 # gets them, so the search tools and the sandbox behave the
-                # same under `nix run` as they do on a dev machine.
+                # same under `nix run` as they do on a dev machine. bubblewrap
+                # is Linux-only, hence the same per-system splice as there.
                 runtimeInputs = [
                   pkgs.neovim
                   pkgs.ripgrep
-                  pkgs.bubblewrap
                 ]
+                ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.bubblewrap
                 ++ extraInputs;
               }
             );

@@ -54,7 +54,8 @@ fibrous.url = "github:mbrea-c/fibrous.nvim";
 ```
 
 The two optional runtime binaries are exposed as
-`packages.weave.passthru.runtimeDeps` (`ripgrep`, `bubblewrap`). A vim plugin
+`packages.weave.passthru.runtimeDeps` (`ripgrep`, `bubblewrap` — the latter on
+Linux only, so the list is just `ripgrep` on darwin). A vim plugin
 has no wrapper of its own to put programs on `PATH`, so splice them into
 whatever does — home-manager's `programs.neovim.extraPackages`, nixvim's
 `extraPackages`, or `environment.systemPackages`:
