@@ -10,6 +10,7 @@ local Gate = require("weave.tools.gate")
 local Permissions = require("weave.permissions")
 local SessionStore = require("weave.session_store")
 local TaskStore = require("weave.task_store")
+local ToolIdent = require("weave.tool_ident")
 local Tools = require("weave.tools")
 
 --- register_into against a capture server; returns the wrapped defs.
@@ -288,6 +289,37 @@ describe("tools permission gate", function()
         "ask",
         Permissions.resolve({ tool = "weave:write", resource = vim.fs.dirname(outside) .. "/sibling.txt" })
       )
+    end)
+  end)
+
+  -- The gate is the one place weave knows both the tool name and the exact
+  -- arguments, so it records the pair for the transcript header to look up.
+  describe("tool identity recording", function()
+    before_each(function()
+      ToolIdent.reset()
+    end)
+    after_each(function()
+      ToolIdent.reset()
+    end)
+
+    it("records the tool name keyed on the call arguments", function()
+      local path = tmpfile("hi\n")
+      call(wrapped_tools().read, { path = path })
+      assert.equal("read", ToolIdent.lookup({ path = path }))
+    end)
+
+    it("records even when the call is denied, so the block is still tagged ours", function()
+      local path = vim.fn.tempname() .. "-denied.txt"
+      Permissions.save_preset({
+        name = "locked",
+        rules = {
+          { tool = "weave:write", resource = "*-denied.txt", decision = "deny" },
+          { tool = "*", decision = "allow" },
+        },
+      })
+      Permissions.set_active("locked")
+      call(wrapped_tools().write, { path = path, content = "nope" })
+      assert.equal("write", ToolIdent.lookup({ path = path, content = "nope" }))
     end)
   end)
 end)

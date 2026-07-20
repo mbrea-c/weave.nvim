@@ -185,6 +185,11 @@ function M.wrap(name, def, opts)
     inputSchema = def.inputSchema,
     async = true,
     handler = function(args, respond)
+      -- Record which weave tool this is, keyed on the arguments, so the
+      -- transcript header can tag the matching ACP block `w:<tool>` (the block
+      -- itself carries no tool name). See weave.tool_ident. Recorded before the
+      -- permission decision so even a denied call is still tagged as ours.
+      require("weave.tool_ident").record(name, args)
       local action = { tool = "weave:" .. name, resource = opts.resource and opts.resource(args) or nil }
       local title = ("weave tool %s%s"):format(name, action.resource and (": " .. action.resource) or "")
       mediate(action, title, opts.kind, function()

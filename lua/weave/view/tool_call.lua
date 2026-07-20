@@ -4,7 +4,9 @@
 -- `Entry` is the default rendering, split into three subrenderers it takes as
 -- optional props:
 --
---   render_header    the chevron/status/kind/title row that toggles expansion
+--   render_header    the chevron/status/tag/title row that toggles expansion
+--                    (the tag is the ACP kind, or `w:<tool>` for a call that
+--                    went through weave's own clankbox suite — see M.tool_tag)
 --   render_body      directly under the header, ALWAYS visible (the edit diff
 --                    lives here) — the call's primary display
 --   render_metadata  the <CR>-toggleable detail: kind, file, status, raw
@@ -55,6 +57,7 @@ local ui = require("fibrous.inline.components")
 local Diff = require("weave.view.diff")
 local Logger = require("weave.utils.logger")
 local Theme = require("weave.view.theme")
+local ToolIdent = require("weave.tool_ident")
 
 local M = {}
 
@@ -167,6 +170,21 @@ function M.tool_title(tc)
   return "tool call " .. tc.tool_call_id
 end
 
+--- The bracketed tag in a header. A call that went through weave's OWN
+--- clankbox tool suite is tagged `w:<tool>` (identified by its arguments via
+--- weave.tool_ident — the block itself carries no tool name), so it reads
+--- apart from the agent's builtin `<kind>` tools at a glance. Everything else
+--- keeps the ACP kind.
+--- @param tc table ToolCallBlock
+--- @return string
+function M.tool_tag(tc)
+  local weave_tool = ToolIdent.lookup(tc.input)
+  if weave_tool then
+    return "w:" .. weave_tool
+  end
+  return one_line(tc.kind or "tool")
+end
+
 --- Max lines rendered for a single raw input/output block when expanded. MCP
 --- results can be huge; cap them so one tool call can't flood the transcript.
 --- The full value is always in the store.
@@ -203,8 +221,9 @@ end
 
 -- ── Default subrenderers ────────────────────────────────────────────────────
 
---- The header row: chevron, status glyph, kind glyph + tag, title. Pressing
---- it (<CR>/click) toggles expansion.
+--- The header row: chevron, status glyph, kind glyph + tag, title. The tag is
+--- the ACP kind, or `w:<tool>` when the call is one of weave's own clankbox
+--- tools (M.tool_tag). Pressing it (<CR>/click) toggles expansion.
 --- @param props weave.view.ToolCallProps
 function M.Header(_, props)
   local tc = props.block
@@ -225,7 +244,7 @@ function M.Header(_, props)
         { chevron .. " ", hl = "@comment" },
         { status_icon .. " ", hl = header_hl },
         { kind_icon, hl = header_hl },
-        { "[" .. one_line(tc.kind or "tool") .. "] ", hl = tag_hl },
+        { "[" .. M.tool_tag(tc) .. "] ", hl = tag_hl },
         { one_line(M.tool_title(tc)), hl = header_hl },
       },
       on_press = function()

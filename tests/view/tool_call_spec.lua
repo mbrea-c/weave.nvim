@@ -18,6 +18,7 @@ local Prefs = require("weave.view.prefs")
 local SessionStore = require("weave.session_store")
 local Theme = require("weave.view.theme")
 local ToolCall = require("weave.view.tool_call")
+local ToolIdent = require("weave.tool_ident")
 local transcript = require("weave.view.transcript")
 
 local function trimmed(bufnr)
@@ -351,6 +352,47 @@ describe("view.tool_call Entry subrenderers", function()
     assert.truthy(lines[1]:find("bad", 1, true))
     assert.truthy(lines[1]:find("renderer", 1, true))
     assert.equal("still here", lines[#lines])
+    handle.unmount()
+  end)
+end)
+
+-- weave's own clankbox tools carry no tool name on the wire, but the gate
+-- records `args -> name` (weave.tool_ident) so the header can tag them apart
+-- from the agent's builtins.
+describe("view.tool_call weave-tool tag", function()
+  before_each(function()
+    ToolCall.reset()
+    ToolIdent.reset()
+  end)
+  after_each(function()
+    ToolCall.reset()
+    ToolIdent.reset()
+  end)
+
+  it("tags a recognised weave clankbox call `w:<tool>` in the header", function()
+    local input = { path = "a.lua", old_string = "x", new_string = "y" }
+    ToolIdent.record("edit", input)
+    local store = SessionStore:new()
+    store:upsert_tool_call({
+      tool_call_id = "e1",
+      kind = "other", -- the provider's kind; the w: tag must win over it
+      argument = "editing a.lua",
+      status = "completed",
+      input = input,
+    })
+    local handle = mount_transcript(store)
+    local first = trimmed(handle.bufnr)[1]
+    assert.truthy(first:find("[w:edit]", 1, true))
+    assert.is_nil(first:find("[other]", 1, true))
+    handle.unmount()
+  end)
+
+  it("leaves an unrecognised (builtin) call showing its ACP kind", function()
+    local store = an_execute_call(SessionStore:new())
+    local handle = mount_transcript(store)
+    local first = trimmed(handle.bufnr)[1]
+    assert.truthy(first:find("[execute]", 1, true))
+    assert.is_nil(first:find("[w:", 1, true))
     handle.unmount()
   end)
 end)

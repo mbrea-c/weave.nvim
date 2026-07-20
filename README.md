@@ -482,9 +482,18 @@ which is parameterized by three subrenderers you can swap individually:
 
 | prop | what it draws |
 | --- | --- |
-| `render_header` | the chevron / status glyph / kind tag / title row; pressing it toggles expansion |
+| `render_header` | the chevron / status glyph / tag / title row; pressing it toggles expansion |
 | `render_body` | directly under the header, **always visible** — the call's primary display (the builtin draws the edit diff here) |
 | `render_metadata` | the `<CR>`-toggleable detail: kind, file, status, raw input/output, content body |
+
+The header's bracketed tag is normally the ACP **kind** (`[edit]`, `[execute]`,
+…), but a call that went through weave's **own** clankbox tool suite is tagged
+`[w:<tool>]` instead — `[w:edit]`, `[w:grep]`, `[w:task_start]` — so weave's
+tools read apart from the agent's builtins at a glance. ACP tool calls carry no
+tool name, so weave recognises its own by the call arguments: the gate records
+`args → tool` (`weave.tool_ident`) when it mediates a call, and the header looks
+the block up by the same key. Builtin agent tools never reach the gate, so they
+are never tagged.
 
 Register an override with a **match predicate** and a `render` component:
 
