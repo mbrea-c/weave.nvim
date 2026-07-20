@@ -28,8 +28,9 @@ Canonical task list — keep ticked/updated as work lands.
   spans" with the detached treesitter string parser — replaces agentic's
   viewport-throttled whole-buffer repaint. Candidate for upstreaming into
   fibrous as a markdown component.
-- **Panel dock**: fibrous `mount.split()` (native split pane + covering
-  float, resize-synced). **Prompt**: `ui.text_input` subwin. **Tool-call
+- **Panel dock**: fibrous `mount.split()` with `render = "buffer"` — the
+  native split pane draws the canvas in its own buffer, no covering float.
+  **Prompt**: `ui.text_input` subwin. **Tool-call
   fold**: conditional render on store `expanded` — no real folds to lose.
 - **Module namespace**: `weave` (rename is a mechanical sed once the plugin
   name lands).

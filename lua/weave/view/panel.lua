@@ -1,5 +1,7 @@
 -- The panel shell (roadmap R5, reworked onto fibrous ui.container): ONE
--- docked pane, ONE fibrous mount, one component tree —
+-- docked pane, ONE fibrous mount, one component tree. The pane renders the
+-- canvas into its OWN buffer (`render = "buffer"`), so there is no covering
+-- float over the dock —
 --
 --   row
 --   ├── col (grow)
@@ -151,6 +153,13 @@ function M.open(opts)
     end,
   }, {
     split = { direction = "vertical", position = "right", size = width },
+    -- render into the pane's own buffer rather than under a covering float:
+    -- one fewer window in the layout, and a resize relayouts instead of
+    -- moving a float that vim has already redrawn.
+    -- render into the pane's own buffer rather than under a covering float:
+    -- one fewer window in the layout (measured: 5 -> 4), and a resize
+    -- relayouts the canvas instead of moving a float vim already redrew.
+    render = "buffer",
     mode = "fixed",
     -- Route the transcript's peek key(s) to components' on_key handlers: over
     -- any entry it opens that entry's raw source in the peek modal (separate from
