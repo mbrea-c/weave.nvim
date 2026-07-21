@@ -495,6 +495,14 @@ tool name, so weave recognises its own by the call arguments: the gate records
 the block up by the same key. Builtin agent tools never reach the gate, so they
 are never tagged.
 
+The header **title** beside the tag follows the same recognition. Weave's tools
+arrive over MCP, so their agent-supplied title is only the bare endpoint name
+(`mcp__clankbox__read`) — which says nothing the `[w:read]` tag doesn't — so the
+header shows the call's meaningful argument instead: the file path for
+`read`/`write`/`edit`/`glob`, the pattern for `grep`, the command for
+`task_start`, the task id for the other `task_*` tools. Everything else keeps
+its normal title (the agent's title, else the file path, else an id label).
+
 Register an override with a **match predicate** and a `render` component:
 
 ```lua

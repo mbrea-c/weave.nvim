@@ -6,7 +6,9 @@
 --
 --   render_header    the chevron/status/tag/title row that toggles expansion
 --                    (the tag is the ACP kind, or `w:<tool>` for a call that
---                    went through weave's own clankbox suite — see M.tool_tag)
+--                    went through weave's own clankbox suite — see M.tool_tag;
+--                    a weave tool's title is its meaningful argument — path,
+--                    command, pattern — not its bare MCP name, see M.tool_title)
 --   render_body      directly under the header, ALWAYS visible (the edit diff
 --                    lives here) — the call's primary display
 --   render_metadata  the <CR>-toggleable detail: kind, file, status, raw
@@ -153,14 +155,59 @@ local function one_line(text)
 end
 M.one_line = one_line
 
+--- The title for one of weave's OWN clankbox tools, derived from the call
+--- ARGUMENTS (weave.tool_ident gives us the tool name; the args are the
+--- block's rawInput). These arrive over MCP, so the agent-supplied title is
+--- the bare endpoint name ("mcp__clankbox__read") — which says nothing the
+--- `[w:read]` tag doesn't — so the meaningful argument stands in for it: the
+--- file path for read/write/edit/glob (glob's own root when it names one), the
+--- pattern for grep, the command for task_start, the id for task_*. Returns
+--- nil when the expected argument is absent, so the caller falls back to the
+--- normal title chain rather than showing an empty or misleading header.
+--- @param tool string weave tool name (read/write/edit/grep/glob/task_start/…)
+--- @param input table|nil rawInput
+--- @return string|nil
+function M.weave_title(tool, input)
+  if type(input) ~= "table" then
+    return nil
+  end
+  local function str(key)
+    local v = input[key]
+    return type(v) == "string" and v ~= "" and v or nil
+  end
+  if tool == "read" or tool == "write" or tool == "edit" then
+    local path = str("path")
+    return path and vim.fn.fnamemodify(path, ":~:.")
+  elseif tool == "glob" then
+    local pattern = str("pattern")
+    local root = str("path")
+    return pattern and (root and pattern .. " in " .. vim.fn.fnamemodify(root, ":~:.") or pattern)
+  elseif tool == "grep" then
+    return str("pattern")
+  elseif tool == "task_start" then
+    return str("command")
+  elseif tool == "task_status" or tool == "task_wait" or tool == "task_kill" then
+    return input.id ~= nil and ("task " .. tostring(input.id)) or nil
+  end
+  return nil
+end
+
 --- Human-readable title for a tool call, with a fallback chain so the header
---- is never empty: the agent-supplied title (carried as `argument`) wins;
---- else the file path; else a last-resort id label. Verified against
---- providers that omit the title (e.g. OpenCode edits arrive with only
---- kind + rawInput).
+--- is never empty: a weave clankbox tool's meaningful argument (M.weave_title)
+--- wins, since its agent-supplied title is only the MCP endpoint name; else
+--- the agent-supplied title (carried as `argument`); else the file path; else
+--- a last-resort id label. Verified against providers that omit the title
+--- (e.g. OpenCode edits arrive with only kind + rawInput).
 --- @param tc table ToolCallBlock
 --- @return string title
 function M.tool_title(tc)
+  local weave_tool = ToolIdent.lookup(tc.input)
+  if weave_tool then
+    local title = M.weave_title(weave_tool, tc.input)
+    if title then
+      return title
+    end
+  end
   if tc.argument and tc.argument ~= "" then
     return tc.argument
   end

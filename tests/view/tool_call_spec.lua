@@ -397,6 +397,60 @@ describe("view.tool_call weave-tool tag", function()
   end)
 end)
 
+-- The MCP endpoint name ("mcp__clankbox__read") is a useless title next to the
+-- `[w:read]` tag, so a weave tool's header shows its meaningful argument
+-- instead: the path, the command, the pattern.
+describe("view.tool_call weave-tool title", function()
+  it("titles read/write/edit with the file path", function()
+    assert.equal("a/b.lua", ToolCall.weave_title("read", { path = "a/b.lua" }))
+    assert.equal("a/b.lua", ToolCall.weave_title("write", { path = "a/b.lua", content = "x" }))
+    assert.equal("a/b.lua", ToolCall.weave_title("edit", { path = "a/b.lua", old_string = "x", new_string = "y" }))
+  end)
+
+  it("titles task_start with the command", function()
+    assert.equal("ls -la", ToolCall.weave_title("task_start", { command = "ls -la" }))
+  end)
+
+  it("titles grep/glob with the pattern, glob naming its root", function()
+    assert.equal("TODO", ToolCall.weave_title("grep", { pattern = "TODO" }))
+    assert.equal("*.lua", ToolCall.weave_title("glob", { pattern = "*.lua" }))
+    assert.equal("*.lua in src", ToolCall.weave_title("glob", { pattern = "*.lua", path = "src" }))
+  end)
+
+  it("titles task_status/wait/kill with the id", function()
+    assert.equal("task 7", ToolCall.weave_title("task_status", { id = 7 }))
+    assert.equal("task 7", ToolCall.weave_title("task_kill", { id = 7 }))
+  end)
+
+  it("returns nil when the meaningful argument is absent", function()
+    assert.is_nil(ToolCall.weave_title("read", {}))
+    assert.is_nil(ToolCall.weave_title("task_start", { command = "" }))
+    assert.is_nil(ToolCall.weave_title("read", "not a table"))
+    assert.is_nil(ToolCall.weave_title("some_foreign_tool", { path = "a.lua" }))
+  end)
+
+  it("shows the path in a recorded read call's header, not the MCP endpoint", function()
+    ToolIdent.reset()
+    local input = { path = "lua/weave/init.lua" }
+    ToolIdent.record("read", input)
+    local store = SessionStore:new()
+    store:upsert_tool_call({
+      tool_call_id = "r1",
+      kind = "read",
+      argument = "mcp__clankbox__read", -- the bare endpoint name we must NOT show
+      status = "completed",
+      input = input,
+    })
+    local handle = mount_transcript(store)
+    local first = trimmed(handle.bufnr)[1]
+    assert.truthy(first:find("[w:read]", 1, true))
+    assert.truthy(first:find("lua/weave/init.lua", 1, true))
+    assert.is_nil(first:find("mcp__clankbox__read", 1, true))
+    handle.unmount()
+    ToolIdent.reset()
+  end)
+end)
+
 describe("view.tool_call config surface", function()
   after_each(function()
     ToolCall.reset()
