@@ -156,9 +156,11 @@ vim.api.nvim_set_hl(0, M.PERMISSION_PERSIST_HL, { fg = "#e0af68", bold = true, d
 
 -- Prompt border per permission PRESET (keyed by preset name; custom presets
 -- fall back to normal): an ambient reminder of how permission requests are
--- being answered while typing. normal looks unchanged (FloatBorder); auto is
--- amber (everything allowed), allow_edits purple — the mode palette from
--- STATUS_DEFAULT_FG.
+-- being answered while typing. normal is the neutral fibrous border
+-- (FibrousBorder) so the buffer-mounted sidebar reads as one surface — the
+-- prompt is a PAINTED border, not a real float, and FloatBorder made it stand
+-- out against the Normal background; auto is amber (everything allowed),
+-- allow_edits purple — the mode palette from STATUS_DEFAULT_FG.
 M.PROMPT_BORDER_HL = {
   normal = "WeavePromptBorderNormal",
   auto = "WeavePromptBorderAuto",
@@ -171,7 +173,7 @@ M.PROMPT_TITLE_EXTRA = {
   allow_edits = "allow edits ⏵",
 }
 
-vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.normal, { link = "FloatBorder", default = true })
+vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.normal, { link = "FibrousBorder", default = true })
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.auto, { fg = "#e0af68", default = true })
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.allow_edits, { fg = "#bb9af7", default = true })
 
