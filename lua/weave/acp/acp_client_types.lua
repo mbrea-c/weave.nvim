@@ -184,7 +184,7 @@
 
 --- @class weave.acp.ConfigOption
 --- @field id string
---- @field category weave.acp.ConfigOption.Category
+--- @field category? weave.acp.ConfigOption.Category some agents omit it; key on id instead
 --- @field currentValue string
 --- @field description string
 --- @field name string

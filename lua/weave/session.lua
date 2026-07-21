@@ -362,24 +362,38 @@ function Session:_capture_config(response)
   end
 
   for _, opt in ipairs(response.configOptions or {}) do
-    local available = {}
-    for _, o in ipairs(opt.options or {}) do
-      available[#available + 1] = { id = o.value, label = o.name }
-    end
     local config_id = opt.id
-    -- opt.name is the agent's own label; fall back to a title-cased category
-    -- key ("thought_level" → "Thought level") for agents that omit it
-    local label = opt.name or (opt.category:sub(1, 1):upper() .. opt.category:sub(2):gsub("_", " "))
-    capture(opt.category, {
-      label = label,
-      current = opt.currentValue,
-      available = available,
-      set = function(id, cb)
-        self._client:set_config_option(self._session_id, config_id, id, function(_r, err)
-          cb(not err)
-        end)
-      end,
-    })
+    -- Spec-compliant agents send `category` (the config kind: "model", "mode",
+    -- "thought_level"); some agents omit it and only send `id`. Key on category
+    -- when present so _publish_meta / show_config_picker resolve "model"/"mode",
+    -- else fall back to the id. An option with NEITHER can't be applied
+    -- (set_config_option needs an id) and would nil-index config[key] — skip it
+    -- rather than crash the whole config capture and strand the session.
+    local key = opt.category or config_id
+    if key == nil then
+      Logger.debug("skipping config option with no category or id")
+    else
+      local available = {}
+      for _, o in ipairs(opt.options or {}) do
+        available[#available + 1] = { id = o.value, label = o.name }
+      end
+      -- opt.name is the agent's own label; fall back to a title-cased category
+      -- key ("thought_level" → "Thought level"), else the raw key
+      local label = opt.name
+      if not label and type(opt.category) == "string" then
+        label = opt.category:sub(1, 1):upper() .. opt.category:sub(2):gsub("_", " ")
+      end
+      capture(key, {
+        label = label or key,
+        current = opt.currentValue,
+        available = available,
+        set = function(id, cb)
+          self._client:set_config_option(self._session_id, config_id, id, function(_r, err)
+            cb(not err)
+          end)
+        end,
+      })
+    end
   end
 
   self._config = config

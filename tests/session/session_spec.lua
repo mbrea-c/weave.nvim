@@ -133,6 +133,62 @@ describe("session start", function()
     assert.equal("m1", session:get_store().state.meta.model)
   end)
 
+  it("survives a config option that omits category (keys on id)", function()
+    -- Some agents send configOptions without the spec's `category` field. That
+    -- used to nil-index config[key] inside the scheduled create_session
+    -- callback, aborting before _publish_meta so the sidebar stayed
+    -- "(connecting)" and no config kinds were captured.
+    local session = started({
+      sessionId = "s1",
+      configOptions = {
+        {
+          id = "reasoning",
+          name = "Reasoning",
+          currentValue = "high",
+          options = { { value = "high", name = "High" }, { value = "low", name = "Low" } },
+        },
+      },
+    })
+    local store = session:get_store()
+    -- meta published (session not stranded), and the kind is captured under its id
+    assert.equal("s1", store.state.meta.session_id)
+    local kinds = session:config_kinds()
+    assert.equal(1, #kinds)
+    assert.equal("reasoning", kinds[1].key)
+    assert.equal("Reasoning", kinds[1].label)
+    assert.equal("high", kinds[1].current)
+    assert.is_true(session:is_ready())
+  end)
+
+  it("captures a category-bearing option even without a name (title-cased key)", function()
+    local session = started({
+      sessionId = "s1",
+      configOptions = {
+        {
+          id = "tl-opt",
+          category = "thought_level",
+          currentValue = "med",
+          options = { { value = "med", name = "Medium" } },
+        },
+      },
+    })
+    local kinds = session:config_kinds()
+    assert.equal("thought_level", kinds[1].key)
+    assert.equal("Thought level", kinds[1].label)
+  end)
+
+  it("skips a config option with neither category nor id", function()
+    local session = started({
+      sessionId = "s1",
+      configOptions = {
+        { currentValue = "x", options = { { value = "x", name = "X" } } },
+      },
+    })
+    assert.equal("s1", session:get_store().state.meta.session_id)
+    assert.equal(0, #session:config_kinds())
+    assert.is_true(session:is_ready())
+  end)
+
   it("reports a failed connection in the transcript", function()
     local client = fake_client()
     client.state = "error"
