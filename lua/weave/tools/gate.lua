@@ -70,15 +70,18 @@ local function always_label(action, verb)
   return ("%s for %s"):format(verb, vim.fn.fnamemodify(rule.resource, ":~"))
 end
 
---- The decision machinery, shared by wrap (weave's own tools) and middleware
---- (everyone else's). `run` is what an allow MEANS to the caller: invoking
---- the handler, or passing the call further down clankbox's chain.
+--- The decision machinery, shared by wrap (weave's own tools), middleware
+--- (foreign clankbox tools) and the MCP proxy (wrapped third-party servers,
+--- weave.mcp_proxy). `run` is what an allow MEANS to the caller: invoking
+--- the handler, passing the call down clankbox's chain, or forwarding the
+--- frame to the real server. `respond` receives an MCP result table (or
+--- text) for the deny/refuse paths.
 --- @param action weave.permissions.Action
 --- @param title string prompt title
 --- @param kind string|nil ACP ToolKind
 --- @param run fun()
 --- @param respond fun(ret: string|table)
-local function mediate(action, title, kind, run, respond)
+function M.mediate(action, title, kind, run, respond)
   local decision = Permissions.resolve(action)
 
   if decision == "allow" then
@@ -167,7 +170,7 @@ function M.middleware()
     if ok and Tools.OWNS[ctx.name] then
       return next()
     end
-    mediate({ tool = "mcp:" .. ctx.name }, ("MCP tool %s"):format(ctx.name), "other", next, respond)
+    M.mediate({ tool = "mcp:" .. ctx.name }, ("MCP tool %s"):format(ctx.name), "other", next, respond)
   end
 end
 
@@ -192,7 +195,7 @@ function M.wrap(name, def, opts)
       require("weave.tool_ident").record(name, args)
       local action = { tool = "weave:" .. name, resource = opts.resource and opts.resource(args) or nil }
       local title = ("weave tool %s%s"):format(name, action.resource and (": " .. action.resource) or "")
-      mediate(action, title, opts.kind, function()
+      M.mediate(action, title, opts.kind, function()
         if def.async then
           def.handler(args, respond)
         else

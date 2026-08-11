@@ -459,9 +459,6 @@ function Session:_resolve_mcp_servers()
   end
 
   local socket = vim.v.servername
-  if not socket or socket == "" then
-    return servers
-  end
 
   local resolved = {}
   for _, srv in ipairs(servers) do
@@ -473,10 +470,31 @@ function Session:_resolve_mcp_servers()
         has_socket = true
       end
     end
-    if not has_socket then
-      env[#env + 1] = { name = "NVIM", value = socket }
+    if has_socket or srv.name == "clankbox" then
+      -- already socket-bearing (weave's broker entry, or a user who wired a
+      -- socket explicitly) — or the clankbox entry itself, which IS the
+      -- tool suite and must never be proxied. Legacy $NVIM injection only
+      -- for a socket-less clankbox (broker-less checkout, unsandboxed use).
+      if not has_socket and socket and socket ~= "" then
+        env[#env + 1] = { name = "NVIM", value = socket }
+      end
+      resolved[#resolved + 1] = { name = srv.name, command = srv.command, args = srv.args, env = env }
+    else
+      -- v2 phase G: every other server is WRAPPED — the real process runs
+      -- clientside, weave-owned (optionally sandboxed per its own config),
+      -- and the agent gets the shim against the proxy socket. The gate then
+      -- mediates its tools/call frames as mcp:<tool>. Fallback (no clankbox
+      -- shim to run): the legacy in-sandbox spawn with $NVIM injected.
+      local wrapped = require("weave.mcp_proxy").entry_for(srv)
+      if wrapped then
+        resolved[#resolved + 1] = wrapped
+      else
+        if socket and socket ~= "" then
+          env[#env + 1] = { name = "NVIM", value = socket }
+        end
+        resolved[#resolved + 1] = { name = srv.name, command = srv.command, args = srv.args, env = env }
+      end
     end
-    resolved[#resolved + 1] = { name = srv.name, command = srv.command, args = srv.args, env = env }
   end
   return resolved
 end

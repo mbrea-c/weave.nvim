@@ -76,6 +76,7 @@ describe("tools wiring", function()
     Config.tools = saved_tools
     Config.mcp_servers = saved_servers
     Tools._reset()
+    require("weave.mcp_proxy")._reset()
     package.preload["clankbox"] = nil
     package.loaded["clankbox"] = nil
     package.preload["clankbox.broker"] = nil
@@ -154,6 +155,16 @@ describe("tools wiring", function()
     assert.is_not_nil(names.other)
     assert.is_not_nil(names.clankbox)
     assert.equal(vim.v.progpath, names.clankbox.command)
+    -- phase G: the configured server is WRAPPED — the agent gets the shim
+    -- against a weave-owned proxy socket, and the real command never leaves
+    -- the client side
+    assert.equal(vim.v.progpath, names.other.command)
+    local other_env = {}
+    for _, e in ipairs(names.other.env) do
+      other_env[e.name] = e.value
+    end
+    assert.truthy(other_env.CLANKBOX_SOCKET)
+    assert.is_nil(other_env.NVIM)
   end)
 
   it("tools.enabled = false keeps sessions clankbox-free", function()
@@ -202,14 +213,13 @@ describe("tools wiring", function()
     -- $NVIM is nvim's raw RPC socket (nvim_exec_lua): it must never reach a
     -- server that already has the scoped broker
     assert.is_nil(env.NVIM)
-    -- other servers keep the legacy injection until they are wrapped
+    -- other servers ride their own proxy sockets (phase G), never $NVIM
     local other_env = {}
     for _, e in ipairs(by_name.other.env) do
       other_env[e.name] = e.value
     end
-    if vim.v.servername ~= "" then
-      assert.equal(vim.v.servername, other_env.NVIM)
-    end
+    assert.truthy(other_env.CLANKBOX_SOCKET)
+    assert.is_nil(other_env.NVIM)
   end)
 
   it("falls back to the $NVIM shim path when clankbox has no broker", function()

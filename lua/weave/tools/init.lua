@@ -135,8 +135,13 @@ end
 --- shim in byte-pump mode against the scoped listener — the sandbox-safe
 --- transport. Without it the env stays empty and the session's legacy $NVIM
 --- injection takes over (see Session:_resolve_mcp_servers).
---- @return weave.acp.McpServer|nil
-function M.clankbox_server_entry()
+--- The clankbox stdio shim on disk, or nil when clankbox cannot be located.
+--- The checkout root comes from `tools.clankbox_path` or is auto-detected
+--- from the runtimepath/package.path. Shared by the weave entry below and
+--- by the MCP proxy (whose wrapped servers ride the same shim in byte-pump
+--- mode).
+--- @return string|nil
+function M.shim_path()
   local root = Config.tools and Config.tools.clankbox_path
   if not root then
     local hit = vim.api.nvim_get_runtime_file("lua/clankbox/init.lua", false)[1]
@@ -153,6 +158,15 @@ function M.clankbox_server_entry()
   end
   local shim = root .. "/shim.lua"
   if vim.fn.filereadable(shim) ~= 1 then
+    return nil
+  end
+  return shim
+end
+
+--- @return weave.acp.McpServer|nil
+function M.clankbox_server_entry()
+  local shim = M.shim_path()
+  if not shim then
     return nil
   end
   local env = {}

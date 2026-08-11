@@ -65,6 +65,7 @@
 --- @field command string
 --- @field args string[]
 --- @field env weave.acp.EnvVariable[]
+--- @field sandbox? { binds?: weave.permissions.SandboxBind[], network?: boolean } wrap-time confinement for the weave-owned real process (weave.mcp_proxy); no binds by default — unlike presets, a server that needs nothing gets nothing
 
 --- @class weave.acp.EnvVariable
 --- @field name string
