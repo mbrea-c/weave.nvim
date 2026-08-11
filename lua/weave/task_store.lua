@@ -7,6 +7,11 @@
 -- Tasks run `sh -c command` in their own process group (detached), so kill()
 -- reaches the whole tree, and a VimLeavePre hook takes running tasks down
 -- with the editor.
+--
+-- The spawn goes through Sandbox.wrap_shell: with sandboxing on, every task
+-- runs bwrap'd under the active preset's hull (binds + network), resolved
+-- per spawn (design-agent-sandbox-v2.md, phase D). With it off — or no
+-- backend — the argv is `sh -c command` exactly as before.
 
 local M = {}
 
@@ -132,8 +137,9 @@ function M.start(opts)
     end
   end
 
-  local sok, proc, pid = pcall(vim.uv.spawn, "sh", {
-    args = { "-c", opts.command },
+  local spawn_cmd, spawn_args = require("weave.sandbox").wrap_shell(opts.command)
+  local sok, proc, pid = pcall(vim.uv.spawn, spawn_cmd, {
+    args = spawn_args,
     cwd = cwd,
     stdio = { nil, stdout, stderr },
     detached = true, -- own process group, so kill() reaches descendants

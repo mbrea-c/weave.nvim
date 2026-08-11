@@ -218,6 +218,101 @@ describe("sandbox resolve", function()
   end)
 end)
 
+-- Tool sandboxes (v2 phase D): wrap_tool is the same pure argv rewrite for
+-- TOOL invocations — the base floor, the network cut unless granted, only
+-- the hull's binds. wrap_shell is the task store's seam, resolving the
+-- active preset's hull per spawn.
+describe("tool sandbox wrap", function()
+  local Config = require("weave.config")
+  local Permissions = require("weave.permissions")
+  local real_available = Sandbox._available
+  local real_exists = Sandbox._exists
+  local real_realpath = Sandbox._realpath
+  local saved_sandbox
+
+  before_each(function()
+    saved_sandbox = vim.deepcopy(Config.sandbox)
+    Permissions._reset()
+    Permissions.set_project_root("/proj/demo")
+    Sandbox._available = function()
+      return true
+    end
+    Sandbox._exists = function()
+      return true
+    end
+    Sandbox._realpath = function(path)
+      return path
+    end
+  end)
+
+  after_each(function()
+    Config.sandbox = saved_sandbox
+    Permissions._reset()
+    Sandbox._available = real_available
+    Sandbox._exists = real_exists
+    Sandbox._realpath = real_realpath
+  end)
+
+  it("no backend: the command is untouched", function()
+    Sandbox._available = function()
+      return false
+    end
+    local cmd, args = Sandbox.wrap_tool("rg", { "-n", "x" }, { binds = {}, network = false })
+    assert.equal("rg", cmd)
+    assert.same({ "-n", "x" }, args)
+  end)
+
+  it("cuts the network unless the hull grants it", function()
+    local _, args = Sandbox.wrap_tool("sh", { "-c", "x" }, { binds = {}, network = false, home = "/home/u" })
+    assert.is_not_nil(find_seq(args, { "--unshare-net" }))
+    local _, open = Sandbox.wrap_tool("sh", { "-c", "x" }, { binds = {}, network = true, home = "/home/u" })
+    assert.is_nil(find_seq(open, { "--unshare-net" }))
+  end)
+
+  it("punches exactly the hull's binds through, rw and ro", function()
+    local cmd, args = Sandbox.wrap_tool("sh", { "-c", "x" }, {
+      home = "/home/u",
+      network = false,
+      binds = { { path = "/proj/demo", mode = "rw" }, { path = "/data", mode = "ro" } },
+    })
+    assert.equal("bwrap", cmd)
+    assert.is_not_nil(find_seq(args, { "--bind", "/proj/demo", "/proj/demo" }))
+    assert.is_not_nil(find_seq(args, { "--ro-bind", "/data", "/data" }))
+    -- no agent-shaped grants: no state dirs, no sockets
+    assert.is_nil(find_seq(args, { "--bind-try" }))
+    assert.same({ "--", "sh", "-c", "x" }, { unpack(args, #args - 3) })
+  end)
+
+  it("wrap_shell is inert while sandboxing is off", function()
+    Config.sandbox = { profile = "off" }
+    local cmd, args = Sandbox.wrap_shell("echo hi")
+    assert.equal("sh", cmd)
+    assert.same({ "-c", "echo hi" }, args)
+  end)
+
+  it("wrap_shell derives the ACTIVE preset's hull per spawn", function()
+    Config.sandbox = { profile = "workspace" }
+    -- active preset "normal" has no sandbox section: default hull =
+    -- project rw, network off
+    local cmd, args = Sandbox.wrap_shell("echo hi")
+    assert.equal("bwrap", cmd)
+    assert.is_not_nil(find_seq(args, { "--bind", "/proj/demo", "/proj/demo" }))
+    assert.is_not_nil(find_seq(args, { "--unshare-net" }))
+
+    -- switching the preset changes the very next spawn, no restart anywhere
+    Permissions.save_preset({
+      name = "networked",
+      rules = { { tool = "*", decision = "allow" } },
+      sandbox = { binds = { { path = "/data", mode = "ro" } }, network = true },
+    })
+    Permissions.set_active("networked")
+    local _, next_args = Sandbox.wrap_shell("echo hi")
+    assert.is_not_nil(find_seq(next_args, { "--ro-bind", "/data", "/data" }))
+    assert.is_nil(find_seq(next_args, { "--bind", "/proj/demo", "/proj/demo" }))
+    assert.is_nil(find_seq(next_args, { "--unshare-net" }))
+  end)
+end)
+
 -- Only when a backend actually exists (Linux + bwrap on PATH): spawn the
 -- wrapped argv and verify the profile semantics for real.
 if Sandbox._available() then
@@ -268,6 +363,44 @@ if Sandbox._available() then
       local out = run("blackbox", "ls " .. cwd)
       assert.equal(0, out.code, out.stderr)
       assert.is_nil(out.stdout:find("f%.txt"))
+    end)
+
+    local function run_tool(hull, script)
+      local cmd, args = Sandbox.wrap_tool("sh", { "-c", script }, hull)
+      return vim.system(vim.list_extend({ cmd }, args), { text = true }):wait()
+    end
+
+    it("tool hull: bound dir writable, everything else the ro floor", function()
+      local out = run_tool(
+        { binds = { { path = cwd, mode = "rw" } }, network = false },
+        "cat " .. cwd .. "/f.txt && touch " .. cwd .. "/t.txt && ls ~"
+      )
+      assert.equal(0, out.code, out.stderr)
+      assert.truthy(out.stdout:find("hello"))
+      assert.equal(1, vim.fn.filereadable(cwd .. "/t.txt"))
+      -- home is an empty tmpfs
+      assert.is_nil(out.stdout:find("%S", out.stdout:find("hello") + 6))
+    end)
+
+    it("tool hull: network off means a lonely loopback", function()
+      -- /proc is freshly mounted (--proc), so /proc/net/dev reflects the
+      -- process's OWN netns — unlike /sys, which rides the host ro bind
+      local out = run_tool({ binds = {}, network = false }, "cat /proc/net/dev")
+      assert.equal(0, out.code, out.stderr)
+      assert.truthy(out.stdout:find("lo:"))
+      local host = vim.system({ "cat", "/proc/net/dev" }, { text = true }):wait()
+      local function ifaces(s)
+        local n = 0
+        for _ in s:gmatch("%f[%w][%w%d]+:") do
+          n = n + 1
+        end
+        return n
+      end
+      -- the host has more interfaces than the sandbox's lonely lo (if it
+      -- does not, this machine cannot distinguish the two — skip honestly)
+      if ifaces(host.stdout) > 1 then
+        assert.equal(1, ifaces(out.stdout))
+      end
     end)
   end)
 end

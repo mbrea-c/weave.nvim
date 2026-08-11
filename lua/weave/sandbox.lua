@@ -148,6 +148,62 @@ function M.resolve(provider_sandbox)
   }
 end
 
+--- The shared confinement floor for every sandboxed process, agent or tool:
+--- everything readable except /tmp, /dev, /proc and $HOME, which are
+--- private; own pid/ipc/uts namespaces; dies with nvim.
+--- @param home string
+--- @return string[]
+local function base_argv(home)
+  return {
+    "--die-with-parent",
+    "--unshare-pid",
+    "--unshare-ipc",
+    "--unshare-uts",
+    "--unshare-cgroup-try",
+    "--ro-bind",
+    "/",
+    "/",
+    "--dev",
+    "/dev",
+    "--proc",
+    "/proc",
+    "--tmpfs",
+    "/tmp",
+    "--tmpfs",
+    home,
+  }
+end
+
+--- A mount() closure appending grants to `argv`. Shared mechanics for both
+--- wrap flavours:
+---  * missing sources are dropped entirely (bwrap cannot mkdir a mountpoint
+---    on the read-only root, so even -try flags die there);
+---  * the DESTINATION resolves through realpath outside the tmpfs areas
+---    (bwrap refuses to bind over a symlink; nix is full of them), and stays
+---    literal inside them, where bwrap can create it freely.
+--- @param argv string[]
+--- @param home string
+--- @return fun(flag: string, path: string)
+local function mounter(argv, home)
+  local function expand(path)
+    return (path:gsub("^~", home))
+  end
+  local function hidden(abs)
+    return vim.startswith(abs, home .. "/") or abs == home or vim.startswith(abs, "/tmp/") or abs == "/tmp"
+  end
+  return function(flag, path)
+    local abs = expand(path)
+    if not M._exists(abs) then
+      return
+    end
+    local dest = abs
+    if not hidden(abs) then
+      dest = M._realpath(abs) or abs
+    end
+    vim.list_extend(argv, { flag, abs, dest })
+  end
+end
+
 --- @class weave.sandbox.WrapOpts : weave.SandboxConfig
 --- @field cwd? string Project dir the profile applies to (default: getcwd)
 --- @field home? string $HOME to hide (default: the real one)
@@ -177,53 +233,12 @@ function M.wrap(command, args, opts)
 
   local home = opts.home or uv.os_homedir() or vim.env.HOME
   local cwd = opts.cwd or vim.fn.getcwd()
-  local function expand(path)
-    return (path:gsub("^~", home))
-  end
 
   -- Mounts apply in order, later ones on top: the ro root first, then the
   -- private /tmp /dev /proc and the $HOME tmpfs, then the project policy and
   -- the explicit grants punched through them.
-  local argv = {
-    "--die-with-parent",
-    "--unshare-pid",
-    "--unshare-ipc",
-    "--unshare-uts",
-    "--unshare-cgroup-try",
-    "--ro-bind",
-    "/",
-    "/",
-    "--dev",
-    "/dev",
-    "--proc",
-    "/proc",
-    "--tmpfs",
-    "/tmp",
-    "--tmpfs",
-    home,
-  }
-  -- Is this path inside an area we replaced with a tmpfs ($HOME, /tmp)?
-  -- There bwrap can create mountpoints freely; everywhere else it cannot.
-  local function hidden(abs)
-    return vim.startswith(abs, home .. "/") or abs == home or vim.startswith(abs, "/tmp/") or abs == "/tmp"
-  end
-
-  local function mount(flag, path)
-    local abs = expand(path)
-    if not M._exists(abs) then
-      return
-    end
-    -- The SOURCE resolves through symlinks by itself; the DESTINATION does
-    -- not. Outside the tmpfs areas the mountpoint has to be a real existing
-    -- path: bwrap cannot mkdir it on our read-only root, and it refuses to
-    -- bind over a symlink (nix puts plenty of those on the runtime paths).
-    -- Inside them the literal path is the right one and bwrap creates it.
-    local dest = abs
-    if not hidden(abs) then
-      dest = M._realpath(abs) or abs
-    end
-    vim.list_extend(argv, { flag, abs, dest })
-  end
+  local argv = base_argv(home)
+  local mount = mounter(argv, home)
 
   if profile == "workspace" then
     mount("--bind", cwd)
@@ -268,6 +283,65 @@ function M.wrap(command, args, opts)
   vim.list_extend(argv, { "--", command })
   vim.list_extend(argv, args or {})
   return "bwrap", argv
+end
+
+--- ── Tool sandboxes (design-agent-sandbox-v2.md, phase D) ────────────────────
+
+--- Rewrite a TOOL invocation (a task's shell, a search subprocess) into its
+--- sandboxed form under a hull (weave.permissions.tool_sandbox): the base
+--- floor, network cut unless granted, ONLY the hull's binds punched through.
+--- No state dirs, no runtime grants, no sockets — tools are not agents; what
+--- a tool can see is exactly what the preset's sandbox section says.
+--- Pure on its inputs; no backend = the command untouched (the caller keeps
+--- policy enforcement, only kernel enforcement degrades).
+--- @param command string
+--- @param args string[]|nil
+--- @param hull { binds: { path: string, mode: "rw"|"ro" }[], network: boolean, home?: string }
+--- @return string command
+--- @return string[] args
+function M.wrap_tool(command, args, hull)
+  if not M._available() then
+    return command, args or {}
+  end
+  local home = hull.home or uv.os_homedir() or vim.env.HOME
+  local argv = base_argv(home)
+  -- Tools do not need the model API, so the network is deniable here in a
+  -- way it never was for the agent process.
+  if not hull.network then
+    argv[#argv + 1] = "--unshare-net"
+  end
+  local mount = mounter(argv, home)
+  for _, b in ipairs(hull.binds or {}) do
+    mount(b.mode == "ro" and "--ro-bind" or "--bind", b.path)
+  end
+  vim.list_extend(argv, { "--", command })
+  vim.list_extend(argv, args or {})
+  return "bwrap", argv
+end
+
+--- Whether tool invocations run sandboxed at all. Transitional condition
+--- (until v2 phase E lands modes): tool sandboxing is on whenever the
+--- resolved global sandbox is — one switch governs both the agent process
+--- and the tools, which is exactly the v2 on/off collapse.
+--- @return boolean
+function M.tool_sandboxing_on()
+  return M._available() and M.resolve(nil).profile ~= "off"
+end
+
+--- The task store's spawn seam: `sh -c command`, wrapped under the ACTIVE
+--- preset's hull when tool sandboxing is on. Resolved per invocation, so a
+--- preset switch (or, later, an elevation grant) applies to the very next
+--- task with no restart anywhere.
+--- @param command string
+--- @return string command
+--- @return string[] args
+function M.wrap_shell(command)
+  if not M.tool_sandboxing_on() then
+    return "sh", { "-c", command }
+  end
+  local ok, Permissions = pcall(require, "weave.permissions")
+  local hull = ok and Permissions.tool_sandbox() or { binds = {}, network = false }
+  return M.wrap_tool("sh", { "-c", command }, hull)
 end
 
 return M
