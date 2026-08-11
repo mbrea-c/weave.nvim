@@ -201,14 +201,42 @@ local function Window(ctx)
   -- Session grants: a grant the user cannot see is a grant they cannot
   -- revoke. Deliberately a separate list from the preset's rules — answering
   -- "allow for project" on a prompt must never silently redefine `normal`.
+  -- Elevation grants (binds/network, via w:request_access) list here too:
+  -- they widen the TOOL SANDBOXES, which is even more worth seeing.
   local grants = Permissions.grants()
-  if #grants > 0 then
+  local bind_grants = Permissions.bind_grants()
+  local network = Permissions.network_granted()
+  if #grants > 0 or #bind_grants > 0 or network then
     rows[#rows + 1] = blank()
-    rows[#rows + 1] = header(("Session grants (%d)"):format(#grants))
+    rows[#rows + 1] = header(("Session grants (%d)"):format(#grants + #bind_grants + (network and 1 or 0)))
     for i, rule in ipairs(grants) do
       rows[#rows + 1] = grant_row(rule, function()
         Permissions.revoke_grant(i)
       end)
+    end
+    for i, bind in ipairs(bind_grants) do
+      rows[#rows + 1] = {
+        comp = ui.row,
+        props = { gap = 2 },
+        children = {
+          { comp = ui.label, props = { text = ("  bind   %-3s  %s"):format(bind.mode, bind.path) } },
+          bare_button("[revoke]", function()
+            Permissions.revoke_bind_grant(i)
+          end),
+        },
+      }
+    end
+    if network then
+      rows[#rows + 1] = {
+        comp = ui.row,
+        props = { gap = 2 },
+        children = {
+          { comp = ui.label, props = { text = "  network for executed tasks" } },
+          bare_button("[revoke]", function()
+            Permissions.set_network_granted(false)
+          end),
+        },
+      }
     end
     rows[#rows + 1] = {
       comp = ui.row,

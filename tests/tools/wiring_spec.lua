@@ -121,6 +121,7 @@ describe("tools wiring", function()
       "task_status",
       "task_wait",
       "task_kill",
+      "request_access",
     }) do
       local def = server.tools[name]
       assert.is_not_nil(def)

@@ -190,6 +190,11 @@ local runtime_presets = {}
 local active_name = "normal"
 --- @type weave.permissions.Rule[] the grant overlay; consulted BEFORE the active preset
 local overlay = {}
+--- @type weave.permissions.SandboxBind[] elevation grants: binds ADDED to the
+--- active preset's hull for every subsequent tool spawn (weave.tools.access)
+local bind_overlay = {}
+--- @type boolean elevation grant: tool sandboxes get network this session
+local network_granted = false
 --- @type string|nil project root for ${project}; nil = ask the editor
 local project_root = nil
 --- @type string|nil the RUNNING session's sandbox mode; nil = ask the config
@@ -521,7 +526,13 @@ function M.tool_sandbox(preset)
   for i, b in ipairs(section.binds or DEFAULT_BINDS) do
     binds[i] = { path = expand(b.path), mode = b.mode or "rw" }
   end
-  return { binds = binds, network = section.network == true }
+  -- Elevation grants sit ON TOP of the preset's hull, exactly like the rule
+  -- overlay sits on top of its rules: session-scoped, revocable, never
+  -- rewriting the preset.
+  for _, b in ipairs(bind_overlay) do
+    binds[#binds + 1] = { path = expand(b.path), mode = b.mode or "rw" }
+  end
+  return { binds = binds, network = section.network == true or network_granted }
 end
 
 --- Does a bind's path plausibly reach a resource glob's static prefix?
@@ -636,10 +647,64 @@ function M.revoke_grant(index)
 end
 
 function M.clear_overlay()
-  if #overlay == 0 then
+  if #overlay == 0 and #bind_overlay == 0 and not network_granted then
     return
   end
   overlay = {}
+  bind_overlay = {}
+  network_granted = false
+  notify()
+end
+
+--- ── Elevation grants (design-agent-sandbox-v2.md, phase H) ──────────────────
+---
+--- The bind-shaped counterpart of the rule overlay: session-scoped widenings
+--- of the TOOL sandboxes, granted through w:request_access. They apply on
+--- the very next tool spawn (hulls are re-derived per invocation) — no
+--- restart anywhere, which is the entire point of confining tools instead
+--- of the agent process.
+
+--- @return weave.permissions.SandboxBind[] a copy; mutate through add/revoke
+function M.bind_grants()
+  local out = {}
+  for i, b in ipairs(bind_overlay) do
+    out[i] = { path = b.path, mode = b.mode }
+  end
+  return out
+end
+
+--- @param bind weave.permissions.SandboxBind
+function M.add_bind_grant(bind)
+  if type(bind) ~= "table" or type(bind.path) ~= "string" or bind.path == "" then
+    error("weave.permissions: a bind grant needs a `path`", 0)
+  end
+  if bind.mode ~= nil and bind.mode ~= "rw" and bind.mode ~= "ro" then
+    error("weave.permissions: bind grant `mode` must be rw/ro", 0)
+  end
+  bind_overlay[#bind_overlay + 1] = { path = bind.path, mode = bind.mode or "rw" }
+  notify()
+end
+
+--- @param index integer 1-based, as listed by bind_grants()
+function M.revoke_bind_grant(index)
+  if not bind_overlay[index] then
+    error(("weave.permissions: no bind grant at index %d"):format(index), 0)
+  end
+  table.remove(bind_overlay, index)
+  notify()
+end
+
+--- @return boolean
+function M.network_granted()
+  return network_granted
+end
+
+--- @param granted boolean
+function M.set_network_granted(granted)
+  if network_granted == granted then
+    return
+  end
+  network_granted = granted
   notify()
 end
 
@@ -740,6 +805,8 @@ function M._reset()
   setup_presets = {}
   runtime_presets = {}
   overlay = {}
+  bind_overlay = {}
+  network_granted = false
   active_name = "normal"
   project_root = nil
   current_mode = nil

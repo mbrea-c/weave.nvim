@@ -24,6 +24,7 @@ M.OWNS = {
   task_status = true,
   task_wait = true,
   task_kill = true,
+  request_access = true,
 }
 
 --- The fs tools' resource for the permission engine: the ABSOLUTE path (so
@@ -70,6 +71,9 @@ function M.register_into(server)
   server.register_tool("task_status", Gate.wrap("task_status", tasks.status, { kind = "execute" }))
   server.register_tool("task_wait", Gate.wrap("task_wait", tasks.wait, { kind = "execute" }))
   server.register_tool("task_kill", Gate.wrap("task_kill", tasks.kill, { kind = "execute" }))
+  -- The elevation tool goes in UNwrapped: it IS the asking mechanism (its
+  -- handler always prompts), so gating it would prompt twice per question.
+  server.register_tool("request_access", require("weave.tools.access").def)
   -- Everything else the agent can reach over this host — clankbox's own
   -- exec_lua, another plugin's tools — through the same engine, as mcp:<tool>.
   -- Without this the sandbox is decorative: exec_lua runs arbitrary Lua
