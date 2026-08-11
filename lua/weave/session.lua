@@ -416,7 +416,11 @@ end
 --- provider's own `mcpServers` OVERRIDES the global `config.mcp_servers`
 --- (not merged). Each server's env gets $NVIM (this editor's socket)
 --- injected — per-server, NOT on the agent's process env (Kiro treats a set
---- $NVIM as "inside a Neovim terminal" and exits).
+--- $NVIM as "inside a Neovim terminal" and exits). A server already carrying
+--- a socket of its own is left alone: weave's clankbox entry rides the
+--- broker ($CLANKBOX_SOCKET), and handing it $NVIM too would put the raw
+--- RPC socket back within the agent's reach — the exact thing the broker
+--- exists to prevent.
 --- @private
 --- @return table[] servers
 function Session:_resolve_mcp_servers()
@@ -457,14 +461,14 @@ function Session:_resolve_mcp_servers()
   local resolved = {}
   for _, srv in ipairs(servers) do
     local env = {}
-    local has_nvim = false
+    local has_socket = false
     for _, e in ipairs(srv.env or {}) do
       env[#env + 1] = e
-      if e.name == "NVIM" then
-        has_nvim = true
+      if e.name == "NVIM" or e.name == "CLANKBOX_SOCKET" then
+        has_socket = true
       end
     end
-    if not has_nvim then
+    if not has_socket then
       env[#env + 1] = { name = "NVIM", value = socket }
     end
     resolved[#resolved + 1] = { name = srv.name, command = srv.command, args = srv.args, env = env }

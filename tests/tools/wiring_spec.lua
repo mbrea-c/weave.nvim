@@ -78,7 +78,34 @@ describe("tools wiring", function()
     Tools._reset()
     package.preload["clankbox"] = nil
     package.loaded["clankbox"] = nil
+    package.preload["clankbox.broker"] = nil
+    package.loaded["clankbox.broker"] = nil
   end)
+
+  --- Install fake clankbox + broker modules; returns the broker's capture
+  --- table ({ opts = the listen() opts, listener = what it returned }).
+  local function fake_broker()
+    local capture = {}
+    package.preload["clankbox"] = function()
+      return fake_clankbox()
+    end
+    package.preload["clankbox.broker"] = function()
+      return {
+        listen = function(opts)
+          capture.opts = opts
+          capture.listener = {
+            path = "/tmp/fake-broker.sock",
+            closed = 0,
+            close = function(self)
+              self.closed = self.closed + 1
+            end,
+          }
+          return capture.listener
+        end,
+      }
+    end
+    return capture
+  end
 
   it("register_into plants the fs and task tools", function()
     local server = fake_clankbox()
@@ -143,6 +170,71 @@ describe("tools wiring", function()
     local client = started()
     assert.equal(1, #client.mcp)
     assert.equal("custom-shim", client.mcp[1].command)
+  end)
+
+  it("the broker listener is scoped to exactly weave's own suite", function()
+    local capture = fake_broker()
+    local listener = Tools.broker_listener()
+    assert.is_not_nil(listener)
+    -- memoized: one listener per editor
+    assert.equal(listener, Tools.broker_listener())
+    local scoped = vim.deepcopy(capture.opts.tools)
+    table.sort(scoped)
+    local owned = vim.tbl_keys(Tools.OWNS)
+    table.sort(owned)
+    assert.same(owned, scoped)
+  end)
+
+  it("agents ride the broker socket, never $NVIM, when the broker exists", function()
+    fake_broker()
+    Config.tools.clankbox_path = stub_checkout()
+    Config.mcp_servers = { { name = "other", command = "other-cmd", args = {} } }
+    local client = started()
+    local by_name = {}
+    for _, srv in ipairs(client.mcp or {}) do
+      by_name[srv.name] = srv
+    end
+    local env = {}
+    for _, e in ipairs(by_name.clankbox.env) do
+      env[e.name] = e.value
+    end
+    assert.equal("/tmp/fake-broker.sock", env.CLANKBOX_SOCKET)
+    -- $NVIM is nvim's raw RPC socket (nvim_exec_lua): it must never reach a
+    -- server that already has the scoped broker
+    assert.is_nil(env.NVIM)
+    -- other servers keep the legacy injection until they are wrapped
+    local other_env = {}
+    for _, e in ipairs(by_name.other.env) do
+      other_env[e.name] = e.value
+    end
+    if vim.v.servername ~= "" then
+      assert.equal(vim.v.servername, other_env.NVIM)
+    end
+  end)
+
+  it("falls back to the $NVIM shim path when clankbox has no broker", function()
+    package.preload["clankbox"] = function()
+      return fake_clankbox()
+    end
+    Config.tools.clankbox_path = stub_checkout()
+    Config.mcp_servers = {}
+    local client = started()
+    assert.equal("clankbox", client.mcp[1].name)
+    local env = {}
+    for _, e in ipairs(client.mcp[1].env) do
+      env[e.name] = e.value
+    end
+    assert.is_nil(env.CLANKBOX_SOCKET)
+    if vim.v.servername ~= "" then
+      assert.equal(vim.v.servername, env.NVIM)
+    end
+  end)
+
+  it("_reset closes the broker listener", function()
+    local capture = fake_broker()
+    assert.is_not_nil(Tools.broker_listener())
+    Tools._reset()
+    assert.equal(1, capture.listener.closed)
   end)
 
   it("setup() registers the suite into an installed clankbox", function()

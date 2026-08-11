@@ -96,11 +96,45 @@ function M.ensure_registered()
   return true
 end
 
+local listener = nil
+
+--- The broker listener agents connect through: one per editor, created on
+--- first use, scoped to EXACTLY weave's own suite (design-agent-sandbox-v2:
+--- the socket is the only path out of the agent sandbox, so what it exposes
+--- is precisely what an agent can ever reach — clankbox's other tools are
+--- not even visible, as opposed to gated). nil when clankbox is absent or
+--- predates the broker; the legacy $NVIM shim path still works there, for
+--- unsandboxed agents.
+--- @return ClankboxListener|nil
+function M.broker_listener()
+  if listener then
+    return listener
+  end
+  if not M.ensure_registered() then
+    return nil
+  end
+  local ok, broker = pcall(require, "clankbox.broker")
+  if not ok or type(broker.listen) ~= "function" then
+    return nil
+  end
+  local names = {}
+  for name in pairs(M.OWNS) do
+    names[#names + 1] = name
+  end
+  listener = broker.listen({ tools = names })
+  return listener
+end
+
 --- The MCP server entry handed to agents: the clankbox stdio shim, run by
---- this very nvim binary (works inside a future sandbox: /nix/store is a
+--- this very nvim binary (works inside the sandbox: /nix/store is a
 --- read-only grant). The checkout root comes from `tools.clankbox_path` or
 --- is auto-detected from the runtimepath/package.path. nil when clankbox
 --- cannot be located (entry without a shim would just break the agent).
+---
+--- With the broker available the entry carries $CLANKBOX_SOCKET, putting the
+--- shim in byte-pump mode against the scoped listener — the sandbox-safe
+--- transport. Without it the env stays empty and the session's legacy $NVIM
+--- injection takes over (see Session:_resolve_mcp_servers).
 --- @return weave.acp.McpServer|nil
 function M.clankbox_server_entry()
   local root = Config.tools and Config.tools.clankbox_path
@@ -121,12 +155,23 @@ function M.clankbox_server_entry()
   if vim.fn.filereadable(shim) ~= 1 then
     return nil
   end
-  return { name = "clankbox", command = vim.v.progpath, args = { "-l", shim }, env = {} }
+  local env = {}
+  local lst = M.broker_listener()
+  if lst then
+    env[#env + 1] = { name = "CLANKBOX_SOCKET", value = lst.path }
+  end
+  return { name = "clankbox", command = vim.v.progpath, args = { "-l", shim }, env = env }
 end
 
 -- test hook: registration is once-per-process; specs restore a clean slate
 function M._reset()
   registered = false
+  if listener then
+    pcall(function()
+      listener:close()
+    end)
+    listener = nil
+  end
 end
 
 return M

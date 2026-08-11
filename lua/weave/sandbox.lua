@@ -151,7 +151,7 @@ end
 --- @class weave.sandbox.WrapOpts : weave.SandboxConfig
 --- @field cwd? string Project dir the profile applies to (default: getcwd)
 --- @field home? string $HOME to hide (default: the real one)
---- @field nvim_socket? string|false Socket to bind for MCP shims (default: v:servername; false = none)
+--- @field nvim_socket? string|false Socket to bind for MCP shims (default: the weave broker socket when clankbox serves one, else v:servername; false = none)
 --- @field runtime_ro_paths? string[] Infra ro binds (default: M._runtime_ro_paths())
 
 --- Rewrite a provider invocation into its sandboxed form. Pure on its
@@ -250,11 +250,16 @@ function M.wrap(command, args, opts)
     mount("--ro-bind-try", path)
   end
 
-  -- The $NVIM socket, over the private /tmp when it lives there. A rw bind:
-  -- connect(2) needs write access to the socket inode.
+  -- The tool socket, over the private /tmp when it lives there. A rw bind:
+  -- connect(2) needs write access to the socket inode. Prefer the scoped
+  -- broker socket (weave.tools) — binding $NVIM hands the sandbox nvim's raw
+  -- RPC (nvim_exec_lua = full escape), so the legacy fallback exists only
+  -- for a clankbox that predates the broker.
   local sock = opts.nvim_socket
   if sock == nil then
-    sock = vim.v.servername
+    local tok, Tools = pcall(require, "weave.tools")
+    local lst = tok and Tools.broker_listener() or nil
+    sock = lst and lst.path or vim.v.servername
   end
   if sock and sock ~= "" then
     mount("--bind-try", sock)
