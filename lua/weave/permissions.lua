@@ -42,15 +42,29 @@ local M = {}
 
 --- @alias weave.permissions.RequirementMode "or_stricter"|"exact"|"or_looser"
 
---- @class weave.permissions.SandboxRequirement What confinement a preset's rules assume
---- @field profile "off"|"workspace"|"readonly"|"blackbox"
---- @field mode? weave.permissions.RequirementMode Default "or_stricter"
+--- @class weave.permissions.SandboxBind One directory (or file) bound into tool sandboxes
+--- @field path string `${project}` expands at spawn time; `~` at mount time
+--- @field mode? "rw"|"ro" Default "rw"
+
+--- @class weave.permissions.SandboxSection The preset's confinement section.
+--- v2 (design-agent-sandbox-v2.md): `binds`/`network` are the kernel hull
+--- every TOOL invocation runs under — deliberately ORTHOGONAL to the rules:
+--- rules speak globs (fine-grained, per-call, can ask), binds speak
+--- directories (the coarse outer hull bounding whatever the gate allows,
+--- and bugs in the tools themselves). Neither is derived from the other;
+--- lint_preset flags the one confusing combination (a rule no bind reaches).
+--- v1 (`profile`/`mode`, the agent-process requirement) coexists here during
+--- the transition and dies with the profile machinery.
+--- @field profile? "off"|"workspace"|"readonly"|"blackbox" v1: what confinement the rules assume
+--- @field mode? weave.permissions.RequirementMode v1: default "or_stricter"
+--- @field binds? weave.permissions.SandboxBind[] Tool-sandbox binds (default: the project, rw)
+--- @field network? boolean Tool sandboxes get network (default false)
 
 --- @class weave.permissions.Preset
 --- @field name string Unique id; a later source shadows an earlier one of the same name
 --- @field label? string Human label for the sidebar/UI (defaults to name)
 --- @field rules weave.permissions.Rule[] Evaluated in order, first match wins
---- @field sandbox? weave.permissions.SandboxRequirement Declarative: the engine compares, it never applies a profile
+--- @field sandbox? weave.permissions.SandboxSection Declarative: the engine compares/derives, it never applies anything itself
 --- @field source? "builtin"|"setup"|"runtime" Assigned by the engine, not the caller
 
 --- @class weave.permissions.Action
@@ -294,7 +308,22 @@ local function own(preset, source)
   for i, r in ipairs(preset.rules or {}) do
     rules[i] = { tool = r.tool, resource = r.resource, decision = r.decision }
   end
-  local sandbox = preset.sandbox and { profile = preset.sandbox.profile, mode = preset.sandbox.mode } or nil
+  local sandbox = nil
+  if preset.sandbox then
+    local binds = nil
+    if preset.sandbox.binds then
+      binds = {}
+      for i, b in ipairs(preset.sandbox.binds) do
+        binds[i] = { path = b.path, mode = b.mode }
+      end
+    end
+    sandbox = {
+      profile = preset.sandbox.profile,
+      mode = preset.sandbox.mode,
+      binds = binds,
+      network = preset.sandbox.network,
+    }
+  end
   return { name = preset.name, label = preset.label, rules = rules, sandbox = sandbox, source = source }
 end
 
@@ -331,11 +360,16 @@ local function validate(preset)
   end
   local sandbox = preset.sandbox
   if sandbox ~= nil then
-    if type(sandbox) ~= "table" or not PROFILE_RANK[sandbox.profile] then
+    if type(sandbox) ~= "table" then
+      error(("weave.permissions: preset %q: `sandbox` must be a table, got %s"):format(preset.name, type(sandbox)), 0)
+    end
+    -- v1 requirement fields: optional now (a v2-only section has neither),
+    -- but still validated when present.
+    if sandbox.profile ~= nil and not PROFILE_RANK[sandbox.profile] then
       error(
         ("weave.permissions: preset %q: `sandbox.profile` must be off/workspace/readonly/blackbox, got %s"):format(
           preset.name,
-          vim.inspect(type(sandbox) == "table" and sandbox.profile or sandbox)
+          vim.inspect(sandbox.profile)
         ),
         0
       )
@@ -348,6 +382,29 @@ local function validate(preset)
         ),
         0
       )
+    end
+    if sandbox.binds ~= nil then
+      if type(sandbox.binds) ~= "table" then
+        error(("weave.permissions: preset %q: `sandbox.binds` must be a list"):format(preset.name), 0)
+      end
+      for i, b in ipairs(sandbox.binds) do
+        if type(b) ~= "table" or type(b.path) ~= "string" or b.path == "" then
+          error(("weave.permissions: preset %q: `sandbox.binds[%d].path` must be a string"):format(preset.name, i), 0)
+        end
+        if b.mode ~= nil and b.mode ~= "rw" and b.mode ~= "ro" then
+          error(
+            ("weave.permissions: preset %q: `sandbox.binds[%d].mode` must be rw/ro, got %s"):format(
+              preset.name,
+              i,
+              vim.inspect(b.mode)
+            ),
+            0
+          )
+        end
+      end
+    end
+    if sandbox.network ~= nil and type(sandbox.network) ~= "boolean" then
+      error(("weave.permissions: preset %q: `sandbox.network` must be a boolean"):format(preset.name), 0)
     end
   end
 end
@@ -522,6 +579,85 @@ function M.cycle()
   return next_preset
 end
 
+--- ── The tool-sandbox hull ───────────────────────────────────────────────────
+
+-- What a preset without a sandbox section means: the project, read-write,
+-- no network. Explicit binds REPLACE this (they do not extend it), so a
+-- preset binding only /data genuinely excludes the project.
+local DEFAULT_BINDS = { { path = PROJECT_TOKEN, mode = "rw" } }
+
+--- The kernel hull TOOL invocations run under (design-agent-sandbox-v2):
+--- binds with `${project}` expanded now, modes defaulted, plus the network
+--- flag. Consumed by the task/tool spawn path on EVERY invocation, so an
+--- active-preset switch or (later) an elevation grant applies to the next
+--- spawn with no restart anywhere.
+--- @param preset? weave.permissions.Preset default: the active one
+--- @return { binds: weave.permissions.SandboxBind[], network: boolean }
+function M.tool_sandbox(preset)
+  preset = preset or M.active()
+  local section = preset.sandbox or {}
+  local binds = {}
+  for i, b in ipairs(section.binds or DEFAULT_BINDS) do
+    binds[i] = { path = expand(b.path), mode = b.mode or "rw" }
+  end
+  return { binds = binds, network = section.network == true }
+end
+
+--- Does a bind's path plausibly reach a resource glob's static prefix?
+--- Prefix containment with a path-boundary guard: /a/b covers /a/b/c and
+--- /a/b, never /a/bc.
+local function bind_covers(bind, prefix)
+  local function contains(outer, inner)
+    if inner:sub(1, #outer) ~= outer then
+      return false
+    end
+    local nxt = inner:sub(#outer + 1, #outer + 1)
+    return nxt == "" or nxt == "/" or outer:sub(-1) == "/"
+  end
+  return contains(bind, prefix) or contains(prefix, bind)
+end
+
+--- Rules and binds are orthogonal by design, which leaves one confusing
+--- combination: a non-deny rule whose resource no bind can reach — the gate
+--- says yes, the tool then dies at the kernel wall. Flag it at definition
+--- time instead of letting it read as a tool bug at call time. A heuristic
+--- (static glob prefixes, path-shaped resources only — command strings and
+--- buffer refs are not filesystem places), so it WARNS, never errors.
+--- @param preset weave.permissions.Preset
+--- @return string[] warnings
+function M.lint_preset(preset)
+  local warnings = {}
+  local hull = M.tool_sandbox(preset)
+  local home = vim.uv.os_homedir() or ""
+  local function norm(p)
+    return (home ~= "" and p:gsub("^~", home)) or p
+  end
+  for i, rule in ipairs(preset.rules or {}) do
+    if rule.resource ~= nil and rule.decision ~= "deny" then
+      local res = norm(expand(rule.resource))
+      if res:sub(1, 1) == "/" then
+        local prefix = res:match("^([^*?]*)")
+        local reachable = false
+        for _, b in ipairs(hull.binds) do
+          if bind_covers(norm(b.path), prefix) then
+            reachable = true
+            break
+          end
+        end
+        if not reachable then
+          warnings[#warnings + 1] = ("rule %d (%s %s): resource %q lies outside every sandbox bind"):format(
+            i,
+            rule.decision,
+            rule.tool,
+            rule.resource
+          )
+        end
+      end
+    end
+  end
+  return warnings
+end
+
 --- Resolve an action: the grant overlay first, then the active preset, then
 --- the engine-wide "ask". First matching rule's decision wins.
 --- @param action weave.permissions.Action
@@ -613,8 +749,19 @@ end
 --- runtime def restores the original, so "editing" a shipped preset is
 --- always reversible.
 --- @param preset weave.permissions.Preset
+--- Surface lint findings for a preset entering the engine. Advisory only
+--- (design-agent-sandbox-v2 open question 6 resolved as warn-not-error): the
+--- preset still lands, the user learns why a gate-allowed tool would fail.
+--- @param preset weave.permissions.Preset
+local function warn_lint(preset)
+  for _, w in ipairs(M.lint_preset(preset)) do
+    vim.notify(("weave: preset %q: %s"):format(preset.name, w), vim.log.levels.WARN)
+  end
+end
+
 function M.save_preset(preset)
   validate(preset)
+  warn_lint(preset)
   local owned = own(preset, "runtime")
   local _, i = find(runtime_presets, preset.name)
   if i then
@@ -650,6 +797,7 @@ function M.setup(cfg)
   setup_presets = {}
   for _, p in ipairs(cfg.presets or {}) do
     validate(p)
+    warn_lint(p)
     setup_presets[#setup_presets + 1] = own(p, "setup")
   end
   if cfg.preset then
