@@ -125,10 +125,28 @@ local function degrade(profile)
   return "off"
 end
 
+--- The profile one config level asks for. v2 vocabulary first: `mode = "on"`
+--- IS the invariant maximal sandbox, which internally is the blackbox
+--- profile — one honest mapping instead of a parallel machinery, and the
+--- profile plumbing (keying, preset requirements, degradation) keeps
+--- working until phase F deletes it. The v1 `profile` key stays accepted
+--- underneath during the transition.
+--- @param cfg weave.SandboxConfig
+--- @return string|nil
+local function requested_profile(cfg)
+  if cfg.mode ~= nil then
+    if cfg.mode ~= "on" and cfg.mode ~= "off" then
+      error(('weave.sandbox: `mode` must be "on" or "off", got %s'):format(vim.inspect(cfg.mode)), 0)
+    end
+    return cfg.mode == "on" and "blackbox" or "off"
+  end
+  return cfg.profile
+end
+
 --- Merge the global `Config.sandbox` with a provider's override: scalars
---- (profile, env_allowlist) — the provider wins; path lists — concatenated,
---- global first, so per-provider grants ADD to machine-wide ones. The
---- resulting profile is the EFFECTIVE one (see degrade).
+--- (mode/profile, env_allowlist) — the provider wins; path lists —
+--- concatenated, global first, so per-provider grants ADD to machine-wide
+--- ones. The resulting profile is the EFFECTIVE one (see degrade).
 --- @param provider_sandbox weave.SandboxConfig|nil
 --- @return weave.SandboxConfig
 function M.resolve(provider_sandbox)
@@ -141,7 +159,7 @@ function M.resolve(provider_sandbox)
     return out
   end
   return {
-    profile = degrade(p.profile or global.profile or "off"),
+    profile = degrade(requested_profile(p) or requested_profile(global) or "off"),
     state_paths = cat(global.state_paths, p.state_paths),
     ro_paths = cat(global.ro_paths, p.ro_paths),
     env_allowlist = p.env_allowlist or global.env_allowlist,
@@ -244,8 +262,13 @@ function M.wrap(command, args, opts)
     mount("--bind", cwd)
   elseif profile == "readonly" then
     mount("--ro-bind", cwd)
-  else -- blackbox
-    vim.list_extend(argv, { "--tmpfs", cwd })
+  else -- blackbox (= v2 mode on)
+    -- An EMPTY READ-ONLY project, not a writable void: the agent's builtin
+    -- Write must fail LOUDLY. On a writable tmpfs it would write, read its
+    -- own write back, and report the work done while nothing ever landed —
+    -- silent data loss. EROFS is what redirects the agent to the weave
+    -- tools, which are the only paths that persist.
+    vim.list_extend(argv, { "--tmpfs", cwd, "--remount-ro", cwd })
   end
 
   local base = vim.fn.fnamemodify(command, ":t")

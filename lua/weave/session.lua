@@ -409,6 +409,11 @@ function Session:_build_handlers()
     is_restoring = function()
       return self._restoring
     end,
+    -- THIS session's frozen spawn confinement (drives the mode-on
+    -- auto-approve): the client's, never the globally selected session's.
+    sandbox_profile = function()
+      return self._client and self._client.sandbox_profile or nil
+    end,
   })
 end
 

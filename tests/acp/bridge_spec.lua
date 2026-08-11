@@ -13,6 +13,72 @@ local function setup(opts)
   return store, handlers
 end
 
+-- Mode on (the session's client spawned under the invariant maximal
+-- sandbox, internally "blackbox"): agentside permission requests gate
+-- nothing the agent can actually do, so the bridge auto-answers allow and
+-- the double-prompt disappears. The REAL gate is the clientside tool layer.
+describe("acp_bridge mode-on auto-approve", function()
+  before_each(function()
+    Permissions._reset()
+  end)
+  after_each(function()
+    Permissions._reset()
+  end)
+
+  local function request(options)
+    return {
+      toolCall = { kind = "execute", rawInput = { command = "make test" } },
+      options = options or {
+        { optionId = "a1", kind = "allow_once" },
+        { optionId = "r1", kind = "reject_once" },
+      },
+    }
+  end
+
+  it("a blackbox-spawned session auto-answers allow, nothing queued", function()
+    local store, handlers = setup({
+      sandbox_profile = function()
+        return "blackbox"
+      end,
+    })
+    local answered
+    handlers.on_request_permission(request(), function(option_id)
+      answered = option_id
+    end)
+    assert.equal("a1", answered)
+    assert.is_nil(store:get_permission())
+  end)
+
+  it("no allow option offered: falls through to the ordinary flow", function()
+    local store, handlers = setup({
+      sandbox_profile = function()
+        return "blackbox"
+      end,
+    })
+    local answered = "unset"
+    -- active preset "normal": acp:* asks, so this must enqueue for the user
+    handlers.on_request_permission(request({ { optionId = "r1", kind = "reject_once" } }), function(option_id)
+      answered = option_id
+    end)
+    assert.equal("unset", answered)
+    assert.is_not_nil(store:get_permission())
+  end)
+
+  it("an unsandboxed session keeps the preset flow", function()
+    local store, handlers = setup({
+      sandbox_profile = function()
+        return "off"
+      end,
+    })
+    local answered = "unset"
+    handlers.on_request_permission(request(), function(option_id)
+      answered = option_id
+    end)
+    assert.equal("unset", answered)
+    assert.is_not_nil(store:get_permission())
+  end)
+end)
+
 describe("acp_bridge session updates", function()
   it("streams agent message chunks with generating status", function()
     local store, handlers = setup()

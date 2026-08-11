@@ -146,13 +146,19 @@ end
 
 --- Build the ACP client handlers backed by a session store.
 --- @param store weave.store.SessionStore
---- @param opts? { is_restoring?: fun(): boolean } predicate read per-update; when
----  it returns true (load_session replay in flight) status mutations are skipped
+--- @param opts? { is_restoring?: fun(): boolean, sandbox_profile?: fun(): string|nil }
+---  is_restoring: predicate read per-update; when it returns true
+---  (load_session replay in flight) status mutations are skipped.
+---  sandbox_profile: THIS session's spawn confinement (the client's frozen
+---  profile, not the selected session's) — read per-request.
 --- @return weave.acp.ClientHandlers handlers
 function AcpBridge.build_handlers(store, opts)
   opts = opts or {}
   local is_restoring = opts.is_restoring or function()
     return false
+  end
+  local sandbox_profile = opts.sandbox_profile or function()
+    return nil
   end
 
   --- @type weave.acp.ClientHandlers
@@ -197,6 +203,21 @@ function AcpBridge.build_handlers(store, opts)
     end,
 
     on_request_permission = function(request, callback)
+      -- Sandbox mode on (the invariant maximal agent sandbox — internally
+      -- the "blackbox" profile): nothing the agent does DIRECTLY can have
+      -- real effects, so its permission requests gate nothing. Auto-answer
+      -- allow and delete the double-prompt; the real gate is the clientside
+      -- tool layer, which every effectful operation must cross anyway
+      -- (design-agent-sandbox-v2.md). Falls through to the ordinary flow
+      -- when the agent offers no allow option (never guess an optionId).
+      if sandbox_profile() == "blackbox" then
+        local auto = option_for(request.options, "allow")
+        if auto then
+          callback(auto)
+          return
+        end
+      end
+
       -- The active preset may answer this request without the user (see the
       -- permission-resolution note above). The tool call still renders (the
       -- user should see what was auto-answered) — that arrives via

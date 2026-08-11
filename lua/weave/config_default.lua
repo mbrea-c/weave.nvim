@@ -34,7 +34,8 @@
 --- @field presets? weave.permissions.Preset[] Additional presets (the setup source; shadow builtins by name)
 
 --- @class weave.SandboxConfig Confinement for the spawned agent process (weave.sandbox; bwrap backend, Linux-only, degrades to "off" elsewhere)
---- @field profile? "off"|"workspace"|"readonly"|"blackbox" What the project dir looks like from inside: rw / ro / absent
+--- @field mode? "on"|"off" v2 (design-agent-sandbox-v2.md): "on" = the invariant maximal agent sandbox (project absent; every effect flows through the sandboxed tool layer). Wins over `profile` when both are set.
+--- @field profile? "off"|"workspace"|"readonly"|"blackbox" v1 vocabulary, still accepted: what the project dir looks like from inside (rw / ro / absent). Dies with the profile machinery.
 --- @field state_paths? string[] Extra rw binds (agent state/auth dirs; known providers ship defaults), ~ ok, missing paths fine
 --- @field ro_paths? string[] Extra ro binds, same rules
 --- @field env_allowlist? string[] Keep only these inherited env vars (default: inherit everything, sandboxed or not)

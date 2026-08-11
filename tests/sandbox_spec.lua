@@ -97,9 +97,9 @@ describe("sandbox wrap", function()
     assert.is_nil(find_seq(args, { "--bind", "/home/u/proj", "/home/u/proj" }))
   end)
 
-  it("blackbox: project hidden under a tmpfs", function()
+  it("blackbox: project an EMPTY READ-ONLY tmpfs (writes fail loudly)", function()
     local _, args = Sandbox.wrap("gemini", {}, opts({ profile = "blackbox" }))
-    assert.truthy(find_seq(args, { "--tmpfs", "/home/u/proj" }))
+    assert.truthy(find_seq(args, { "--tmpfs", "/home/u/proj", "--remount-ro", "/home/u/proj" }))
     assert.is_nil(find_seq(args, { "--bind", "/home/u/proj", "/home/u/proj" }))
     assert.is_nil(find_seq(args, { "--ro-bind", "/home/u/proj", "/home/u/proj" }))
   end)
@@ -215,6 +215,52 @@ describe("sandbox resolve", function()
     local resolved = Sandbox.resolve(nil)
     assert.equal("workspace", resolved.profile)
     assert.same({ "PATH" }, resolved.env_allowlist)
+  end)
+end)
+
+-- v2 modes: `mode = "on"` IS the invariant maximal sandbox, mapped onto the
+-- internal blackbox profile so the profile plumbing (keying, requirements,
+-- degradation) keeps working until phase F deletes it.
+describe("sandbox modes", function()
+  local Config = require("weave.config")
+  local real_available = Sandbox._available
+  local saved
+
+  before_each(function()
+    saved = vim.deepcopy(Config.sandbox)
+    Sandbox._available = function()
+      return true
+    end
+  end)
+  after_each(function()
+    Config.sandbox = saved
+    Sandbox._available = real_available
+  end)
+
+  it('mode "on" resolves to the maximal profile, "off" to off', function()
+    Config.sandbox = { mode = "on" }
+    assert.equal("blackbox", Sandbox.resolve(nil).profile)
+    Config.sandbox = { mode = "off" }
+    assert.equal("off", Sandbox.resolve(nil).profile)
+  end)
+
+  it("a provider's mode overrides the global config either way", function()
+    Config.sandbox = { profile = "workspace" }
+    assert.equal("blackbox", Sandbox.resolve({ mode = "on" }).profile)
+    Config.sandbox = { mode = "on" }
+    assert.equal("off", Sandbox.resolve({ mode = "off" }).profile)
+  end)
+
+  it("mode wins over profile at the same level", function()
+    Config.sandbox = { mode = "on", profile = "workspace" }
+    assert.equal("blackbox", Sandbox.resolve(nil).profile)
+  end)
+
+  it("rejects an unknown mode loudly", function()
+    Config.sandbox = { mode = "sideways" }
+    local ok, err = pcall(Sandbox.resolve, nil)
+    assert.is_false(ok)
+    assert.truthy(tostring(err):find('`mode` must be "on" or "off"', 1, true))
   end)
 end)
 
@@ -363,6 +409,13 @@ if Sandbox._available() then
       local out = run("blackbox", "ls " .. cwd)
       assert.equal(0, out.code, out.stderr)
       assert.is_nil(out.stdout:find("f%.txt"))
+    end)
+
+    it("blackbox: a builtin-style write dies on EROFS, never a silent void", function()
+      local out = run("blackbox", "touch " .. cwd .. "/w.txt")
+      assert.is_true(out.code ~= 0)
+      assert.truthy(out.stderr:lower():find("read%-only"))
+      assert.equal(0, vim.fn.filereadable(cwd .. "/w.txt"))
     end)
 
     local function run_tool(hull, script)
