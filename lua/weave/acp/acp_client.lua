@@ -135,17 +135,17 @@ function ACPClient:_setup_transport()
 
   if transport_type == "stdio" then
     -- THE sandbox touch point: rewrite the provider argv per the resolved
-    -- profile (weave.sandbox). Everything below spawns whatever comes back.
+    -- mode (weave.sandbox). Everything below spawns whatever comes back.
     local Sandbox = require("weave.sandbox")
     local sandbox = Sandbox.resolve(self.provider_config.sandbox)
     local command, args = Sandbox.wrap(self.provider_config.command, self.provider_config.args, sandbox)
 
-    -- The profile is frozen into the argv from here on, so this is also where
+    -- The mode is frozen into the argv from here on, so this is also where
     -- the permission engine learns which one the LIVE agent is confined by.
     -- Reading it back off the config later would claim a confinement the
     -- running process may not have.
-    require("weave.permissions").set_profile(sandbox.profile)
-    self.sandbox_profile = sandbox.profile
+    require("weave.permissions").set_mode(sandbox.mode)
+    self.sandbox_mode = sandbox.mode
 
     --- @type weave.acp.StdioTransportConfig
     local transport_config = {

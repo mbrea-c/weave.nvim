@@ -40,23 +40,17 @@ local M = {}
 --- @field resource? string Glob over the resource; a rule with one never matches an action without one
 --- @field decision weave.permissions.Decision
 
---- @alias weave.permissions.RequirementMode "or_stricter"|"exact"|"or_looser"
-
 --- @class weave.permissions.SandboxBind One directory (or file) bound into tool sandboxes
 --- @field path string `${project}` expands at spawn time; `~` at mount time
 --- @field mode? "rw"|"ro" Default "rw"
 
---- @class weave.permissions.SandboxSection The preset's confinement section.
---- v2 (design-agent-sandbox-v2.md): `binds`/`network` are the kernel hull
+--- @class weave.permissions.SandboxSection The preset's confinement section
+--- (design-agent-sandbox-v2.md): `binds`/`network` are the kernel hull
 --- every TOOL invocation runs under — deliberately ORTHOGONAL to the rules:
 --- rules speak globs (fine-grained, per-call, can ask), binds speak
 --- directories (the coarse outer hull bounding whatever the gate allows,
 --- and bugs in the tools themselves). Neither is derived from the other;
 --- lint_preset flags the one confusing combination (a rule no bind reaches).
---- v1 (`profile`/`mode`, the agent-process requirement) coexists here during
---- the transition and dies with the profile machinery.
---- @field profile? "off"|"workspace"|"readonly"|"blackbox" v1: what confinement the rules assume
---- @field mode? weave.permissions.RequirementMode v1: default "or_stricter"
 --- @field binds? weave.permissions.SandboxBind[] Tool-sandbox binds (default: the project, rw)
 --- @field network? boolean Tool sandboxes get network (default false)
 
@@ -72,13 +66,6 @@ local M = {}
 --- @field resource? string The thing acted on (path, command line, buffer ref)
 
 local DECISIONS = { allow = true, deny = true, ask = true }
-
--- The sandbox profiles ordered by CONFINEMENT, which is what makes "at least
--- this strict" a comparison instead of a table of special cases:
---   off < workspace < readonly < blackbox
--- (no sandbox / project rw / project ro / project absent).
-local PROFILE_RANK = { off = 1, workspace = 2, readonly = 3, blackbox = 4 }
-local MODES = { or_stricter = true, exact = true, or_looser = true }
 
 -- Rules are static tables in Lua and in config, so they cannot name the
 -- project root literally. `${project}` in a resource glob expands to it at
@@ -123,9 +110,13 @@ local BUILTIN = {
   -- ── The sandboxed variants ────────────────────────────────────────────────
   --
   -- Same three shapes, same cycle order, with the client-side exemption
-  -- removed: once a profile confines the agent PROCESS, weave's own tools stop
-  -- being a free channel around it. Note what they deliberately do NOT do —
-  -- they never tighten acp:*, so the agent-side flow is unchanged.
+  -- removed: under sandbox mode on, weave's tools are the agent's ONLY
+  -- route to the world, so they cannot be a free channel around the gate.
+  -- Note what they deliberately do NOT do — they never tighten acp:*, so
+  -- the agent-side flow is unchanged (and auto-approved under mode on).
+  -- Any preset remains selectable under any mode: the hull bounds blast
+  -- radius either way, and setup() defaults to a sandboxed_* variant when
+  -- mode is on and the user expressed no preference.
   --
   -- The task query tools are listed one by one above the weave:* catch-all on
   -- purpose. tools/init.lua registers them with no resource extractor, and a
@@ -137,7 +128,6 @@ local BUILTIN = {
     name = "sandboxed_normal",
     label = "Sandboxed (ask)",
     source = "builtin",
-    sandbox = { profile = "workspace", mode = "or_stricter" },
     rules = {
       { tool = "acp:*", decision = "ask" },
       { tool = "weave:read", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
@@ -157,7 +147,6 @@ local BUILTIN = {
     name = "sandboxed_auto",
     label = "Sandboxed (auto)",
     source = "builtin",
-    sandbox = { profile = "workspace", mode = "or_stricter" },
     rules = {
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
@@ -174,7 +163,6 @@ local BUILTIN = {
     name = "sandboxed_allow_edits",
     label = "Sandboxed (allow edits)",
     source = "builtin",
-    sandbox = { profile = "workspace", mode = "or_stricter" },
     rules = {
       { tool = "acp:edit", decision = "allow" },
       { tool = "acp:*", decision = "ask" },
@@ -204,8 +192,8 @@ local active_name = "normal"
 local overlay = {}
 --- @type string|nil project root for ${project}; nil = ask the editor
 local project_root = nil
---- @type string|nil the RUNNING session's profile; nil = ask the config
-local current_profile = nil
+--- @type string|nil the RUNNING session's sandbox mode; nil = ask the config
+local current_mode = nil
 --- @type fun()[]
 local subscribers = {}
 
@@ -317,12 +305,7 @@ local function own(preset, source)
         binds[i] = { path = b.path, mode = b.mode }
       end
     end
-    sandbox = {
-      profile = preset.sandbox.profile,
-      mode = preset.sandbox.mode,
-      binds = binds,
-      network = preset.sandbox.network,
-    }
+    sandbox = { binds = binds, network = preset.sandbox.network }
   end
   return { name = preset.name, label = preset.label, rules = rules, sandbox = sandbox, source = source }
 end
@@ -363,22 +346,13 @@ local function validate(preset)
     if type(sandbox) ~= "table" then
       error(("weave.permissions: preset %q: `sandbox` must be a table, got %s"):format(preset.name, type(sandbox)), 0)
     end
-    -- v1 requirement fields: optional now (a v2-only section has neither),
-    -- but still validated when present.
-    if sandbox.profile ~= nil and not PROFILE_RANK[sandbox.profile] then
+    -- The v1 requirement fields died with the profile machinery. Loud, not
+    -- ignored: a preset that names a confinement requirement weave no
+    -- longer honours must not silently load as if it were honoured.
+    if sandbox.profile ~= nil or sandbox.mode ~= nil then
       error(
-        ("weave.permissions: preset %q: `sandbox.profile` must be off/workspace/readonly/blackbox, got %s"):format(
-          preset.name,
-          vim.inspect(sandbox.profile)
-        ),
-        0
-      )
-    end
-    if sandbox.mode ~= nil and not MODES[sandbox.mode] then
-      error(
-        ("weave.permissions: preset %q: `sandbox.mode` must be or_stricter/exact/or_looser, got %s"):format(
-          preset.name,
-          vim.inspect(sandbox.mode)
+        ("weave.permissions: preset %q: sandbox `profile`/`mode` requirements were removed (sandbox v2); the section now carries `binds`/`network`"):format(
+          preset.name
         ),
         0
       )
@@ -467,106 +441,53 @@ function M.set_active(name)
   notify()
 end
 
---- ── Sandbox profiles ────────────────────────────────────────────────────────
+--- ── Sandbox mode ────────────────────────────────────────────────────────────
 
---- Confinement rank; higher is stricter. Unknown profiles rank as `off`, so a
---- typo loosens visibly rather than silently claiming confinement.
---- @param profile string|nil
---- @return integer
-function M.profile_rank(profile)
-  return PROFILE_RANK[profile] or PROFILE_RANK.off
-end
-
---- The profile in force RIGHT NOW: the one the session you are looking at
---- was actually spawned under.
+--- The mode in force RIGHT NOW: the one the session you are looking at was
+--- actually spawned under.
 ---
---- Agent processes are keyed (provider, profile), so two sessions can be
+--- Agent processes are keyed (provider, mode), so two sessions can be
 --- running at different confinements at the same time and "the current
---- profile" is only meaningful relative to one of them. The selected session
---- is the one the permissions UI describes and the one a ;;p selection acts
---- on, so it is the one that answers here. Falling back, in order: the last
---- spawn (set_profile, for the window between spawn and a registered
---- session) and the configured default (before anything spawns at all).
---- @return string
-function M.current_profile()
+--- mode" is only meaningful relative to one of them. The selected session
+--- is the one the permissions UI describes, so it is the one that answers
+--- here. Falling back, in order: the last spawn (set_mode, for the window
+--- between spawn and a registered session) and the configured default
+--- (before anything spawns at all).
+--- @return "on"|"off"
+function M.current_mode()
   local ok, Registry = pcall(require, "weave.registry")
   if ok then
     local entry = Registry.selected() or Registry.list()[1]
     local session = entry and entry.session
     local client = session and session.client and session:client()
-    if client and client.sandbox_profile then
-      return client.sandbox_profile
+    if client and client.sandbox_mode then
+      return client.sandbox_mode
     end
   end
-  if current_profile then
-    return current_profile
+  if current_mode then
+    return current_mode
   end
   local sok, sandbox = pcall(require, "weave.sandbox")
-  return (sok and sandbox.resolve().profile) or "off"
+  return (sok and sandbox.resolve().mode) or "off"
 end
 
---- @param profile string|nil nil restores the config default
-function M.set_profile(profile)
-  if current_profile == profile then
+--- @param mode string|nil nil restores the config default
+function M.set_mode(mode)
+  if current_mode == mode then
     return
   end
-  current_profile = profile
+  current_mode = mode
   notify()
 end
 
---- Does this preset's declared requirement accept `profile`? Presets with no
---- requirement accept everything, so every builtin stays reachable.
---- @param preset weave.permissions.Preset
---- @param profile? string defaults to the current profile
---- @return boolean ok, string|nil reason
-function M.preset_compatible(preset, profile)
-  local req = preset and preset.sandbox
-  if not req then
-    return true, nil
-  end
-  profile = profile or M.current_profile()
-  local mode = req.mode or "or_stricter"
-  local want, have = M.profile_rank(req.profile), M.profile_rank(profile)
-  local ok
-  if mode == "exact" then
-    ok = have == want
-  elseif mode == "or_looser" then
-    ok = have <= want
-  else
-    ok = have >= want
-  end
-  if ok then
-    return true, nil
-  end
-  local phrasing = ({ or_stricter = " or stricter", or_looser = " or looser", exact = " exactly" })[mode]
-  return false, ("requires sandbox %s%s; current: %s"):format(req.profile, phrasing, profile)
-end
-
---- The presets `;;p` may land on: the effective list minus the ones the
---- current profile does not satisfy. Guard: never filter to empty — a cycle
---- that lands nowhere reads as a broken keybind, so a fully-incompatible list
---- is returned whole and the UI explains itself instead.
---- @param profile? string
---- @return weave.permissions.Preset[]
-function M.compatible_presets(profile)
-  local all = M.presets()
-  local out = {}
-  for _, p in ipairs(all) do
-    if M.preset_compatible(p, profile) then
-      out[#out + 1] = p
-    end
-  end
-  return #out > 0 and out or all
-end
-
---- Advance to the next COMPATIBLE preset in the effective order (the ;;p
---- cycle) and return it. Cycling is cheap, frequent and non-destructive: it
---- never restarts an agent and never prompts, so incompatible presets are
---- skipped silently here and surfaced (greyed, with a reason) in the
---- permissions window instead.
+--- Advance to the next preset in the effective order (the ;;p cycle) and
+--- return it. Cycling is cheap, frequent and non-destructive: it never
+--- restarts an agent and never prompts. Every preset is reachable under
+--- every mode — the hull bounds blast radius regardless, so preset choice
+--- is policy, not a confinement claim.
 --- @return weave.permissions.Preset
 function M.cycle()
-  local list = M.compatible_presets()
+  local list = M.presets()
   local idx = 0
   for i, p in ipairs(list) do
     if p.name == active_name then
@@ -805,10 +726,10 @@ function M.setup(cfg)
       error(("weave.permissions: unknown active preset %q in setup"):format(cfg.preset), 0)
     end
     active_name = cfg.preset
-  elseif M.current_profile() ~= "off" and M.get("sandboxed_" .. active_name) then
-    -- A profile is on and the user expressed no preference: default to the
+  elseif M.current_mode() == "on" and M.get("sandboxed_" .. active_name) then
+    -- The sandbox is on and the user expressed no preference: default to the
     -- matching sandboxed variant, since the plain ones exempt weave's own
-    -- tools from the confinement the profile was turned on for.
+    -- tools from the confinement the sandbox was turned on for.
     active_name = "sandboxed_" .. active_name
   end
   notify()
@@ -821,7 +742,7 @@ function M._reset()
   overlay = {}
   active_name = "normal"
   project_root = nil
-  current_profile = nil
+  current_mode = nil
   subscribers = {}
 end
 

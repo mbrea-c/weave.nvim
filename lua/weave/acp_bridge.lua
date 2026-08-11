@@ -146,18 +146,18 @@ end
 
 --- Build the ACP client handlers backed by a session store.
 --- @param store weave.store.SessionStore
---- @param opts? { is_restoring?: fun(): boolean, sandbox_profile?: fun(): string|nil }
+--- @param opts? { is_restoring?: fun(): boolean, sandbox_mode?: fun(): string|nil }
 ---  is_restoring: predicate read per-update; when it returns true
 ---  (load_session replay in flight) status mutations are skipped.
----  sandbox_profile: THIS session's spawn confinement (the client's frozen
----  profile, not the selected session's) — read per-request.
+---  sandbox_mode: THIS session's spawn confinement (the client's frozen
+---  mode, not the selected session's) — read per-request.
 --- @return weave.acp.ClientHandlers handlers
 function AcpBridge.build_handlers(store, opts)
   opts = opts or {}
   local is_restoring = opts.is_restoring or function()
     return false
   end
-  local sandbox_profile = opts.sandbox_profile or function()
+  local sandbox_mode = opts.sandbox_mode or function()
     return nil
   end
 
@@ -203,14 +203,14 @@ function AcpBridge.build_handlers(store, opts)
     end,
 
     on_request_permission = function(request, callback)
-      -- Sandbox mode on (the invariant maximal agent sandbox — internally
-      -- the "blackbox" profile): nothing the agent does DIRECTLY can have
-      -- real effects, so its permission requests gate nothing. Auto-answer
-      -- allow and delete the double-prompt; the real gate is the clientside
-      -- tool layer, which every effectful operation must cross anyway
+      -- Sandbox mode on (the invariant maximal agent sandbox): nothing the
+      -- agent does DIRECTLY can have real effects, so its permission
+      -- requests gate nothing. Auto-answer allow and delete the
+      -- double-prompt; the real gate is the clientside tool layer, which
+      -- every effectful operation must cross anyway
       -- (design-agent-sandbox-v2.md). Falls through to the ordinary flow
       -- when the agent offers no allow option (never guess an optionId).
-      if sandbox_profile() == "blackbox" then
+      if sandbox_mode() == "on" then
         local auto = option_for(request.options, "allow")
         if auto then
           callback(auto)

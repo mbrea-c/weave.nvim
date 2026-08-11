@@ -30,7 +30,7 @@ prompt — is a pure `state → render` projection of it.
   `glob`/`grep` MCP tools shell out to it. Without it `grep` errors and `glob`
   falls back to a slower walk.
 - **[bubblewrap](https://github.com/containers/bubblewrap)** (optional, Linux)
-  — the [Sandbox](#sandbox) backend. Without it every configured profile
+  — the [Sandbox](#sandbox) backend. Without it a configured `mode = "on"`
   degrades to `off` with a warning.
 
 ---
@@ -201,9 +201,9 @@ reminder. Six builtin presets ship. Three re-encode the historical modes:
 **normal** (every ACP request asks), **auto** (allow everything), **allow
 edits** (ACP edit calls auto-allow, the rest ask); client-side tools default
 to allow in all three. Three **sandboxed** variants mirror them for use with
-a [sandbox profile](#sandbox) — same shapes, but weave's own tools are no
+[sandbox mode on](#sandbox) — same shapes, but weave's own tools are no
 longer exempt: reads and searches inside the project are allowed, everything
-else `weave:*` asks. When a profile is configured and you have not set
+else `weave:*` asks. When mode `on` is configured and you have not set
 `permissions.preset`, the matching sandboxed variant is selected for you.
 
 Resource globs may contain `${project}`, which expands to the session's cwd,
@@ -220,7 +220,7 @@ path.
 Activating the sidebar's **Permissions** header opens the **preset
 configuration window**: every preset (builtin / setup / runtime) with the
 active one marked — a row activates it — plus the active preset's rules, any
-session grants, and the running agent's sandbox profile. `[edit]` opens the
+session grants, and the running agent's sandbox mode. `[edit]` opens the
 active preset as a Lua table in a scratch float (`:w` applies it as a
 *runtime* preset, shadowing a builtin of the same name; `[delete]` reverts to
 the shadowed definition), `[new]` starts from a template. Runtime presets
@@ -364,7 +364,7 @@ send never loses hand-written comments.
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
 | `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit, glob/grep, task lifecycle) via clankbox; `clankbox_path` and `ripgrep_path` override binary/checkout auto-detection |
 | `permissions` | `table` | `{ presets = {} }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
-| `sandbox` | `table` | `{ profile = "off" }` | Agent process confinement via bubblewrap (see [Sandbox](#sandbox)) |
+| `sandbox` | `table` | `{ mode = "off" }` | Agent process confinement via bubblewrap (see [Sandbox](#sandbox)) |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
 | `view` | `table` | see below | Default panel geometry |
 | `keys` | `table` | see [Keybinds](#keybinds) | Key(s) per named action |
@@ -591,7 +591,7 @@ against an empty file and claiming the agent wrote it from scratch.
 ```lua
 require("weave").setup({
   permissions = {
-    preset = "normal",           -- active at startup (unset = normal, or its sandboxed variant under a profile)
+    preset = "normal",           -- active at startup (unset = normal, or its sandboxed variant under mode on)
     presets = {                  -- the "setup" preset source
       {
         name = "docs-only",
@@ -621,131 +621,119 @@ since a foreign tool's arguments have no schema weave can read one out of),
 and `<plugin>:<tool>` for a plugin that resolves its own clankbox tools
 through `require("weave.permissions").resolve`.
 
-The `mcp:*` rules are what keep a sandbox profile meaningful: `exec_lua` runs
+The `mcp:*` rules are what keep the sandbox meaningful: `exec_lua` runs
 arbitrary Lua in the **unsandboxed** editor, so left ungated it can read the
 project the sandbox masked. The `sandboxed_*` presets therefore `ask` on
 `mcp:*`; set it to `deny` if you would rather it not be offered at all.
 Presets from `setup` shadow builtins by name; presets saved in the
 configuration window (runtime) shadow both, reversibly.
 
-A preset may declare what confinement its rules assume:
+A preset may also carry a `sandbox` section — the kernel hull TOOL
+invocations run under, deliberately **orthogonal** to the rules:
 
 ```lua
 {
   name = "audit",
-  sandbox = { profile = "readonly", mode = "or_stricter" },
-  rules = { ... },
+  rules = { ... },                       -- the fine-grained gate (globs, per call, can ask)
+  sandbox = {                            -- the coarse hull (directories, kernel-enforced)
+    binds = { { path = "${project}" },   -- mode defaults to "rw"
+              { path = "/data", mode = "ro" } },
+    network = false,                     -- default: tool sandboxes get no network
+  },
 }
 ```
 
-`mode` is `or_stricter` (the default: that profile or anything more
-confining), `exact`, or `or_looser`. Profiles are totally ordered by
-confinement: `off < workspace < readonly < blackbox`. A preset with no
-`sandbox` field fits every profile.
-
-The requirement is declarative — the engine compares, it never applies a
-profile. `;;p` silently skips presets the running profile does not satisfy
-(cycling is cheap and must never restart anything); they still appear in the
-configuration window, greyed with their reason, and selecting one offers the
-agent restart needed to satisfy it. The confirmation text depends on the
-direction and on whether the provider supports `session/load` — without it,
-restarting loses the conversation, and the prompt says so.
+Rules speak globs, binds speak directories; neither is derived from the
+other. A preset without a section means project-rw/no-network; explicit
+binds REPLACE that default. The one confusing combination — a non-deny rule
+whose resource no bind can reach (the gate says yes, the tool then dies at
+the kernel wall) — is flagged with a warning when the preset is saved or
+loaded.
 
 ### Sandbox
 
-`sandbox` confines the **agent process itself** (and every MCP server it
-spawns, weave's tool shim included) with
-[bubblewrap](https://github.com/containers/bubblewrap). It is the enforcement
-half of the permission engine: with the project read-only at the filesystem
-level, the agent's builtin write/execute tools hit the wall and edits must
-flow through the `weave:*` MCP tools — where your permission rules apply.
+`sandbox` (design doc: `design-agent-sandbox-v2.md` in the superproject) has
+two modes. **Off** is today's unsandboxed behavior. **On** runs the agent
+process inside the one invariant maximal
+[bubblewrap](https://github.com/containers/bubblewrap) sandbox — there is
+nothing to configure on it, because the agent process is not a policy
+surface; all capability lives at the tool layer:
+
+- The **agent process** sees: its own state/auth dirs, the network (the
+  model API is non-negotiable), the scoped clankbox broker socket — and
+  nothing else. The project directory is an **empty read-only tmpfs**, so
+  its builtin write tools fail loudly (EROFS) instead of writing into a
+  void, and the weave `w:*` tools are the only paths that persist.
+  `$NVIM` (nvim's raw RPC socket — `nvim_exec_lua`, a full escape) never
+  enters the sandbox; the broker socket speaks scoped MCP and nothing else.
+- **Tool invocations** (tasks, searches) each run in their own bwrap
+  sandbox derived from the active preset's `sandbox` section on EVERY
+  spawn: only the listed binds, **network off by default**. A preset switch
+  applies to the very next task — no restarts.
+- **Agentside permission prompts are auto-approved** under mode on: nothing
+  the agent does directly can have real effects, so the prompt gated
+  nothing and only double-prompted. Your rules govern the `weave:*` calls,
+  which are where the effects actually happen.
 
 ```lua
 require("weave").setup({
   sandbox = {
-    profile = "readonly",            -- "off" (default) | "workspace" | "readonly" | "blackbox"
+    mode = "off",                    -- "off" (default) | "on"
     state_paths = { "~/.myagent" },  -- extra rw binds on top of shipped per-provider defaults
     ro_paths = {},                   -- extra ro binds
     env_allowlist = nil,             -- nil = inherit the full environment (default)
   },
   acp_providers = {
-    ["codex-acp"] = { sandbox = { profile = "off" } },  -- per-provider override
+    ["codex-acp"] = { sandbox = { mode = "off" } },  -- per-provider override
   },
 })
 ```
 
-Profiles, by what the project directory looks like from inside:
-
-| Profile | Project dir | Meaning |
-| --- | --- | --- |
-| `off` | untouched | No wrapping (the default) |
-| `workspace` | read-write | Pure containment: the rest of `$HOME` is hidden behind a tmpfs (except `state_paths`), the rest of the filesystem is read-only |
-| `readonly` | read-only | Same, plus writes inside the project fail — edits and commands must flow through the weave MCP tools |
-| `blackbox` | absent | Even reads go through weave, so the transcript shows every file the agent ever saw |
-
-In every sandboxed profile `/tmp`, `/dev` and `/proc` are private, the rest
-of the filesystem is bound read-only (`/nix/store`, `/etc/ssl`,
-`resolv.conf` keep working), and the **network is shared** — this is
-guardrails and tool-forcing, not an exfiltration boundary. Known providers
-ship rw grants for their state/auth dirs (`~/.claude` + `~/.claude.json`,
-`~/.gemini`, `~/.codex`, …) plus the XDG dirs matching the binary name;
-anything else goes in `state_paths` (all binds tolerate missing paths). The
-`$NVIM` socket and the clankbox checkout are bound automatically so the tool
-suite keeps working inside.
-
-The per-provider `sandbox` table overrides scalars (`profile`,
+Known providers ship rw grants for their state/auth dirs (`~/.claude` +
+`~/.claude.json`, `~/.gemini`, `~/.codex`, …) plus the XDG dirs matching
+the binary name; anything else goes in `state_paths` (all binds tolerate
+missing paths). The per-provider `sandbox` table overrides scalars (`mode`,
 `env_allowlist`) and **adds** its `state_paths`/`ro_paths` to the global
-ones. `kiro-acp` ships `profile = "off"`: Kiro self-sandboxes via
-aim-sandbox, and nesting user namespaces inside it is expected to fail.
+ones. `kiro-acp` ships `mode = "off"`: Kiro self-sandboxes via aim-sandbox,
+and nesting user namespaces inside it is expected to fail.
 
-Backend support: Linux with `bwrap` on `PATH`. Anywhere else a configured
-profile degrades to `off` with a one-time warning — nothing breaks, the
-tools are offered rather than forced. The degradation is applied when the
-profile is *resolved*, so everything downstream (the permissions window, the
-sandboxed presets, the sidebar) reports `off` too, rather than vouching for a
-confinement that is not there.
+Backend support: Linux with `bwrap` on `PATH`. Anywhere else mode `on`
+degrades to `off` with a one-time warning — nothing breaks; the permission
+rules still apply, only kernel enforcement and tool-forcing are lost. The
+degradation is applied when the mode is *resolved*, so everything
+downstream (the permissions window, the sidebar, the auto-approve flow)
+reports `off` too, rather than vouching for a confinement that is not
+there.
 
-#### Choosing a profile
+#### Choosing the mode
 
-The bwrap argv is built once, at spawn, so a profile cannot change on a
-running agent. Two places to choose one:
+The bwrap argv is built once, at spawn, so the mode cannot change on a
+running agent — the on/off toggle is the ONE remaining restart in the
+design. Two places to choose:
 
-- **+ new session** asks for a profile after the provider. Nothing has
-  spawned yet, so this choice is free.
-- The permissions window's **Sandbox profile** row shows the running agent's
-  profile as session state, with `[restart with profile…]` beside it. This
-  is the only path that *reduces* confinement, and it always confirms first.
+- **+ new session** asks after the provider. Nothing has spawned yet, so
+  this choice is free.
+- The permissions window's **Sandbox** row shows the running agent's mode
+  as session state, with a restart button beside it. This is the only path
+  that *reduces* confinement, and it always confirms first — the text
+  depends on the direction and on whether the provider supports
+  `session/load` (without it, restarting loses the conversation, and the
+  prompt says so).
 
-Agent processes are pooled per **(provider, profile)** pair, not per provider:
-sessions of the same provider at the same profile share one process (which is
-what ACP intends), and asking for a different profile spawns a second one
-rather than silently joining the first at a confinement you did not ask for.
-A process is stopped once no session is left using it.
+Agent processes are pooled per **(provider, mode)** pair, not per provider:
+sessions at the same mode share one process (which is what ACP intends),
+and asking for the other mode spawns a second one rather than silently
+joining the first at a confinement you did not ask for. A process is
+stopped once no session is left using it.
 
-One caveat worth knowing before it looks like a bug: a session restored into
-a different profile comes back without knowledge of any tasks that were
+One caveat worth knowing before it looks like a bug: a session restored
+into a different mode comes back without knowledge of any tasks that were
 running, and may carry history referencing paths it can no longer reach.
 
-Note that weave's own MCP tools run host-side, in Neovim, outside bwrap.
-Under `blackbox` they are a deliberate read channel out of the sandbox and
-the agent's only route to the project. The profile confines the agent
-*process*; what it plus the permission engine buys is that every such read is
-mediated and visible.
-
-Support matrix (what has actually been exercised, not what is expected to
-work):
-
-| Provider | Spawns sandboxed | Notes |
-| --- | --- | --- |
-| `claude-agent-acp` | verified, all three profiles | ACP handshake completes under `workspace`/`readonly`/`blackbox` |
-| `kiro-acp` | opted out | Ships `profile = "off"`: self-sandboxes via aim-sandbox, nested user namespaces are expected to fail |
-| everything else | untested | No reason to expect failure; the wrapper is provider-agnostic |
-
-Spawning is only half of it: whether an agent **recovers** into the weave
-MCP tools when its builtin write/execute tools hit the read-only wall is
-provider- and model-dependent, and is not something this plugin can
-guarantee. Try `readonly` with your provider before relying on it, and use
-`workspace` where you only want containment without tool redirection.
+Whether an agent **recovers** into the weave MCP tools when its builtin
+tools hit the read-only wall is provider- and model-dependent, and is not
+something this plugin can guarantee. Try mode `on` with your provider on a
+scratch project before relying on it.
 
 ---
 
@@ -878,8 +866,8 @@ See [Inline code feedback](#inline-code-feedback) above for the full picture.
                              resolution through the engine)
       permissions.lua      the client-side permission engine: rules, presets
                              (builtin/setup/runtime), the active preset
-      sandbox.lua          bwrap argv rewrite for the agent spawn (profiles
-                             off/workspace/readonly/blackbox)
+      sandbox.lua          bwrap argv rewrites: the invariant agent sandbox
+                             (mode on/off) and per-invocation tool hulls
       session.lua          one conversation: client, turns, queue/steer/cancel
       registry.lua         active sessions (editor-global) + per-tab selection
       task_store.lua       managed shell tasks (the task_* tool lifecycle)

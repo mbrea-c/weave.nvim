@@ -34,16 +34,14 @@ describe("preset sandbox hull", function()
       assert.is_true(p.sandbox.network)
     end)
 
-    it("still accepts and validates the v1 requirement fields", function()
-      Permissions.save_preset({
-        name = "both",
-        rules = {},
-        sandbox = { profile = "workspace", binds = { { path = "${project}" } } },
-      })
-      assert.equal("workspace", Permissions.get("both").sandbox.profile)
+    it("rejects the removed v1 requirement fields loudly", function()
       assert_errors_with(function()
-        Permissions.save_preset({ name = "bad", rules = {}, sandbox = { profile = "bogus" } })
-      end, "`sandbox.profile` must be")
+        Permissions.save_preset({
+          name = "both",
+          rules = {},
+          sandbox = { profile = "workspace", binds = { { path = "${project}" } } },
+        })
+      end, "removed")
     end)
 
     it("rejects malformed binds and network", function()

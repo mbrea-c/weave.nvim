@@ -172,11 +172,14 @@ describe("permissions engine", function()
     end)
     assert.equal("auto", Permissions.cycle().name)
     assert.equal("allow_edits", Permissions.cycle().name)
+    assert.equal("sandboxed_normal", Permissions.cycle().name)
+    assert.equal("sandboxed_auto", Permissions.cycle().name)
+    assert.equal("sandboxed_allow_edits", Permissions.cycle().name)
     assert.equal("normal", Permissions.cycle().name)
-    assert.equal(3, fired)
+    assert.equal(6, fired)
     unsub()
     Permissions.cycle()
-    assert.equal(3, fired)
+    assert.equal(6, fired)
   end)
 
   it("save_preset validates loudly", function()
@@ -314,147 +317,56 @@ describe("permissions sandboxed builtins", function()
   end)
 end)
 
-describe("permissions sandbox requirements", function()
+describe("permissions sandbox mode", function()
   after_each(function()
     Permissions._reset()
   end)
 
-  it("orders the profiles by confinement", function()
-    assert.is_true(Permissions.profile_rank("off") < Permissions.profile_rank("workspace"))
-    assert.is_true(Permissions.profile_rank("workspace") < Permissions.profile_rank("readonly"))
-    assert.is_true(Permissions.profile_rank("readonly") < Permissions.profile_rank("blackbox"))
+  it("set_mode/current_mode reflect the last spawn", function()
+    assert.equal("off", Permissions.current_mode())
+    Permissions.set_mode("on")
+    assert.equal("on", Permissions.current_mode())
+    Permissions.set_mode(nil)
+    assert.equal("off", Permissions.current_mode())
   end)
 
-  it("a preset with no sandbox field is compatible with every profile", function()
-    for _, profile in ipairs({ "off", "workspace", "readonly", "blackbox" }) do
-      assert.is_true(Permissions.preset_compatible(Permissions.get("normal"), profile))
-    end
-  end)
-
-  it("or_stricter is satisfied by the named profile or anything stricter", function()
-    Permissions.save_preset({
-      name = "p",
-      sandbox = { profile = "readonly", mode = "or_stricter" },
-      rules = { { tool = "*", decision = "allow" } },
-    })
-    local p = Permissions.get("p")
-    assert.is_false(Permissions.preset_compatible(p, "off"))
-    assert.is_false(Permissions.preset_compatible(p, "workspace"))
-    assert.is_true(Permissions.preset_compatible(p, "readonly"))
-    assert.is_true(Permissions.preset_compatible(p, "blackbox"))
-  end)
-
-  it("or_stricter is the default when mode is omitted", function()
-    Permissions.save_preset({
-      name = "p",
-      sandbox = { profile = "readonly" },
-      rules = { { tool = "*", decision = "allow" } },
-    })
-    assert.is_false(Permissions.preset_compatible(Permissions.get("p"), "workspace"))
-    assert.is_true(Permissions.preset_compatible(Permissions.get("p"), "blackbox"))
-  end)
-
-  it("exact is satisfied only by that profile", function()
-    Permissions.save_preset({
-      name = "p",
-      sandbox = { profile = "readonly", mode = "exact" },
-      rules = { { tool = "*", decision = "allow" } },
-    })
-    local p = Permissions.get("p")
-    assert.is_false(Permissions.preset_compatible(p, "workspace"))
-    assert.is_true(Permissions.preset_compatible(p, "readonly"))
-    assert.is_false(Permissions.preset_compatible(p, "blackbox"))
-  end)
-
-  it("or_looser is satisfied by the named profile or anything looser", function()
-    Permissions.save_preset({
-      name = "p",
-      sandbox = { profile = "readonly", mode = "or_looser" },
-      rules = { { tool = "*", decision = "allow" } },
-    })
-    local p = Permissions.get("p")
-    assert.is_true(Permissions.preset_compatible(p, "off"))
-    assert.is_true(Permissions.preset_compatible(p, "readonly"))
-    assert.is_false(Permissions.preset_compatible(p, "blackbox"))
-  end)
-
-  it("reports a reason naming the requirement and the current profile", function()
-    Permissions.save_preset({
-      name = "p",
-      sandbox = { profile = "readonly", mode = "or_stricter" },
-      rules = { { tool = "*", decision = "allow" } },
-    })
-    local ok, reason = Permissions.preset_compatible(Permissions.get("p"), "off")
-    assert.is_false(ok)
-    assert.truthy(reason:match("readonly"))
-    assert.truthy(reason:match("off"))
-  end)
-
-  it("validates the sandbox field loudly", function()
+  it("the removed v1 requirement fields error loudly", function()
+    -- a preset naming a confinement requirement weave no longer honours
+    -- must not silently load as if it were honoured
     assert.has_error(function()
-      Permissions.save_preset({ name = "p", sandbox = { profile = "yolo" }, rules = {} })
-    end, "profile")
+      Permissions.save_preset({ name = "p", sandbox = { profile = "workspace" }, rules = {} })
+    end, "removed")
     assert.has_error(function()
-      Permissions.save_preset({ name = "p", sandbox = { profile = "off", mode = "maybe" }, rules = {} })
-    end, "mode")
+      Permissions.save_preset({ name = "p", sandbox = { mode = "or_stricter" }, rules = {} })
+    end, "removed")
   end)
 
-  it("survives the round trip through save_preset", function()
-    Permissions.save_preset({
-      name = "p",
-      sandbox = { profile = "blackbox", mode = "exact" },
-      rules = { { tool = "*", decision = "allow" } },
-    })
-    assert.same({ profile = "blackbox", mode = "exact" }, Permissions.get("p").sandbox)
-  end)
-end)
-
-describe("permissions cycle under a profile", function()
-  after_each(function()
-    Permissions._reset()
-  end)
-
-  it("skips presets incompatible with the current profile", function()
-    Permissions.set_profile("off")
-    local names = {}
-    for _, p in ipairs(Permissions.compatible_presets()) do
-      names[#names + 1] = p.name
-    end
-    assert.same({ "normal", "auto", "allow_edits" }, names)
-
-    Permissions.set_profile("workspace")
-    names = {}
-    for _, p in ipairs(Permissions.compatible_presets()) do
-      names[#names + 1] = p.name
-    end
-    assert.same({
-      "normal",
-      "auto",
-      "allow_edits",
-      "sandboxed_normal",
-      "sandboxed_auto",
-      "sandboxed_allow_edits",
-    }, names)
-  end)
-
-  it("cycle() never lands on an incompatible preset", function()
-    Permissions.set_profile("off")
+  it("cycle() walks every preset regardless of mode", function()
+    Permissions.set_mode("on")
+    local seen = {}
     for _ = 1, 6 do
-      local p = Permissions.cycle()
-      assert.is_true(Permissions.preset_compatible(p, "off"))
+      seen[#seen + 1] = Permissions.cycle().name
     end
+    table.sort(seen)
+    assert.same(
+      { "allow_edits", "auto", "normal", "sandboxed_allow_edits", "sandboxed_auto", "sandboxed_normal" },
+      seen
+    )
   end)
 
-  it("does not filter to empty when nothing is compatible", function()
-    Permissions.setup({
-      presets = {
-        { name = "only", sandbox = { profile = "blackbox" }, rules = { { tool = "*", decision = "allow" } } },
-      },
-    })
-    Permissions.set_profile("off")
-    -- the builtins are unconstrained, so force the pathological case directly
-    assert.is_true(#Permissions.compatible_presets("off") > 0)
-    assert.is_true(#Permissions.compatible_presets("blackbox") > 0)
+  it("setup with no preference defaults to the sandboxed variant under mode on", function()
+    Permissions.set_mode("on")
+    Permissions.setup({})
+    assert.equal("sandboxed_normal", Permissions.active().name)
+  end)
+
+  it("setup keeps the plain preset when mode is off, or when pinned", function()
+    Permissions.set_mode("off")
+    Permissions.setup({})
+    assert.equal("normal", Permissions.active().name)
+    Permissions.set_mode("on")
+    Permissions.setup({ preset = "auto" })
+    assert.equal("auto", Permissions.active().name)
   end)
 end)
 

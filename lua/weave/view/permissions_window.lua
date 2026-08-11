@@ -139,40 +139,24 @@ local function open_editor(preset)
 end
 
 --- One preset row: the active marker + label as an activate button, the
---- source tag dimmed beside it.
----
---- A preset the current sandbox profile does not satisfy is shown GREYED with
---- its reason, and stays selectable. Silence belongs in the ;;p cycle, not in
---- this list: a preset appearing in neither is indistinguishable from one
---- that does not exist, and the user never learns that turning on a profile
---- would unlock it. Activating one routes through profile_transition, which
---- confirms the restart before anything is applied.
+--- source tag dimmed beside it. Every preset is selectable under every
+--- sandbox mode (v2: preset choice is policy; the hull bounds blast radius
+--- regardless), so there is no greyed/incompatible state anymore.
 --- @param p weave.permissions.Preset
 --- @param active_name string
 local function preset_row(p, active_name)
   local marker = p.name == active_name and "●" or "○"
-  local ok, reason = Permissions.preset_compatible(p)
   local label = ("%s %s"):format(marker, p.label or p.name)
-  local children = {
-    ok and bare_button(label, function()
-      Permissions.set_active(p.name)
-    end) or {
-      comp = ui.button,
-      props = {
-        label = label,
-        theme = false,
-        style = { text_hl = "@comment", _hover = { hl = "FibrousHover" } },
-        on_press = function()
-          require("weave.profile_transition").select_preset(p.name)
-        end,
-      },
+  return {
+    comp = ui.row,
+    props = { gap = 2 },
+    children = {
+      bare_button(label, function()
+        Permissions.set_active(p.name)
+      end),
+      dim(p.source or "?"),
     },
-    dim(p.source or "?"),
   }
-  if reason then
-    children[#children + 1] = dim("(" .. reason .. ")")
-  end
-  return { comp = ui.row, props = { gap = 2 }, children = children }
 end
 
 --- @param rule weave.permissions.Rule
@@ -239,24 +223,19 @@ local function Window(ctx)
 
   -- The running agent's confinement, shown as session STATE rather than as a
   -- toggle: the bwrap argv was built at spawn, so anything that reads as "I
-  -- turned on blackbox" while a process spawned under `off` still holds an
-  -- open session is a confinement claim that is not true.
+  -- turned the sandbox on" while a process spawned under `off` still holds
+  -- an open session is a confinement claim that is not true. The button is
+  -- the one remaining restart in the design (mode_transition).
   rows[#rows + 1] = blank()
-  rows[#rows + 1] = header("Sandbox profile")
-  local profile = Permissions.current_profile()
+  rows[#rows + 1] = header("Sandbox")
+  local mode = Permissions.current_mode()
   rows[#rows + 1] = {
     comp = ui.row,
     props = { gap = 2 },
     children = {
-      { comp = ui.label, props = { text = "  " .. profile } },
-      bare_button("[restart with profile…]", function()
-        local Transition = require("weave.profile_transition")
-        vim.ui.select({ "off", "workspace", "readonly", "blackbox" }, { prompt = "Sandbox profile" }, function(choice)
-          if not choice or choice == profile then
-            return
-          end
-          Transition.request_profile(choice)
-        end)
+      { comp = ui.label, props = { text = "  " .. mode } },
+      bare_button(mode == "on" and "[restart unsandboxed…]" or "[restart sandboxed…]", function()
+        require("weave.mode_transition").request_mode(mode == "on" and "off" or "on")
       end),
     },
   }

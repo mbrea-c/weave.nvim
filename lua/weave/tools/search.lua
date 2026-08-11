@@ -2,7 +2,7 @@
 --
 -- The rest of the suite reaches individual files the agent already knows
 -- about. These are how it finds them, and under the `blackbox` sandbox
--- profile they are the ONLY way: the project directory is absent from the
+-- mode they are the ONLY way: the project directory is absent from the
 -- agent's filesystem view, so its own built-in search returns empty rather
 -- than erroring, and it concludes the tree is empty.
 --

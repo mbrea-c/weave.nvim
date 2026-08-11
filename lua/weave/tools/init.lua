@@ -72,7 +72,7 @@ function M.register_into(server)
   server.register_tool("task_kill", Gate.wrap("task_kill", tasks.kill, { kind = "execute" }))
   -- Everything else the agent can reach over this host — clankbox's own
   -- exec_lua, another plugin's tools — through the same engine, as mcp:<tool>.
-  -- Without this a sandbox profile is decorative: exec_lua runs arbitrary Lua
+  -- Without this the sandbox is decorative: exec_lua runs arbitrary Lua
   -- in the unsandboxed editor. Soft: an older clankbox has no `use`.
   if type(server.use) == "function" then
     server.use(Gate.middleware())

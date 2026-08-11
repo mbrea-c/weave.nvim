@@ -490,9 +490,8 @@ function M.PermissionsSection(ctx, props)
     { comp = ui.label, props = { text = "Preset: " .. (active.label or active.name) .. "  (;;p)" } },
   }
   local Permissions = require("weave.permissions")
-  local profile = Permissions.current_profile()
-  if profile ~= "off" then
-    rows[#rows + 1] = dim("Sandbox: " .. profile)
+  if Permissions.current_mode() == "on" then
+    rows[#rows + 1] = dim("Sandbox: on")
   end
   -- A grant the user cannot see is a grant they cannot revoke; the list and
   -- the revoke live one click away in the permissions window.

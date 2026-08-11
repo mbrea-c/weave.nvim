@@ -99,26 +99,24 @@ local function pick_provider(on_picked)
   end)
 end
 
---- vim.ui.select over the sandbox profiles (● marks the one this provider
+--- vim.ui.select over the sandbox modes (● marks the one this provider
 --- resolves to today). Offered at session START because that is the one
---- moment the profile is genuinely free: nothing has spawned, so there is no
---- restart to pay and no conversation to lose. If picking a profile is a
+--- moment the mode is genuinely free: nothing has spawned, so there is no
+--- restart to pay and no conversation to lose. If picking a mode is a
 --- normal part of starting a session, most users never need a mid-session
---- transition in either direction.
+--- toggle in either direction.
 --- @param provider string
---- @param on_picked fun(profile: string)
-local function pick_profile(provider, on_picked)
+--- @param on_picked fun(mode: string)
+local function pick_mode(provider, on_picked)
   local Sandbox = require("weave.sandbox")
   local cfg = Config.acp_providers[provider]
-  local current = Sandbox.resolve(cfg and cfg.sandbox).profile
+  local current = Sandbox.resolve(cfg and cfg.sandbox).mode
   local labels = {
     off = "off — no sandbox",
-    workspace = "workspace — project read-write",
-    readonly = "readonly — project read-only",
-    blackbox = "blackbox — project absent (weave tools only)",
+    on = "on — fully confined (weave tools only, sandboxed per preset)",
   }
-  vim.ui.select({ "off", "workspace", "readonly", "blackbox" }, {
-    prompt = "Sandbox profile:",
+  vim.ui.select({ "off", "on" }, {
+    prompt = "Sandbox:",
     format_item = function(name)
       return (name == current and "● " or "  ") .. labels[name]
     end,
@@ -303,8 +301,8 @@ function M.sessions(opts)
     end,
     on_new = function()
       pick_provider(function(provider)
-        pick_profile(provider, function(profile)
-          AgentInstance.set_profile_override(provider, profile)
+        pick_mode(provider, function(mode)
+          AgentInstance.set_mode_override(provider, mode)
           select_session(Registry.add({ provider = provider, get_instance = get_instance }))
         end)
       end)

@@ -14,9 +14,9 @@ local function setup(opts)
 end
 
 -- Mode on (the session's client spawned under the invariant maximal
--- sandbox, internally "blackbox"): agentside permission requests gate
--- nothing the agent can actually do, so the bridge auto-answers allow and
--- the double-prompt disappears. The REAL gate is the clientside tool layer.
+-- sandbox): agentside permission requests gate nothing the agent can
+-- actually do, so the bridge auto-answers allow and the double-prompt
+-- disappears. The REAL gate is the clientside tool layer.
 describe("acp_bridge mode-on auto-approve", function()
   before_each(function()
     Permissions._reset()
@@ -35,10 +35,10 @@ describe("acp_bridge mode-on auto-approve", function()
     }
   end
 
-  it("a blackbox-spawned session auto-answers allow, nothing queued", function()
+  it("a mode-on session auto-answers allow, nothing queued", function()
     local store, handlers = setup({
-      sandbox_profile = function()
-        return "blackbox"
+      sandbox_mode = function()
+        return "on"
       end,
     })
     local answered
@@ -51,8 +51,8 @@ describe("acp_bridge mode-on auto-approve", function()
 
   it("no allow option offered: falls through to the ordinary flow", function()
     local store, handlers = setup({
-      sandbox_profile = function()
-        return "blackbox"
+      sandbox_mode = function()
+        return "on"
       end,
     })
     local answered = "unset"
@@ -66,7 +66,7 @@ describe("acp_bridge mode-on auto-approve", function()
 
   it("an unsandboxed session keeps the preset flow", function()
     local store, handlers = setup({
-      sandbox_profile = function()
+      sandbox_mode = function()
         return "off"
       end,
     })

@@ -10,7 +10,7 @@ local Sandbox = require("weave.sandbox")
 -- ro-binds (progpath/clankbox are environment-dependent).
 local function opts(extra)
   local o = {
-    profile = "workspace",
+    mode = "on",
     home = "/home/u",
     cwd = "/home/u/proj",
     nvim_socket = false,
@@ -65,13 +65,13 @@ describe("sandbox wrap", function()
     Sandbox._reset()
   end)
 
-  it("profile off passes the command through untouched", function()
-    local cmd, args = Sandbox.wrap("gemini", { "--acp" }, opts({ profile = "off" }))
+  it("mode off passes the command through untouched", function()
+    local cmd, args = Sandbox.wrap("gemini", { "--acp" }, opts({ mode = "off" }))
     assert.equal("gemini", cmd)
     assert.same({ "--acp" }, args)
   end)
 
-  it("workspace: bwrap argv with containment flags and the project bound rw", function()
+  it("mode on: containment floor, project an EMPTY READ-ONLY tmpfs", function()
     local cmd, args = Sandbox.wrap("gemini", { "--acp" }, opts())
     assert.equal("bwrap", cmd)
     assert.truthy(find_seq(args, { "--die-with-parent" }))
@@ -81,27 +81,17 @@ describe("sandbox wrap", function()
     assert.truthy(find_seq(args, { "--dev", "/dev" }))
     assert.truthy(find_seq(args, { "--proc", "/proc" }))
     assert.truthy(find_seq(args, { "--tmpfs", "/tmp" }))
-    -- $HOME hidden, project rw on top (order matters: the bind must follow)
+    -- $HOME hidden; the project a read-only EMPTY tmpfs on top (writes must
+    -- fail loudly, never land in a void) — and never bound to the host
     local home_at = find_seq(args, { "--tmpfs", "/home/u" })
-    local proj_at = find_seq(args, { "--bind", "/home/u/proj", "/home/u/proj" })
+    local proj_at = find_seq(args, { "--tmpfs", "/home/u/proj", "--remount-ro", "/home/u/proj" })
     assert.truthy(home_at)
     assert.truthy(proj_at)
     assert.is_true(home_at < proj_at)
-    -- the wrapped command comes last, after the -- separator
-    assert.same({ "--", "gemini", "--acp" }, { args[#args - 2], args[#args - 1], args[#args] })
-  end)
-
-  it("readonly: project bound ro, never rw", function()
-    local _, args = Sandbox.wrap("gemini", {}, opts({ profile = "readonly" }))
-    assert.truthy(find_seq(args, { "--ro-bind", "/home/u/proj", "/home/u/proj" }))
-    assert.is_nil(find_seq(args, { "--bind", "/home/u/proj", "/home/u/proj" }))
-  end)
-
-  it("blackbox: project an EMPTY READ-ONLY tmpfs (writes fail loudly)", function()
-    local _, args = Sandbox.wrap("gemini", {}, opts({ profile = "blackbox" }))
-    assert.truthy(find_seq(args, { "--tmpfs", "/home/u/proj", "--remount-ro", "/home/u/proj" }))
     assert.is_nil(find_seq(args, { "--bind", "/home/u/proj", "/home/u/proj" }))
     assert.is_nil(find_seq(args, { "--ro-bind", "/home/u/proj", "/home/u/proj" }))
+    -- the wrapped command comes last, after the -- separator
+    assert.same({ "--", "gemini", "--acp" }, { args[#args - 2], args[#args - 1], args[#args] })
   end)
 
   it("state_paths bind rw with -try, ~ expanded against home", function()
@@ -159,10 +149,10 @@ describe("sandbox wrap", function()
     assert.truthy(find_seq(args, { "--ro-bind-try", "/home/u/link", "/home/u/link" }))
   end)
 
-  it("rejects an unknown profile loudly", function()
+  it("rejects an unknown mode loudly", function()
     assert.has_error(function()
-      Sandbox.wrap("gemini", {}, opts({ profile = "chroot" }))
-    end, "unknown sandbox profile")
+      Sandbox.wrap("gemini", {}, opts({ mode = "chroot" }))
+    end, "unknown sandbox mode")
   end)
 
   it("degrades to off with a single notify when no backend is available", function()
@@ -202,58 +192,20 @@ describe("sandbox resolve", function()
   end)
 
   it("merges the global config with a per-provider override", function()
-    Config.sandbox = { profile = "readonly", state_paths = { "~/.global" }, ro_paths = {} }
-    local resolved = Sandbox.resolve({ profile = "off", state_paths = { "~/.mine" } })
+    Config.sandbox = { mode = "on", state_paths = { "~/.global" }, ro_paths = {} }
+    local resolved = Sandbox.resolve({ mode = "off", state_paths = { "~/.mine" } })
     -- scalars: the provider wins
-    assert.equal("off", resolved.profile)
+    assert.equal("off", resolved.mode)
     -- lists: concatenated, global first
     assert.same({ "~/.global", "~/.mine" }, resolved.state_paths)
   end)
 
   it("falls back to the global config when the provider has none", function()
-    Config.sandbox = { profile = "workspace", state_paths = {}, ro_paths = {}, env_allowlist = { "PATH" } }
+    Config.sandbox = { mode = "on", state_paths = {}, ro_paths = {}, env_allowlist = { "PATH" } }
     local resolved = Sandbox.resolve(nil)
-    assert.equal("workspace", resolved.profile)
+    -- resolves to "on" only when a backend exists; degraded is still honest
+    assert.equal(Sandbox._available() and "on" or "off", resolved.mode)
     assert.same({ "PATH" }, resolved.env_allowlist)
-  end)
-end)
-
--- v2 modes: `mode = "on"` IS the invariant maximal sandbox, mapped onto the
--- internal blackbox profile so the profile plumbing (keying, requirements,
--- degradation) keeps working until phase F deletes it.
-describe("sandbox modes", function()
-  local Config = require("weave.config")
-  local real_available = Sandbox._available
-  local saved
-
-  before_each(function()
-    saved = vim.deepcopy(Config.sandbox)
-    Sandbox._available = function()
-      return true
-    end
-  end)
-  after_each(function()
-    Config.sandbox = saved
-    Sandbox._available = real_available
-  end)
-
-  it('mode "on" resolves to the maximal profile, "off" to off', function()
-    Config.sandbox = { mode = "on" }
-    assert.equal("blackbox", Sandbox.resolve(nil).profile)
-    Config.sandbox = { mode = "off" }
-    assert.equal("off", Sandbox.resolve(nil).profile)
-  end)
-
-  it("a provider's mode overrides the global config either way", function()
-    Config.sandbox = { profile = "workspace" }
-    assert.equal("blackbox", Sandbox.resolve({ mode = "on" }).profile)
-    Config.sandbox = { mode = "on" }
-    assert.equal("off", Sandbox.resolve({ mode = "off" }).profile)
-  end)
-
-  it("mode wins over profile at the same level", function()
-    Config.sandbox = { mode = "on", profile = "workspace" }
-    assert.equal("blackbox", Sandbox.resolve(nil).profile)
   end)
 
   it("rejects an unknown mode loudly", function()
@@ -261,6 +213,13 @@ describe("sandbox modes", function()
     local ok, err = pcall(Sandbox.resolve, nil)
     assert.is_false(ok)
     assert.truthy(tostring(err):find('`mode` must be "on" or "off"', 1, true))
+  end)
+
+  it("rejects the removed v1 `profile` key loudly", function()
+    Config.sandbox = { profile = "readonly" }
+    local ok, err = pcall(Sandbox.resolve, nil)
+    assert.is_false(ok)
+    assert.truthy(tostring(err):find("`profile` was removed", 1, true))
   end)
 end)
 
@@ -330,14 +289,14 @@ describe("tool sandbox wrap", function()
   end)
 
   it("wrap_shell is inert while sandboxing is off", function()
-    Config.sandbox = { profile = "off" }
+    Config.sandbox = { mode = "off" }
     local cmd, args = Sandbox.wrap_shell("echo hi")
     assert.equal("sh", cmd)
     assert.same({ "-c", "echo hi" }, args)
   end)
 
   it("wrap_shell derives the ACTIVE preset's hull per spawn", function()
-    Config.sandbox = { profile = "workspace" }
+    Config.sandbox = { mode = "on" }
     -- active preset "normal" has no sandbox section: default hull =
     -- project rw, network off
     local cmd, args = Sandbox.wrap_shell("echo hi")
@@ -360,7 +319,7 @@ describe("tool sandbox wrap", function()
 end)
 
 -- Only when a backend actually exists (Linux + bwrap on PATH): spawn the
--- wrapped argv and verify the profile semantics for real.
+-- wrapped argv and verify the mode-on semantics for real.
 if Sandbox._available() then
   describe("sandbox integration", function()
     local cwd
@@ -375,9 +334,9 @@ if Sandbox._available() then
       vim.fn.delete(cwd, "rf")
     end)
 
-    local function run(profile, script)
+    local function run(script)
       local cmd, args = Sandbox.wrap("sh", { "-c", script }, {
-        profile = profile,
+        mode = "on",
         cwd = cwd,
         nvim_socket = false,
         runtime_ro_paths = {},
@@ -386,36 +345,23 @@ if Sandbox._available() then
       return out
     end
 
-    it("workspace: project writable, home hidden", function()
-      local out = run("workspace", "cat " .. cwd .. "/f.txt && touch " .. cwd .. "/w.txt && ls ~")
-      assert.equal(0, out.code, out.stderr)
-      assert.truthy(out.stdout:find("hello"))
-      -- the write really landed (same path, host side)
-      assert.equal(1, vim.fn.filereadable(cwd .. "/w.txt"))
-      -- home is an empty tmpfs (ls output after "hello" is nothing)
-      assert.is_nil(out.stdout:find("%S", out.stdout:find("hello") + 6))
-    end)
-
-    it("readonly: reads work, writes fail", function()
-      local ok_read = run("readonly", "cat " .. cwd .. "/f.txt")
-      assert.equal(0, ok_read.code, ok_read.stderr)
-      local write = run("readonly", "touch " .. cwd .. "/w.txt")
-      assert.is_true(write.code ~= 0)
-      assert.truthy(write.stderr:lower():find("read%-only"))
-      assert.equal(0, vim.fn.filereadable(cwd .. "/w.txt"))
-    end)
-
-    it("blackbox: the project is not there at all", function()
-      local out = run("blackbox", "ls " .. cwd)
+    it("mode on: the project is not there at all", function()
+      local out = run("ls " .. cwd)
       assert.equal(0, out.code, out.stderr)
       assert.is_nil(out.stdout:find("f%.txt"))
     end)
 
-    it("blackbox: a builtin-style write dies on EROFS, never a silent void", function()
-      local out = run("blackbox", "touch " .. cwd .. "/w.txt")
+    it("mode on: a builtin-style write dies on EROFS, never a silent void", function()
+      local out = run("touch " .. cwd .. "/w.txt")
       assert.is_true(out.code ~= 0)
       assert.truthy(out.stderr:lower():find("read%-only"))
       assert.equal(0, vim.fn.filereadable(cwd .. "/w.txt"))
+    end)
+
+    it("mode on: home is hidden", function()
+      local out = run("ls ~")
+      assert.equal(0, out.code, out.stderr)
+      assert.is_nil(out.stdout:find("%S"))
     end)
 
     local function run_tool(hull, script)

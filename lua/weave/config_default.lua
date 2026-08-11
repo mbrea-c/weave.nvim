@@ -30,12 +30,11 @@
 --- @field ripgrep_path? string Absolute path to `rg` for the glob/grep tools; nil = look on PATH
 
 --- @class weave.PermissionsConfig The client-side permission engine (weave.permissions)
---- @field preset? string Active preset at startup; unset = "normal", or its sandboxed_* variant when a profile is on
+--- @field preset? string Active preset at startup; unset = "normal", or its sandboxed_* variant when sandbox mode is on
 --- @field presets? weave.permissions.Preset[] Additional presets (the setup source; shadow builtins by name)
 
 --- @class weave.SandboxConfig Confinement for the spawned agent process (weave.sandbox; bwrap backend, Linux-only, degrades to "off" elsewhere)
---- @field mode? "on"|"off" v2 (design-agent-sandbox-v2.md): "on" = the invariant maximal agent sandbox (project absent; every effect flows through the sandboxed tool layer). Wins over `profile` when both are set.
---- @field profile? "off"|"workspace"|"readonly"|"blackbox" v1 vocabulary, still accepted: what the project dir looks like from inside (rw / ro / absent). Dies with the profile machinery.
+--- @field mode? "on"|"off" "on" = the invariant maximal agent sandbox (design-agent-sandbox-v2.md): project absent, every effect flows through the sandboxed tool layer. (The v1 `profile` key errors loudly.)
 --- @field state_paths? string[] Extra rw binds (agent state/auth dirs; known providers ship defaults), ~ ok, missing paths fine
 --- @field ro_paths? string[] Extra ro binds, same rules
 --- @field env_allowlist? string[] Keep only these inherited env vars (default: inherit everything, sandboxed or not)
@@ -189,8 +188,8 @@ local ConfigDefault = {
       args = { "acp" },
       env = {},
       -- Kiro wraps itself in aim-sandbox; nesting user namespaces inside it
-      -- is expected to fail, so it opts out of any global sandbox profile.
-      sandbox = { profile = "off" },
+      -- is expected to fail, so it opts out of any global sandbox mode.
+      sandbox = { mode = "off" },
     },
 
     ["pi-acp"] = {
@@ -233,21 +232,21 @@ local ConfigDefault = {
   -- "allow"|"deny"|"ask" } — see lua/weave/permissions.lua for the action
   -- vocabulary (acp:<kind>, weave:<tool>, mcp:<tool>, <plugin>:<tool>).
   -- `preset` is deliberately UNSET here rather than defaulted to "normal": an
-  -- absent value means "no preference", which is what lets a configured
-  -- sandbox profile select the matching sandboxed_* variant automatically.
-  -- Setting it pins the choice under every profile.
+  -- absent value means "no preference", which is what lets sandbox mode on
+  -- select the matching sandboxed_* variant automatically. Setting it pins
+  -- the choice under either mode.
   permissions = {
     presets = {},
   },
 
-  -- Agent process confinement (weave.sandbox): default off. "readonly" is
-  -- the sweet spot once you trust the MCP-tool fallback of your provider —
-  -- the agent reads the project directly, but every write and mutating
-  -- command must flow through the weave tools (and thus the permission
-  -- engine above). bwrap only; on platforms without it a configured profile
-  -- degrades to "off" with a one-time warning.
+  -- Agent process confinement (weave.sandbox, design-agent-sandbox-v2.md):
+  -- default off. Mode "on" runs the agent in the one invariant maximal
+  -- sandbox — the project absent (empty read-only tmpfs), every effect
+  -- flowing through the weave tools, which run in their own per-invocation
+  -- sandboxes under the active preset's hull. bwrap only; on platforms
+  -- without it mode "on" degrades to "off" with a one-time warning.
   sandbox = {
-    profile = "off",
+    mode = "off",
     state_paths = {},
     ro_paths = {},
   },

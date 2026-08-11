@@ -1,30 +1,22 @@
--- weave.sandbox: confine the ACP agent process with bubblewrap (design doc:
--- design-agent-sandbox.md, phase 2). The whole module is an argv rewrite —
--- `Sandbox.wrap(command, args, opts)` turns the provider invocation into a
--- `bwrap` one; the transport spawns whatever comes back, so there is exactly
--- one touch point (ACPClient:_setup_transport) and zero protocol changes.
+-- weave.sandbox: bubblewrap confinement, v2 (design-agent-sandbox-v2.md).
+-- Two wraps, both pure argv rewrites the spawner runs verbatim:
 --
--- Profiles, by what the PROJECT directory looks like from inside:
---   off        no wrapping (the default, and the forced result when no
---              backend exists on this platform — one-time notify)
---   workspace  project rw; the rest of $HOME hidden behind a tmpfs except
---              state_paths. Pure containment.
---   readonly   project ro: the agent's own read/search tools still work, but
---              every write must flow through the weave MCP tools.
---   blackbox   project absent: even reads go through weave, so the
---              transcript shows every file the agent ever saw.
+--   wrap       the AGENT process. Mode "off" = untouched; mode "on" = the
+--              one invariant maximal sandbox — the project an empty
+--              READ-ONLY tmpfs, $HOME hidden except the provider's own
+--              state/auth dirs, the scoped broker socket the only designed
+--              path out. There is no policy on the agent process; all
+--              capability lives at the tool layer.
+--   wrap_tool  a TOOL invocation (a task's shell, a search subprocess),
+--              confined to the active preset's hull (binds + network),
+--              re-derived on every spawn.
 --
--- In every sandboxed profile the rest of the filesystem is bound read-only
--- (/nix/store, /etc/ssl, resolv.conf and friends keep working), /tmp /dev
--- /proc are private, and the network is SHARED — domain filtering is
--- explicitly out of scope here. This is guardrails plus tool-forcing, not a
--- security boundary against a hostile agent with network access.
---
--- MCP servers are spawned BY the agent, so they live inside the same
--- sandbox: the $NVIM socket is bind-mounted (over the private /tmp when it
--- lives there) so the clankbox shim can still reach nvim, and the nvim
--- binary + clankbox checkout are bound read-only in case they sit under the
--- hidden $HOME.
+-- In both, the rest of the filesystem is bound read-only (/nix/store,
+-- /etc/ssl, resolv.conf and friends keep working) and /tmp /dev /proc are
+-- private. The AGENT keeps the network (the model API is non-negotiable);
+-- TOOLS lose it unless the hull grants it. The agent also keeps its own
+-- state dirs — an agent that cannot authenticate is just broken — so
+-- "no access to anything" carries exactly those two footnotes.
 
 local M = {}
 
@@ -44,7 +36,7 @@ local STATE_PATH_DEFAULTS = {
   ["copilot"] = { "~/.config/github-copilot" },
 }
 
-local PROFILES = { off = true, workspace = true, readonly = true, blackbox = true }
+local SANDBOX_MODES = { off = true, on = true }
 
 --- Backend availability: bwrap is Linux-only. Overridable test seam; a macOS
 --- Seatbelt backend would slot in behind this same check (the config surface
@@ -102,51 +94,50 @@ function M._runtime_ro_paths()
   return paths
 end
 
---- Degrade a requested profile to what this platform can actually deliver,
---- warning once. Both resolve() and wrap() go through here so the profile
---- weave REPORTS is the profile the agent RUNS at: claiming `blackbox` on a
---- machine without bwrap would have the permissions UI and the sandboxed
---- presets vouching for a confinement that is not there.
---- @param profile string
+--- Degrade a requested mode to what this platform can actually deliver,
+--- warning once. Both resolve() and wrap() go through here so the mode
+--- weave REPORTS is the mode the agent RUNS at: claiming "on" on a machine
+--- without bwrap would have the permissions UI and the auto-approve flow
+--- vouching for a confinement that is not there.
+--- @param mode string
 --- @return string
-local function degrade(profile)
-  if profile == "off" or M._available() then
-    return profile
+local function degrade(mode)
+  if mode == "off" or M._available() then
+    return mode
   end
   if not notified then
     notified = true
     vim.notify(
-      ('weave: sandbox profile "%s" requested but no backend is available on this platform; agents run unsandboxed'):format(
-        profile
-      ),
+      "weave: sandbox mode on requested but no backend is available on this platform; agents run unsandboxed",
       vim.log.levels.WARN
     )
   end
   return "off"
 end
 
---- The profile one config level asks for. v2 vocabulary first: `mode = "on"`
---- IS the invariant maximal sandbox, which internally is the blackbox
---- profile — one honest mapping instead of a parallel machinery, and the
---- profile plumbing (keying, preset requirements, degradation) keeps
---- working until phase F deletes it. The v1 `profile` key stays accepted
---- underneath during the transition.
+--- The mode one config level asks for. The v1 `profile` key was removed
+--- with the profile machinery (design-agent-sandbox-v2.md phase F) — a
+--- config still using it must fail LOUDLY, not silently run unsandboxed at
+--- a different confinement than it named.
 --- @param cfg weave.SandboxConfig
 --- @return string|nil
-local function requested_profile(cfg)
-  if cfg.mode ~= nil then
-    if cfg.mode ~= "on" and cfg.mode ~= "off" then
-      error(('weave.sandbox: `mode` must be "on" or "off", got %s'):format(vim.inspect(cfg.mode)), 0)
-    end
-    return cfg.mode == "on" and "blackbox" or "off"
+local function requested_mode(cfg)
+  if cfg.profile ~= nil then
+    error(
+      'weave.sandbox: `profile` was removed (sandbox v2): use `mode = "on"` (invariant maximal sandbox) or "off"',
+      0
+    )
   end
-  return cfg.profile
+  if cfg.mode ~= nil and not SANDBOX_MODES[cfg.mode] then
+    error(('weave.sandbox: `mode` must be "on" or "off", got %s'):format(vim.inspect(cfg.mode)), 0)
+  end
+  return cfg.mode
 end
 
 --- Merge the global `Config.sandbox` with a provider's override: scalars
---- (mode/profile, env_allowlist) — the provider wins; path lists —
---- concatenated, global first, so per-provider grants ADD to machine-wide
---- ones. The resulting profile is the EFFECTIVE one (see degrade).
+--- (mode, env_allowlist) — the provider wins; path lists — concatenated,
+--- global first, so per-provider grants ADD to machine-wide ones. The
+--- resulting mode is the EFFECTIVE one (see degrade).
 --- @param provider_sandbox weave.SandboxConfig|nil
 --- @return weave.SandboxConfig
 function M.resolve(provider_sandbox)
@@ -159,7 +150,7 @@ function M.resolve(provider_sandbox)
     return out
   end
   return {
-    profile = degrade(requested_profile(p) or requested_profile(global) or "off"),
+    mode = degrade(requested_mode(p) or requested_mode(global) or "off"),
     state_paths = cat(global.state_paths, p.state_paths),
     ro_paths = cat(global.ro_paths, p.ro_paths),
     env_allowlist = p.env_allowlist or global.env_allowlist,
@@ -223,14 +214,15 @@ local function mounter(argv, home)
 end
 
 --- @class weave.sandbox.WrapOpts : weave.SandboxConfig
---- @field cwd? string Project dir the profile applies to (default: getcwd)
+--- @field cwd? string Project dir the mode-on tmpfs covers (default: getcwd)
 --- @field home? string $HOME to hide (default: the real one)
 --- @field nvim_socket? string|false Socket to bind for MCP shims (default: the weave broker socket when clankbox serves one, else v:servername; false = none)
 --- @field runtime_ro_paths? string[] Infra ro binds (default: M._runtime_ro_paths())
 
 --- Rewrite a provider invocation into its sandboxed form. Pure on its
---- inputs: profile "off" (or a missing backend) returns the command
---- untouched; anything else returns `"bwrap", argv`.
+--- inputs: mode "off" (or a missing backend) returns the command untouched;
+--- mode "on" returns `"bwrap", argv` for THE agent sandbox — there is
+--- exactly one, invariant, with nothing to configure on it.
 --- @param command string
 --- @param args string[]|nil
 --- @param opts weave.sandbox.WrapOpts
@@ -238,14 +230,11 @@ end
 --- @return string[] args
 function M.wrap(command, args, opts)
   opts = opts or {}
-  local profile = opts.profile or "off"
-  if not PROFILES[profile] then
-    error("unknown sandbox profile: " .. tostring(profile))
+  local mode = opts.mode or "off"
+  if not SANDBOX_MODES[mode] then
+    error("unknown sandbox mode: " .. tostring(mode))
   end
-  if profile == "off" then
-    return command, args or {}
-  end
-  if degrade(profile) == "off" then
+  if mode == "off" or degrade(mode) == "off" then
     return command, args or {}
   end
 
@@ -253,23 +242,17 @@ function M.wrap(command, args, opts)
   local cwd = opts.cwd or vim.fn.getcwd()
 
   -- Mounts apply in order, later ones on top: the ro root first, then the
-  -- private /tmp /dev /proc and the $HOME tmpfs, then the project policy and
+  -- private /tmp /dev /proc and the $HOME tmpfs, then the project mount and
   -- the explicit grants punched through them.
   local argv = base_argv(home)
   local mount = mounter(argv, home)
 
-  if profile == "workspace" then
-    mount("--bind", cwd)
-  elseif profile == "readonly" then
-    mount("--ro-bind", cwd)
-  else -- blackbox (= v2 mode on)
-    -- An EMPTY READ-ONLY project, not a writable void: the agent's builtin
-    -- Write must fail LOUDLY. On a writable tmpfs it would write, read its
-    -- own write back, and report the work done while nothing ever landed —
-    -- silent data loss. EROFS is what redirects the agent to the weave
-    -- tools, which are the only paths that persist.
-    vim.list_extend(argv, { "--tmpfs", cwd, "--remount-ro", cwd })
-  end
+  -- The project: an EMPTY READ-ONLY tmpfs, not a writable void. The agent's
+  -- builtin Write must fail LOUDLY — on a writable tmpfs it would write,
+  -- read its own write back, and report the work done while nothing ever
+  -- landed (silent data loss). EROFS is what redirects the agent to the
+  -- weave tools, which are the only paths that persist.
+  vim.list_extend(argv, { "--tmpfs", cwd, "--remount-ro", cwd })
 
   local base = vim.fn.fnamemodify(command, ":t")
   for _, path in ipairs(STATE_PATH_DEFAULTS[base] or {}) do
@@ -342,13 +325,11 @@ function M.wrap_tool(command, args, hull)
   return "bwrap", argv
 end
 
---- Whether tool invocations run sandboxed at all. Transitional condition
---- (until v2 phase E lands modes): tool sandboxing is on whenever the
---- resolved global sandbox is — one switch governs both the agent process
---- and the tools, which is exactly the v2 on/off collapse.
+--- Whether tool invocations run sandboxed at all: one switch (the resolved
+--- global mode) governs both the agent process and the tools.
 --- @return boolean
 function M.tool_sandboxing_on()
-  return M._available() and M.resolve(nil).profile ~= "off"
+  return M._available() and M.resolve(nil).mode == "on"
 end
 
 --- The task store's spawn seam: `sh -c command`, wrapped under the ACTIVE

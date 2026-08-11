@@ -411,8 +411,8 @@ function Session:_build_handlers()
     end,
     -- THIS session's frozen spawn confinement (drives the mode-on
     -- auto-approve): the client's, never the globally selected session's.
-    sandbox_profile = function()
-      return self._client and self._client.sandbox_profile or nil
+    sandbox_mode = function()
+      return self._client and self._client.sandbox_mode or nil
     end,
   })
 end

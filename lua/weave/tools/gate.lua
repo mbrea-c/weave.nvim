@@ -18,7 +18,7 @@
 -- the gate is inert there — the agent-side ACP flow already mediates these
 -- calls as acp:* actions. It comes alive under the sandboxed_* presets,
 -- where weave's tools stop being exempt from the confinement a sandbox
--- profile was turned on for.
+-- sandbox was turned on for.
 
 local Permissions = require("weave.permissions")
 
@@ -121,7 +121,7 @@ local function mediate(action, title, kind, run, respond)
       -- than redefining the active preset — see Permissions.grant_rule
       -- for why the scope is the project and not the exact resource.
       -- reject_always matters more here than in the ACP flow: under a
-      -- sandbox profile weave's tools are the agent's only route to the
+      -- sandbox mode weave's tools are the agent's only route to the
       -- filesystem, so "stop asking me AND stop trying" is a thing users
       -- want and currently cannot say.
       options = {
@@ -152,7 +152,7 @@ end
 
 --- Gate the tools weave does NOT own: clankbox's own built-ins and other
 --- plugins' registrations, which never pass through wrap and so reached the
---- agent unmediated. That made a sandbox profile decorative — exec_lua runs
+--- agent unmediated. That made the sandbox decorative — exec_lua runs
 --- arbitrary Lua in the UNSANDBOXED editor, which can read the masked
 --- project and even switch the active preset.
 ---
