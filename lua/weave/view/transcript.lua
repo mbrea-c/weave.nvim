@@ -65,14 +65,25 @@ M.tool_title = ToolCall.tool_title
 
 --- @param props { entry: weave.store.ChatEntry }
 function M.UserEntry(_, props)
-  return {
-    comp = ui.row,
-    props = { on_key = peek_keys(props.entry) },
-    children = {
-      { comp = ui.label, props = { text = "❯ ", style = { text_hl = Theme.USER_MSG_HL } } },
-      { comp = ui.paragraph, props = { text = props.entry.text, style = { text_hl = Theme.USER_MSG_HL } } },
+  local children = {
+    {
+      comp = ui.row,
+      props = {},
+      children = {
+        { comp = ui.label, props = { text = "❯ ", style = { text_hl = Theme.USER_MSG_HL } } },
+        { comp = ui.paragraph, props = { text = props.entry.text, style = { text_hl = Theme.USER_MSG_HL } } },
+      },
     },
   }
+  -- What was handed over WITH the message: the transcript should show that an
+  -- image went to the model, not just the sentence about it.
+  for _, att in ipairs(props.entry.attachments or {}) do
+    children[#children + 1] = {
+      comp = ui.label,
+      props = { text = "  📎 " .. att.name, style = { text_hl = "@comment" } },
+    }
+  end
+  return { comp = ui.col, props = { on_key = peek_keys(props.entry) }, children = children }
 end
 
 --- @param props { entry: weave.store.ChatEntry }

@@ -17,6 +17,7 @@
 local AcpBridge = require("weave.acp_bridge")
 local AgentInstance = require("weave.acp.agent_instance")
 local Config = require("weave.config")
+local FileSystem = require("weave.utils.file_system")
 local Logger = require("weave.utils.logger")
 local SessionSource = require("weave.session_source")
 local SessionStore = require("weave.session_store")
@@ -597,13 +598,51 @@ function Session:_cancel_turn()
   self._store:set_status("idle")
 end
 
+--- The content blocks one prompt's attachments contribute, per file:
+---
+---   * an `image` / `audio` block carrying the bytes, when the provider says
+---     it takes them (promptCapabilities) — the direct route, and the only
+---     one that works for a model with no filesystem at all;
+---   * a `resource_link` to the STAGED path, always. Under mode on that path
+---     is real inside the sandbox (weave binds the staging dir read-only), so
+---     an agent that would rather open the file with its own read tool can —
+---     which is the only thing that works for providers that ignore image
+---     blocks. The sandboxed presets allow exactly that read (${attachments}).
+---
+--- Both together are cheap: the link is a URI, not a copy of the bytes.
+--- @private
+--- @param attachments weave.Attachment[]
+--- @return table[] blocks
+function Session:_attachment_blocks(attachments)
+  local agent_caps = (self._client and self._client.agent_capabilities) or {}
+  local caps = agent_caps.promptCapabilities or {}
+  local blocks = {}
+  for _, att in ipairs(attachments) do
+    local kind = att.mime and (att.mime:match("^image/") and "image" or att.mime:match("^audio/") and "audio") or nil
+    if kind and caps[kind] then
+      blocks[#blocks + 1] = {
+        type = kind,
+        mimeType = att.mime,
+        uri = att.uri,
+        data = FileSystem.read_file_base64(att.path),
+      }
+    end
+    blocks[#blocks + 1] = { type = "resource_link", uri = att.uri, name = att.name, mimeType = att.mime }
+  end
+  return blocks
+end
+
 --- Echo a user message and drive a turn via send_prompt. Marks the turn
 --- active; the send_prompt callback (turn end / stopReason) clears it and
 --- drains the queue or fires a pending steer.
 --- @private
 --- @param text string
 function Session:_send_now(text)
-  self._store:append_entry({ kind = "user", text = text })
+  -- Attachments belong to THIS message: taken (not copied) so the next prompt
+  -- starts clean, and echoed on the user entry so the transcript shows what
+  -- was handed over.
+  local attachments = self._store:take_attachments()
+  self._store:append_entry({ kind = "user", text = text, attachments = attachments })
   self._store:push_history(text) -- a sent prompt joins the recall history
   self._store:set_status("thinking")
   self._turn_active = true
@@ -615,6 +654,7 @@ function Session:_send_now(text)
   -- `text` itself would put words in the user's mouth in the transcript
   -- echo (already appended above) and in the agent's own history.
   local prompt = { { type = "text", text = text } }
+  vim.list_extend(prompt, self:_attachment_blocks(attachments))
   if self:_sandbox_mode() == "on" and self._steered_session ~= session_id then
     self._steered_session = session_id
     table.insert(prompt, 1, { type = "text", text = STEERING_NOTE })

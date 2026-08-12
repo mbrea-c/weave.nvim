@@ -76,6 +76,15 @@ end
 --- (plus its symlink target), the clankbox checkout itself, and the
 --- ~/.nix-profile PATH root on nix-managed machines. All bound with -try.
 --- @return string[]
+--- The staged-attachment directory, when anything has been staged into it
+--- (weave.attachments). A separate seam from the infra binds above because it
+--- appears and disappears with what the USER attached, not with the machine.
+--- @return string[]
+function M._attachment_paths()
+  local ok, Attachments = pcall(require, "weave.attachments")
+  return ok and Attachments.sandbox_paths() or {}
+end
+
 function M._runtime_ro_paths()
   local paths = { "~/.nix-profile" }
   local prog = vim.v.progpath
@@ -218,6 +227,7 @@ end
 --- @field home? string $HOME to hide (default: the real one)
 --- @field nvim_socket? string|false Socket to bind for MCP shims (default: the weave broker socket when clankbox serves one, else v:servername; false = none)
 --- @field runtime_ro_paths? string[] Infra ro binds (default: M._runtime_ro_paths())
+--- @field attachment_paths? string[] Staged-attachment ro binds (default: M._attachment_paths())
 
 --- Rewrite a provider invocation into its sandboxed form. Pure on its
 --- inputs: mode "off" (or a missing backend) returns the command untouched;
@@ -268,6 +278,16 @@ function M.wrap(command, args, opts)
     mount("--ro-bind-try", path)
   end
   for _, path in ipairs(opts.runtime_ro_paths or M._runtime_ro_paths()) do
+    mount("--ro-bind-try", path)
+  end
+
+  -- Files the USER attached to a prompt, staged by weave (weave.attachments)
+  -- and bound READ-ONLY so an image the agent is asked to look at is a real
+  -- file at a real path in here. Without this the file:// URI in the prompt
+  -- resolves to nothing and a model that reads images natively sees no
+  -- attachment at all. Empty until something is staged, so a session that
+  -- never attaches anything gets no extra mount.
+  for _, path in ipairs(opts.attachment_paths or M._attachment_paths()) do
     mount("--ro-bind-try", path)
   end
 

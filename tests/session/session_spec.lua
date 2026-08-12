@@ -32,6 +32,9 @@ local function fake_client(session_response)
   end
   function client:send_prompt(_session_id, prompt, callback)
     self.calls.prompts[#self.calls.prompts + 1] = prompt[1].text
+    -- the whole block list too: attachments and the steering note ride here
+    self.calls.blocks = self.calls.blocks or {}
+    self.calls.blocks[#self.calls.blocks + 1] = prompt
     self._prompt_cbs[#self._prompt_cbs + 1] = callback
   end
   --- Complete the OLDEST in-flight turn (like the agent's stopReason arriving).
@@ -655,5 +658,91 @@ describe("session sandbox steering", function()
 
     assert.equal(1, #client.sent[1])
     assert.equal("hello", client.sent[1][1].text)
+  end)
+end)
+
+describe("session attachments", function()
+  local Attachments = require("weave.attachments")
+  local saved_runtime
+
+  --- A staged attachment (the file itself is irrelevant here — only that the
+  --- path is one the sandbox binds).
+  local function staged(name, mime_bytes)
+    local dir = vim.fn.tempname()
+    vim.fn.mkdir(dir, "p")
+    local path = dir .. "/" .. name
+    local f = assert(io.open(path, "wb"))
+    f:write(mime_bytes or "PNGDATA")
+    f:close()
+    return assert(Attachments.stage(path))
+  end
+
+  before_each(function()
+    saved_runtime = vim.env.XDG_RUNTIME_DIR
+    vim.env.XDG_RUNTIME_DIR = vim.fn.tempname()
+    vim.fn.mkdir(vim.env.XDG_RUNTIME_DIR, "p")
+    Attachments._reset()
+  end)
+
+  after_each(function()
+    Attachments.clear()
+    vim.env.XDG_RUNTIME_DIR = saved_runtime
+    Attachments._reset()
+  end)
+
+  it("sends a resource_link to the STAGED path — what the agent can open", function()
+    local session, client, store = started()
+    local att = staged("shot.png")
+    store:add_attachment(att)
+    session:submit("what is in this?")
+    pump()
+
+    local blocks = client.calls.blocks[1]
+    assert.equal("what is in this?", blocks[1].text)
+    local link = blocks[#blocks]
+    assert.equal("resource_link", link.type)
+    assert.equal(att.uri, link.uri)
+    assert.equal("shot.png", link.name)
+    assert.equal("image/png", link.mimeType)
+  end)
+
+  it("adds the bytes as an image block when the provider takes them", function()
+    local session, client, store = started()
+    client.agent_capabilities = { promptCapabilities = { image = true } }
+    store:add_attachment(staged("shot.png"))
+    session:submit("look")
+    pump()
+
+    local blocks = client.calls.blocks[1]
+    assert.equal("image", blocks[2].type)
+    assert.equal("image/png", blocks[2].mimeType)
+    assert.equal(vim.base64.encode("PNGDATA"), blocks[2].data)
+    -- ...and the link is still there, for an agent that would rather read it
+    assert.equal("resource_link", blocks[3].type)
+  end)
+
+  it("belongs to ONE message: cleared on send, echoed on the entry", function()
+    local session, client, store = started()
+    store:add_attachment(staged("a.png"))
+    session:submit("first")
+    pump()
+    assert.same({}, store.state.attachments)
+    assert.equal("a.png", store.state.entries[1].attachments[1].name)
+
+    client:end_turn()
+    pump()
+    session:submit("second")
+    pump()
+    -- the second prompt carries text only
+    assert.equal(1, #client.calls.blocks[2])
+  end)
+
+  it("can be dropped before it is sent", function()
+    local _, _, store = started()
+    store:add_attachment(staged("a.png"))
+    store:add_attachment(staged("b.png"))
+    store:remove_attachment(1)
+    assert.equal(1, #store.state.attachments)
+    assert.equal("b.png", store.state.attachments[1].name)
   end)
 end)

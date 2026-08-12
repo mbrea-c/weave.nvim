@@ -37,6 +37,7 @@
 --- @field status "idle" | "thinking" | "generating" | "busy" Spinner/activity state
 --- @field permission weave.store.PendingPermission|nil HEAD of the permission queue (the one shown); nil when none pending
 --- @field permission_count integer Pending permission requests (head + waiting), for "1 of N" display
+--- @field attachments weave.Attachment[] Files staged for the NEXT prompt (cleared when it is sent)
 --- @field queued { id: integer, text: string }[] Prompts queued while a turn is in flight (sent FIFO on turn end); each carries a stable id so the prompt box tracks the one it edits by identity
 --- @field editing_queued integer|nil Id of the queued prompt the box is currently editing; the drain HOLDS while it is at the head (a prompt is never sent from under the user)
 --- @field history string[] Sent prompts, oldest -> newest, for prompt-box recall (consecutive dups collapsed)
@@ -210,6 +211,7 @@ function SessionStore:new()
       permission = nil,
       permission_count = 0,
       queued = {},
+      attachments = {},
       history = {},
       meta = {},
       hint = random_hint(),
@@ -580,6 +582,47 @@ function SessionStore:queued_texts()
     out[i] = e.text
   end
   return out
+end
+
+--- ── Attachments ─────────────────────────────────────────────────────────────
+---
+--- Files the user staged for the NEXT prompt (weave.attachments does the
+--- staging; this only holds what is pending). They ride the prompt as content
+--- blocks and are cleared when it is sent, so an attachment belongs to one
+--- message and cannot silently follow the conversation around.
+
+--- @param attachment weave.Attachment
+function SessionStore:add_attachment(attachment)
+  self:_commit(function(draft)
+    local list = vim.list_extend({}, draft.attachments)
+    list[#list + 1] = attachment
+    draft.attachments = list
+  end)
+end
+
+--- Take the pending attachments, leaving none. The caller owns them from here
+--- — one list, one prompt.
+--- @return weave.Attachment[]
+function SessionStore:take_attachments()
+  local taken = self.state.attachments
+  if #taken > 0 then
+    self:_commit(function(draft)
+      draft.attachments = {}
+    end)
+  end
+  return taken
+end
+
+--- @param index integer 1-based, as listed
+function SessionStore:remove_attachment(index)
+  if not self.state.attachments[index] then
+    return
+  end
+  self:_commit(function(draft)
+    local list = vim.list_extend({}, draft.attachments)
+    table.remove(list, index)
+    draft.attachments = list
+  end)
 end
 
 --- Append a prompt to the queue (held while a turn is in flight). Each entry

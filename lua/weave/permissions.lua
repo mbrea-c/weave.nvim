@@ -97,6 +97,12 @@ local DECISIONS = { allow = true, deny = true, ask = true }
 -- sandboxed presets below collapse to tool-name-only rules.
 local PROJECT_TOKEN = "${project}"
 
+-- The same trick for the directory weave stages user attachments into
+-- (weave.attachments): a per-process path no static rule could name, and the
+-- one place under mode on where the agent's OWN read tool is useful — that is
+-- where the image you attached actually is.
+local ATTACHMENTS_TOKEN = "${attachments}"
+
 -- The message an acp:* deny carries under the sandboxed presets. The agent's
 -- OWN tools are dead ends in mode on (the project is an empty read-only
 -- tmpfs), so approving them would only buy a confusing failure — or, worse
@@ -109,6 +115,14 @@ local USE_CLIENT_TOOLS = "builtin tools are sandboxed away from the project; use
 -- request through rather than prompting for the same call twice — or, with
 -- the deny below, refusing the agent the tools we just steered it toward.
 local ALLOW_BROKERED = { tool = "acp:mcp", decision = "allow" }
+
+-- The one place the agent's OWN read tool still reaches something real under
+-- mode on: the directory weave stages attachments into and binds read-only
+-- into the hull. Denying it would mean the user attaches an image and the
+-- model cannot open the file we just put in front of it — and reading an
+-- image is precisely what a builtin read tool does better than w:read, which
+-- returns text.
+local ALLOW_ATTACHMENTS = { tool = "acp:read", resource = ATTACHMENTS_TOKEN .. "/**", decision = "allow" }
 
 -- Every sandboxed preset ends its weave:* run with a deny carrying this: the
 -- workspace is the whole world by default, and the way out is to ASK, not to
@@ -169,6 +183,7 @@ local BUILTIN = {
     for_mode = "on",
     rules = {
       ALLOW_BROKERED,
+      ALLOW_ATTACHMENTS,
       { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
@@ -211,6 +226,7 @@ local BUILTIN = {
     for_mode = "on",
     rules = {
       ALLOW_BROKERED,
+      ALLOW_ATTACHMENTS,
       { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
       { tool = "weave:read", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
       { tool = "weave:glob", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
@@ -249,6 +265,7 @@ local BUILTIN = {
     for_mode = "on",
     rules = {
       ALLOW_BROKERED,
+      ALLOW_ATTACHMENTS,
       { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
       { tool = "weave:read", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
       { tool = "weave:glob", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
@@ -282,6 +299,7 @@ local BUILTIN = {
     for_mode = "on",
     rules = {
       ALLOW_BROKERED,
+      ALLOW_ATTACHMENTS,
       { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
       -- The one thing "auto" does not automate: widening the sandbox itself.
       -- request_access is registered UNgated (its handler is the asking
@@ -449,15 +467,20 @@ function M.set_project_root(root)
   project_root = root
 end
 
---- Expand `${project}` in a resource glob. Cheap enough to do per resolve,
---- and doing it lazily is what keeps presets serialisable.
+--- Expand `${project}` and `${attachments}` in a resource glob. Cheap enough
+--- to do per resolve, and doing it lazily is what keeps presets serialisable.
 --- @param resource string
 --- @return string
 local function expand(resource)
-  if not resource:find(PROJECT_TOKEN, 1, true) then
-    return resource
+  if resource:find(PROJECT_TOKEN, 1, true) then
+    resource = resource:gsub("%${project}", (M.project_root():gsub("%%", "%%%%")))
   end
-  return (resource:gsub("%${project}", (M.project_root():gsub("%%", "%%%%"))))
+  if resource:find(ATTACHMENTS_TOKEN, 1, true) then
+    local ok, Attachments = pcall(require, "weave.attachments")
+    local dir = ok and Attachments.root() or "/nonexistent"
+    resource = resource:gsub("%${attachments}", (dir:gsub("%%", "%%%%")))
+  end
+  return resource
 end
 
 --- Match a rule's resource pattern against an action's resource.
@@ -912,7 +935,12 @@ function M.lint_preset(preset)
     return (home ~= "" and p:gsub("^~", home)) or p
   end
   for i, rule in ipairs(preset.rules or {}) do
-    if rule.resource ~= nil and rule.decision ~= "deny" then
+    -- Only the TOOL layer is governed by the hull. An acp:* rule speaks about
+    -- the agent's own tools inside the AGENT sandbox, whose binds are not
+    -- these — the attachments allowance is exactly such a rule, and it is
+    -- reachable there by construction.
+    local tool_layer = not vim.startswith(rule.tool or "", "acp:")
+    if tool_layer and rule.resource ~= nil and rule.decision ~= "deny" then
       local res = norm(expand(rule.resource))
       if res:sub(1, 1) == "/" then
         local prefix = res:match("^([^*?]*)")

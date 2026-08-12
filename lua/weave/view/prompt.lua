@@ -150,6 +150,42 @@ function M.QueuedRow(_, props)
   }
 end
 
+--- One pending-attachment row: a 📎 marker, the staged name, and a `✕` that
+--- drops it before it is sent. Attachments sit directly above the box because
+--- that is what they belong to — the next prompt, not the conversation.
+--- @param _ table
+--- @param props { store: weave.store.SessionStore, index: integer, name: string }
+function M.AttachmentRow(_, props)
+  return {
+    comp = ui.row,
+    props = { gap = 1 },
+    children = {
+      { comp = ui.label, props = { text = "📎", style = { text_hl = "@comment" } } },
+      {
+        comp = ui.label,
+        props = {
+          grow = 1,
+          fill = function(w)
+            return ellipsize(props.name, w)
+          end,
+          style = { text_hl = "@comment" },
+        },
+      },
+      {
+        comp = ui.button,
+        props = {
+          label = "✕",
+          theme = false,
+          style = { text_hl = "@comment", _hover = { hl = "FibrousHover" } },
+          on_press = function()
+            props.store:remove_attachment(props.index)
+          end,
+        },
+      },
+    },
+  }
+end
+
 --- Text of the box buffer as one string (newlines joined).
 local function buf_text(bufnr)
   return table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
@@ -401,11 +437,21 @@ function M.Prompt(ctx, props)
     },
   }
 
+  -- Pending attachments belong to the prompt being COMPOSED, so they sit
+  -- immediately above the box wherever it is — never interleaved with the
+  -- queued rows, which are other messages.
+  local attachment_rows = {}
+  for i, att in ipairs(state.attachments or {}) do
+    attachment_rows[#attachment_rows + 1] =
+      { comp = M.AttachmentRow, memo = true, props = { store = store, index = i, name = att.name } }
+  end
+
   if target.kind == "queued" then
     -- editing a queued prompt: earlier queued above the box, later below
     for k = 1, target.qindex - 1 do
       children[#children + 1] = queued_row(queued[k])
     end
+    vim.list_extend(children, attachment_rows)
     children[#children + 1] = box
     for k = target.qindex + 1, #queued do
       children[#children + 1] = queued_row(queued[k])
@@ -415,6 +461,7 @@ function M.Prompt(ctx, props)
     for k = 1, #queued do
       children[#children + 1] = queued_row(queued[k])
     end
+    vim.list_extend(children, attachment_rows)
     children[#children + 1] = box
   end
 

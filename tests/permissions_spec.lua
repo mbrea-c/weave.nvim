@@ -336,6 +336,27 @@ describe("permissions sandboxed builtins", function()
     end
   end)
 
+  it("lets the agent read what the USER attached, and nothing else of its own", function()
+    local Attachments = require("weave.attachments")
+    local staging = Attachments.root()
+    for _, preset in ipairs(SANDBOXED) do
+      Permissions.set_active(preset)
+      -- the staged file is bound into the hull, so the agent's own read tool
+      -- is the right way to look at an image — w:read returns text
+      assert.equal("allow", Permissions.resolve({ tool = "acp:read", resource = staging .. "/shot.png" }), preset)
+      -- everywhere else its builtin read is still a dead end
+      assert.equal("deny", Permissions.resolve({ tool = "acp:read", resource = "/home/me/proj/a.lua" }), preset)
+    end
+  end)
+
+  it("the attachments allowance does not read as an unreachable bind", function()
+    -- the hull governs the TOOL layer; an acp:* rule speaks about the agent
+    -- sandbox, whose binds are not the tool binds
+    for _, preset in ipairs(SANDBOXED) do
+      assert.same({}, Permissions.lint_preset(Permissions.get(preset)), preset)
+    end
+  end)
+
   it("the acp:* deny carries a message pointing at the client-side tools", function()
     Permissions.set_active("ask")
     local decision, rule = Permissions.resolve({ tool = "acp:read", resource = "/home/me/proj/a.lua" })

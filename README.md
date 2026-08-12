@@ -231,7 +231,10 @@ and back. The sandboxed four hold the plain names because the sandbox is the
 default: a half-remembered name lands on the confined preset.
 
 Resource globs may contain `${project}`, which expands to the session's cwd,
-so "inside the project" is expressible in a static preset table.
+so "inside the project" is expressible in a static preset table, and
+`${attachments}`, which expands to the directory weave stages
+[attachments](#attachments) into — the one place under mode on where the
+agent's own read tool reaches something real.
 
 Answering an `ask` for a weave tool offers four options: allow/reject once,
 and allow/reject **for project**. The "always" pair records a **session
@@ -720,6 +723,30 @@ overridden ones included, since granting access answers "may we reach this
 at all". The `sandbox` section is orthogonal to the sandbox MODE in a second
 sense too: with the mode off, nothing is bwrap'd at all and the section is
 inert; the rules still gate every call.
+
+### Attachments
+
+`:Weave attach <file>` (or `require("weave").attach(path)`) hands a file — an
+image, usually — to the **next** prompt. It shows up above the prompt box with
+a `✕` to drop it, rides that one message, and is echoed on the sent entry so
+the transcript records what went over.
+
+The interesting part is where the file goes. Weave **copies** it into a staging
+directory outside `$HOME` and binds that directory **read-only** into the agent
+sandbox, so the `file://` URI in the prompt is a path the agent can actually
+open. Copying rather than binding the original is deliberate: your file may
+live anywhere, and binding arbitrary user paths into the sandbox would be a far
+larger grant than "look at this picture". The agent sees exactly what you
+attached.
+
+Each attachment contributes up to two content blocks: an `image`/`audio` block
+with the bytes when the provider's `promptCapabilities` say it takes them, and
+a `resource_link` to the staged path always — the second is what makes a model
+that prefers to *read the file itself* work at all under the sandbox. The
+sandboxed presets allow exactly that read (`${attachments}` in a resource
+glob), while the agent's builtin read stays denied everywhere else.
+
+Staged copies are deleted when the editor exits.
 
 ### Sandbox
 

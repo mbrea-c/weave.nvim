@@ -211,16 +211,25 @@ function M.setup(opts)
     require("weave.view.tool_call").register(spec)
   end
   vim.api.nvim_create_user_command("Weave", function(cmd)
-    if cmd.args == "sessions" then
+    local sub, rest = cmd.args:match("^(%S*)%s*(.*)$")
+    if sub == "sessions" then
       M.sessions()
+    elseif sub == "attach" then
+      M.attach(rest ~= "" and rest or nil)
     else
       M.toggle()
     end
   end, {
-    desc = "Toggle the weave panel (:Weave sessions for the session modal)",
-    nargs = "?",
-    complete = function()
-      return { "sessions" }
+    desc = "Toggle the weave panel (:Weave sessions | :Weave attach <file>)",
+    nargs = "*",
+    complete = function(arg_lead, line)
+      -- after `attach`, complete FILES; the subcommands otherwise
+      if line:match("^%s*Weave%s+attach%s") then
+        return vim.fn.getcompletion(arg_lead, "file")
+      end
+      return vim.tbl_filter(function(name)
+        return vim.startswith(name, arg_lead)
+      end, { "sessions", "attach" })
     end,
   })
 end
@@ -230,6 +239,38 @@ end
 function M.get_session()
   local entry = Registry.selected()
   return entry and entry.session or nil
+end
+
+--- Attach a file (an image, usually) to the NEXT prompt of the selected
+--- session. With no path, asks for one.
+---
+--- The file is COPIED into weave's staging directory, which is bound
+--- read-only into the agent sandbox — so the `file://` URI the agent receives
+--- is a path it can actually open, which is the whole point under mode on
+--- (see weave.attachments). Attachments belong to one message: sending clears
+--- them.
+--- @param path? string
+function M.attach(path)
+  if not path then
+    vim.ui.input({ prompt = "Attach file: ", completion = "file" }, function(input)
+      if input and input ~= "" then
+        M.attach(input)
+      end
+    end)
+    return
+  end
+  local session = M.get_session()
+  if not session then
+    Logger.notify("No weave session to attach to — open the panel first.", vim.log.levels.WARN)
+    return
+  end
+  local attachment, err = require("weave.attachments").stage(path)
+  if not attachment then
+    Logger.notify(err or "attach failed", vim.log.levels.ERROR)
+    return
+  end
+  session:get_store():add_attachment(attachment)
+  Logger.notify(("attached %s — it rides the next prompt"):format(attachment.name), vim.log.levels.INFO)
 end
 
 --- Whether the current tab has an open panel.

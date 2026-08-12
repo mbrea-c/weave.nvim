@@ -15,6 +15,7 @@ local function opts(extra)
     cwd = "/home/u/proj",
     nvim_socket = false,
     runtime_ro_paths = {},
+    attachment_paths = {},
   }
   for k, v in pairs(extra or {}) do
     o[k] = v
@@ -92,6 +93,25 @@ describe("sandbox wrap", function()
     assert.is_nil(find_seq(args, { "--ro-bind", "/home/u/proj", "/home/u/proj" }))
     -- the wrapped command comes last, after the -- separator
     assert.same({ "--", "gemini", "--acp" }, { args[#args - 2], args[#args - 1], args[#args] })
+  end)
+
+  it("binds the attachment staging dir READ-ONLY, so a file:// URI resolves", function()
+    local _, args = Sandbox.wrap("gemini", {}, opts({ attachment_paths = { "/run/user/1000/weave/attachments/7" } }))
+    assert.truthy(find_seq(args, {
+      "--ro-bind-try",
+      "/run/user/1000/weave/attachments/7",
+      "/run/user/1000/weave/attachments/7",
+    }))
+  end)
+
+  it("binds nothing for attachments when none are staged", function()
+    local Attachments = require("weave.attachments")
+    local saved = vim.env.XDG_RUNTIME_DIR
+    vim.env.XDG_RUNTIME_DIR = vim.fn.tempname()
+    Attachments._reset()
+    assert.same({}, Sandbox._attachment_paths())
+    vim.env.XDG_RUNTIME_DIR = saved
+    Attachments._reset()
   end)
 
   it("state_paths bind rw with -try, ~ expanded against home", function()
