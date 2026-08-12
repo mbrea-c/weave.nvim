@@ -340,12 +340,26 @@ end
 --- @return string command
 --- @return string[] args
 function M.wrap_shell(command)
+  return M.wrap_for_tool("weave:task_start", "sh", { "-c", command })
+end
+
+--- The same, for a tool that spawns a BINARY rather than a shell (curl, under
+--- w:web_fetch). Same resolution — the active preset's hull for that exact
+--- tool name, re-derived per spawn — and the same degradation: with tool
+--- sandboxing off the argv comes back untouched.
+--- @param tool string namespaced tool name, e.g. "weave:web_fetch"
+--- @param command string
+--- @param args? string[]
+--- @return string command
+--- @return string[] args
+function M.wrap_for_tool(tool, command, args)
+  args = args or {}
   if not M.tool_sandboxing_on() then
-    return "sh", { "-c", command }
+    return command, args
   end
   local ok, Permissions = pcall(require, "weave.permissions")
-  local hull = ok and Permissions.tool_sandbox(nil, "weave:task_start") or { binds = {}, network = false }
-  return M.wrap_tool("sh", { "-c", command }, hull)
+  local hull = ok and Permissions.tool_sandbox(nil, tool) or { binds = {}, network = false }
+  return M.wrap_tool(command, args, hull)
 end
 
 return M

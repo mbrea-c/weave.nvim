@@ -173,10 +173,12 @@ local BUILTIN = {
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
-      -- task_start's resource is the COMMAND LINE, not a path, so it can
-      -- never match a ${project} glob — without a rule of its own it would
-      -- fall through to the closing deny and no command could ever run.
+      -- task_start's resource is the COMMAND LINE and web_fetch's is a URL,
+      -- neither of which can match a ${project} glob — without rules of their
+      -- own they fall through to the closing deny, and no command could ever
+      -- run nor any page be read.
       { tool = "weave:task_start", decision = "ask" },
+      { tool = "weave:web_fetch", decision = "ask" },
       { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "ask" },
       { tool = "weave:*", decision = "deny", message = OUTSIDE_WORKSPACE },
       -- Tools weave does not own (clankbox's exec_lua, other plugins'):
@@ -187,12 +189,19 @@ local BUILTIN = {
     -- The hull every TOOL subprocess runs under, stated rather than derived:
     -- the workspace read-write, nothing else, no network. `binds` REPLACES
     -- the default (a preset binding only /data really does exclude the
-    -- project), and `tools = { ["weave:task_start"] = { network = true } }`
-    -- overrides these keys for one tool. Elevation grants land on top of
-    -- whatever is here, globally — see M.tool_sandbox.
+    -- project). Elevation grants land on top of whatever is here, globally —
+    -- see M.tool_sandbox.
+    --
+    -- `tools` overrides the keys it sets for ONE tool. web_fetch is the case
+    -- it exists for: fetching is the one job that needs the network and no
+    -- filesystem whatever, so curl runs with the net and an empty hull rather
+    -- than the whole session having to be granted network to read a page.
     sandbox = {
       binds = { { path = PROJECT_TOKEN, mode = "rw" } },
       network = false,
+      tools = {
+        ["weave:web_fetch"] = { binds = {}, network = true },
+      },
     },
   },
   {
@@ -214,6 +223,9 @@ local BUILTIN = {
       { tool = "weave:write", decision = "deny", message = READ_ONLY },
       { tool = "weave:edit", decision = "deny", message = READ_ONLY },
       { tool = "weave:task_start", decision = "deny", message = READ_ONLY },
+      -- Reading a page changes nothing, so read-only does not forbid it — but
+      -- it leaves the machine, so it asks.
+      { tool = "weave:web_fetch", decision = "ask" },
       { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "ask" },
       { tool = "weave:*", decision = "deny", message = OUTSIDE_WORKSPACE },
       { tool = "mcp:*", decision = "ask" },
@@ -225,6 +237,9 @@ local BUILTIN = {
     sandbox = {
       binds = { { path = PROJECT_TOKEN, mode = "ro" } },
       network = false,
+      tools = {
+        ["weave:web_fetch"] = { binds = {}, network = true },
+      },
     },
   },
   {
@@ -243,8 +258,10 @@ local BUILTIN = {
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
-      -- Editing files is not running commands: task_start still asks.
+      -- Editing files is not running commands: task_start still asks, and so
+      -- does leaving the machine.
       { tool = "weave:task_start", decision = "ask" },
+      { tool = "weave:web_fetch", decision = "ask" },
       { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "ask" },
       { tool = "weave:*", decision = "deny", message = OUTSIDE_WORKSPACE },
       { tool = "mcp:*", decision = "ask" },
@@ -253,6 +270,9 @@ local BUILTIN = {
     sandbox = {
       binds = { { path = PROJECT_TOKEN, mode = "rw" } },
       network = false,
+      tools = {
+        ["weave:web_fetch"] = { binds = {}, network = true },
+      },
     },
   },
   {
@@ -272,9 +292,10 @@ local BUILTIN = {
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
-      -- Resource = the command line, not a path: it needs its own rule, and
-      -- the command is confined by the hull however it is spelled.
+      -- Resource = a command line / a URL, not a path: these need their own
+      -- rules, and both are confined by the hull however they are spelled.
       { tool = "weave:task_start", decision = "allow" },
+      { tool = "weave:web_fetch", decision = "allow" },
       { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
       { tool = "weave:*", decision = "deny", message = OUTSIDE_WORKSPACE },
       -- Not covered by "all tools": clankbox's exec_lua and friends run in
@@ -289,6 +310,9 @@ local BUILTIN = {
     sandbox = {
       binds = { { path = PROJECT_TOKEN, mode = "rw" } },
       network = false,
+      tools = {
+        ["weave:web_fetch"] = { binds = {}, network = true },
+      },
     },
   },
   -- ── The unsandboxed variants ──────────────────────────────────────────────

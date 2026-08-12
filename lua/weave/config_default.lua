@@ -28,6 +28,7 @@
 --- @field enabled boolean Register the suite into clankbox and hand every agent the clankbox server automatically
 --- @field clankbox_path? string Clankbox checkout root (the dir containing shim.lua); nil = auto-detect
 --- @field ripgrep_path? string Absolute path to `rg` for the glob/grep tools; nil = look on PATH
+--- @field curl_path? string Absolute path to `curl` for the web_fetch tool; nil = look on PATH
 
 --- @class weave.PermissionsConfig The client-side permission engine (weave.permissions)
 --- @field preset? string Active preset at startup; unset = "ask", or its unsandboxed_* variant when the sandbox is off
@@ -210,9 +211,9 @@ local ConfigDefault = {
   -- hosted by clankbox and appended to every agent's mcpServers automatically
   -- — see design-agent-sandbox.md in the superproject. `clankbox_path` (the
   -- checkout dir containing shim.lua) overrides auto-detection, and
-  -- `ripgrep_path` does the same for the `rg` the search tools shell out to.
-  -- Both exist because under a Nix-wrapped Neovim the ambient PATH is not the
-  -- user's PATH.
+  -- `ripgrep_path` does the same for the `rg` the search tools shell out to,
+  -- and `curl_path` for the `curl` behind web_fetch. All three exist because
+  -- under a Nix-wrapped Neovim the ambient PATH is not the user's PATH.
   tools = {
     enabled = true,
   },

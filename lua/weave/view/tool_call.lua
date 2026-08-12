@@ -186,6 +186,8 @@ function M.weave_title(tool, input)
     return str("pattern")
   elseif tool == "task_start" then
     return str("command")
+  elseif tool == "web_fetch" then
+    return str("url")
   elseif tool == "task_status" or tool == "task_wait" or tool == "task_kill" then
     return input.id ~= nil and ("task " .. tostring(input.id)) or nil
   end

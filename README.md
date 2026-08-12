@@ -386,7 +386,7 @@ send never loses hand-written comments.
 | `provider` | `string` | `"claude-agent-acp"` | Key of the `acp_providers` entry to start by default |
 | `acp_providers` | `table` | 13 built-ins | Agent launch definitions (see below) |
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
-| `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit, glob/grep, task lifecycle) via clankbox; `clankbox_path` and `ripgrep_path` override binary/checkout auto-detection |
+| `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit, glob/grep, task lifecycle, web_fetch) via clankbox; `clankbox_path`, `ripgrep_path` and `curl_path` override binary/checkout auto-detection |
 | `permissions` | `table` | `{ presets = {} }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
 | `sandbox` | `table` | `{ mode = "on" }` | Agent process confinement via bubblewrap (see [Sandbox](#sandbox)) |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
@@ -491,6 +491,17 @@ the stdio shim run by this very nvim — carrying weave's own tool suite:
   a slower `vim.fn.glob` walk.
 - `task_start`/`task_status`/`task_wait`/`task_kill`, a lifecycle over managed
   shell tasks (surfaced in the sidebar's *Terminal tasks* section).
+- `web_fetch`, written for parity with Claude's own WebFetch: same `url` +
+  `prompt` parameters, `http://` upgraded to `https://`, HTML converted to
+  markdown, a 15-minute cache, and a redirect to a **different host** reported
+  rather than followed (the URL is what your permission rule matched — quietly
+  following would make the rule a lie). It needs `curl` on Neovim's `PATH` or
+  `tools.curl_path` set. One difference, stated rather than faked: Claude's
+  tool answers `prompt` using a second small model; weave has none to call, so
+  it returns the page whole for the agent to apply the prompt to itself.
+  Because the gated resource is the URL, rules can scope by host:
+  `{ tool = "weave:web_fetch", resource = "https://docs.example.com/**",
+  decision = "allow" }`.
 
 Every call is gated by the permission engine as `weave:<tool>` (see below).
 For `glob`/`grep` the gated resource is the search **root**, not the files
@@ -524,7 +535,8 @@ arrive over MCP, so their agent-supplied title is only the bare endpoint name
 (`mcp__clankbox__read`) — which says nothing the `[w:read]` tag doesn't — so the
 header shows the call's meaningful argument instead: the file path for
 `read`/`write`/`edit`/`glob`, the pattern for `grep`, the command for
-`task_start`, the task id for the other `task_*` tools. Everything else keeps
+`task_start`, the URL for `web_fetch`, the task id for the other `task_*`
+tools. Everything else keeps
 its normal title (the agent's title, else the file path, else an id label).
 
 Those titles are routinely wider than the panel, so the header **wraps** rather
@@ -699,7 +711,10 @@ loaded.
 `sandbox.tools` is the escape hatch for one tool needing something the rest
 should not have: keys present in an override replace the global value, keys
 absent inherit it (above, tasks get the network while their binds stay the
-preset's). Session **elevation grants** — what `request_access` writes when
+preset's). The builtin sandboxed presets use it for exactly one tool —
+`weave:web_fetch` runs with `network = true, binds = {}`, since fetching is
+the one job that needs the network and no filesystem at all, and nobody should
+have to grant the whole session network access to read a doc page. Session **elevation grants** — what `request_access` writes when
 you approve it — are deliberately global: they widen every tool's hull,
 overridden ones included, since granting access answers "may we reach this
 at all". The `sandbox` section is orthogonal to the sandbox MODE in a second

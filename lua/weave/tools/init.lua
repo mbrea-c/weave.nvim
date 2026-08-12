@@ -25,6 +25,7 @@ M.OWNS = {
   task_wait = true,
   task_kill = true,
   request_access = true,
+  web_fetch = true,
 }
 
 --- The fs tools' resource for the permission engine: the ABSOLUTE path (so
@@ -71,6 +72,16 @@ function M.register_into(server)
   server.register_tool("task_status", Gate.wrap("task_status", tasks.status, { kind = "execute" }))
   server.register_tool("task_wait", Gate.wrap("task_wait", tasks.wait, { kind = "execute" }))
   server.register_tool("task_kill", Gate.wrap("task_kill", tasks.kill, { kind = "execute" }))
+  -- The web. Gated on the URL, so a rule can scope by host ("https://docs.
+  -- example.com/**"), and tagged with the ACP `fetch` kind so it reads like
+  -- the agent's own fetch tool in the transcript. The curl subprocess is
+  -- confined by the hull for `weave:web_fetch` (network, no binds, under the
+  -- builtin sandboxed presets) — see weave.sandbox.wrap_for_tool.
+  local web_fetch = require("weave.tools.web_fetch")
+  local url_resource = function(args)
+    return type(args.url) == "string" and args.url ~= "" and args.url or nil
+  end
+  server.register_tool("web_fetch", Gate.wrap("web_fetch", web_fetch.def, { resource = url_resource, kind = "fetch" }))
   -- The elevation tool goes in UNwrapped: it IS the asking mechanism (its
   -- handler always prompts), so gating it would prompt twice per question.
   server.register_tool("request_access", require("weave.tools.access").def)
