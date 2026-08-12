@@ -668,8 +668,13 @@ invocations run under, deliberately **orthogonal** to the rules:
 ```
 
 Rules speak globs, binds speak directories; neither is derived from the
-other. A preset without a section means project-rw/no-network; explicit
-binds REPLACE that default. The one confusing combination — a non-deny rule
+other. A preset without a section means project-rw/no-network, but the
+sandboxed builtins spell that out rather than leaning on it, so `[edit]` on
+one hands you a working template; explicit binds REPLACE the default (a
+preset binding only `/data` really does exclude the project). The
+`for_mode` tag and the whole `sandbox` section survive a round trip through
+the config window's editor — what you save is what you wrote.
+The one confusing combination — a non-deny rule
 whose resource no bind can reach (the gate says yes, the tool then dies at
 the kernel wall) — is flagged with a warning when the preset is saved or
 loaded.

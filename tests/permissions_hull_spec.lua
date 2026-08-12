@@ -89,6 +89,27 @@ describe("preset sandbox hull", function()
       assert.equal(1, #hull.binds)
       assert.equal("/data", hull.binds[1].path)
     end)
+
+    -- The grants are a preset FIELD, so the shipped presets have to carry
+    -- one: a builtin that leaned on DEFAULT_BINDS would leave the hull
+    -- invisible at the surface users read and copy from.
+    it("every sandboxed builtin states its hull instead of inheriting it", function()
+      for _, name in ipairs({ "sandboxed_normal", "sandboxed_auto", "sandboxed_allow_edits" }) do
+        local preset = Permissions.get(name)
+        assert.is_not_nil(preset.sandbox, name .. " declares a sandbox section")
+        assert.same({
+          binds = { { path = "/proj/demo", mode = "rw" } },
+          network = false,
+        }, Permissions.tool_sandbox(preset))
+      end
+    end)
+
+    -- ...and the mode-off trio must NOT, since mode off builds no hull at all.
+    it("the unsandboxed builtins declare none", function()
+      for _, name in ipairs({ "normal", "auto", "allow_edits" }) do
+        assert.is_nil(Permissions.get(name).sandbox)
+      end
+    end)
   end)
 
   describe("per-tool overrides", function()

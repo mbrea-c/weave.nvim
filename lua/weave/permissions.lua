@@ -119,6 +119,11 @@ local ALLOW_BROKERED = { tool = "acp:mcp", decision = "allow" }
 -- Every builtin is mode-tagged, because each is written against a world:
 -- these three assume the agent's own tools reach the real project (only
 -- true in mode off), the sandboxed_* trio below assume they cannot.
+--
+-- Only the sandboxed trio carry a `sandbox` section. That is not an
+-- oversight: mode off disables the sandbox outright (tool_sandboxing_on),
+-- so a hull declared on a `for_mode = "off"` preset would be documentation
+-- of something weave never builds.
 --- @type weave.permissions.Preset[]
 local BUILTIN = {
   {
@@ -192,6 +197,16 @@ local BUILTIN = {
       { tool = "mcp:*", decision = "ask" },
       { tool = "*", decision = "allow" },
     },
+    -- The hull every TOOL subprocess runs under, stated rather than derived:
+    -- the project read-write, nothing else, no network. `binds` REPLACES the
+    -- default (a preset binding only /data really does exclude the project),
+    -- and `tools = { ["weave:task_start"] = { network = true } }` overrides
+    -- these keys for one tool. Elevation grants land on top of whatever is
+    -- here, globally — see M.tool_sandbox.
+    sandbox = {
+      binds = { { path = PROJECT_TOKEN, mode = "rw" } },
+      network = false,
+    },
   },
   {
     name = "sandboxed_auto",
@@ -210,6 +225,13 @@ local BUILTIN = {
       -- unmediated they undo the confinement this preset exists for.
       { tool = "mcp:*", decision = "ask" },
       { tool = "*", decision = "allow" },
+    },
+    -- "Auto" is about how much weave PROMPTS, not about how much the tools
+    -- can reach: the hull stays the project, no network. Widening is the
+    -- elevation path (w:request_access), or an edited copy of this preset.
+    sandbox = {
+      binds = { { path = PROJECT_TOKEN, mode = "rw" } },
+      network = false,
     },
   },
   {
@@ -236,6 +258,11 @@ local BUILTIN = {
       -- unmediated they undo the confinement this preset exists for.
       { tool = "mcp:*", decision = "ask" },
       { tool = "*", decision = "allow" },
+    },
+    -- Unprompted WRITES are a rule decision; they do not widen the hull.
+    sandbox = {
+      binds = { { path = PROJECT_TOKEN, mode = "rw" } },
+      network = false,
     },
   },
 }

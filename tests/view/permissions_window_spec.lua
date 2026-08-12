@@ -185,6 +185,32 @@ describe("view.permissions_window", function()
     app.unmount()
   end)
 
+  -- The editor is where a user writes tool grants by hand, so anything it
+  -- fails to emit is a field it silently DELETES on the next save.
+  it("serialize round-trips the sandbox section and for_mode", function()
+    local preset = {
+      name = "netted",
+      label = "Netted",
+      for_mode = "on",
+      rules = { { tool = "acp:*", decision = "deny", message = "use the weave tools" } },
+      sandbox = {
+        binds = { { path = "${project}", mode = "rw" }, { path = "/data", mode = "ro" } },
+        network = false,
+        tools = { ["weave:task_start"] = { network = true } },
+      },
+    }
+    local parsed = assert(permissions_window.parse(table.concat(permissions_window.serialize(preset), "\n")))
+    assert.same(preset, parsed)
+
+    -- and it survives the save, not just the parse
+    Permissions.save_preset(parsed)
+    local saved = Permissions.get("netted")
+    assert.equal("on", saved.for_mode)
+    assert.equal("/data", saved.sandbox.binds[2].path)
+    assert.is_true(saved.sandbox.tools["weave:task_start"].network)
+    assert.equal("use the weave tools", saved.rules[1].message)
+  end)
+
   it("q closes the window", function()
     local app = permissions_window.open()
     vim.api.nvim_set_current_win(app.winid)

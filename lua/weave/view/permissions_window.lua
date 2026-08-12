@@ -48,10 +48,26 @@ end
 function M.serialize(preset)
   local lines = {
     "-- weave permission preset: `:w` applies it as a runtime preset, `:q` discards.",
-    "-- A rule is { tool = <glob>, resource = <glob, optional>, decision = allow|deny|ask };",
-    "-- first match wins. Tools: acp:<kind>, weave:<tool>, <plugin>:<tool>.",
+    "-- A rule is { tool = <glob>, resource = <glob, optional>, decision = allow|deny|ask,",
+    "-- message = <shown when a deny turns the agent back, optional> }; first match wins.",
+    "-- Tools: acp:<kind>, weave:<tool>, <plugin>:<tool>. ${project} expands to the root.",
+    "--",
+    "-- `sandbox` is the hull TOOL subprocesses run under, orthogonal to the rules:",
+    '--   sandbox = { binds = { { path = "${project}", mode = "rw" } }, network = false,',
+    '--              tools = { ["weave:task_start"] = { network = true } } }',
+    "-- binds REPLACE the default (project rw); per-tool entries replace the keys they",
+    '-- set. `for_mode = "on"|"off"` scopes the preset to a sandbox mode (nil = both).',
   }
-  local body = vim.inspect({ name = preset.name, label = preset.label, rules = preset.rules })
+  -- Every caller-owned field, or an edit-and-save quietly strips the ones
+  -- left out — `sandbox` and `for_mode` are exactly the fields a user opens
+  -- this editor to write.
+  local body = vim.inspect({
+    name = preset.name,
+    label = preset.label,
+    for_mode = preset.for_mode,
+    rules = preset.rules,
+    sandbox = preset.sandbox,
+  })
   vim.list_extend(lines, vim.split(body, "\n", { plain = true }))
   return lines
 end
