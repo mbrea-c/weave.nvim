@@ -111,9 +111,11 @@ M.def = {
           Permissions.set_network_granted(true)
           granted[#granted + 1] = "network"
         end
-        respond(("access granted for this session: %s. It applies from your next tool call."):format(
-          table.concat(granted, ", ")
-        ))
+        respond(
+          ("access granted for this session: %s. It applies from your next tool call."):format(
+            table.concat(granted, ", ")
+          )
+        )
       end,
     })
   end,
