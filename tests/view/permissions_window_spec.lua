@@ -68,6 +68,12 @@ local function wait_float(needle, exclude, ms)
 end
 
 describe("view.permissions_window", function()
+  before_each(function()
+    -- the window lists the presets for the mode in force; pin the default
+    -- (sandbox on) so the labels under test are the sandboxed four
+    Permissions.set_mode("on")
+  end)
+
   after_each(function()
     for _, win in ipairs(vim.api.nvim_list_wins()) do
       if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_config(win).relative ~= "" then
@@ -85,16 +91,19 @@ describe("view.permissions_window", function()
   it("lists every preset with source tags; the active is marked; a row activates", function()
     local app = permissions_window.open()
     local text = text_of(app.bufnr)
-    assert.truthy(text:find("● Normal (ask)", 1, true))
-    assert.truthy(text:find("○ Auto (allow all)", 1, true))
-    assert.truthy(text:find("○ Allow edits", 1, true))
+    assert.truthy(text:find("● Ask", 1, true))
+    assert.truthy(text:find("○ Read-only", 1, true))
+    assert.truthy(text:find("○ Edit", 1, true))
+    assert.truthy(text:find("○ Auto", 1, true))
+    -- and nothing from the other mode
+    assert.is_nil(text:find("Unsandboxed", 1, true))
     assert.truthy(text:find("builtin", 1, true))
     -- the active preset's rules render under it
     assert.truthy(text:find("acp:*", 1, true))
     assert.truthy(text:find("ask", 1, true))
 
-    press_on(app, "Auto (allow all)")
-    wait_text(app.bufnr, "● Auto (allow all)")
+    press_on(app, "○ Auto")
+    wait_text(app.bufnr, "● Auto")
     assert.equal("auto", Permissions.active().name)
     app.unmount()
   end)
@@ -102,14 +111,14 @@ describe("view.permissions_window", function()
   it("[edit] opens the active preset as Lua; :w applies it as a runtime preset", function()
     local app = permissions_window.open()
     press_on(app, "[edit]")
-    local ewin, ebuf = wait_float("normal", app.winid)
+    local ewin, ebuf = wait_float('name = "ask"', app.winid)
     assert.is_not_nil(ewin, "the preset editor float")
     assert.equal("acwrite", vim.bo[ebuf].buftype)
 
     vim.api.nvim_buf_set_lines(ebuf, 0, -1, false, {
       "{",
-      '  name = "normal",',
-      '  label = "Normal (locked down)",',
+      '  name = "ask",',
+      '  label = "Ask (locked down)",',
       "  rules = {",
       '    { tool = "*", decision = "deny" },',
       "  },",
@@ -120,9 +129,9 @@ describe("view.permissions_window", function()
     end)
     -- the editor closed itself; the runtime def shadows the builtin
     assert.is_false(vim.api.nvim_win_is_valid(ewin))
-    assert.equal("runtime", Permissions.get("normal").source)
+    assert.equal("runtime", Permissions.get("ask").source)
     assert.equal("deny", Permissions.resolve({ tool = "weave:read" }))
-    wait_text(app.bufnr, "Normal (locked down)")
+    wait_text(app.bufnr, "Ask (locked down)")
     assert.truthy(text_of(app.bufnr):find("runtime", 1, true))
     app.unmount()
   end)
@@ -130,13 +139,13 @@ describe("view.permissions_window", function()
   it(":w with broken content keeps the editor open and the engine unchanged", function()
     local app = permissions_window.open()
     press_on(app, "[edit]")
-    local ewin, ebuf = wait_float("normal", app.winid)
+    local ewin, ebuf = wait_float('name = "ask"', app.winid)
     vim.api.nvim_buf_set_lines(ebuf, 0, -1, false, { "{ name = " })
     vim.api.nvim_buf_call(ebuf, function()
       vim.cmd("silent! write")
     end)
     assert.is_true(vim.api.nvim_win_is_valid(ewin))
-    assert.equal("builtin", Permissions.get("normal").source)
+    assert.equal("builtin", Permissions.get("ask").source)
 
     -- a well-formed table that fails validation is also refused
     vim.api.nvim_buf_set_lines(ebuf, 0, -1, false, { '{ name = "x", rules = { { decision = "maybe" } } }' })
@@ -171,14 +180,16 @@ describe("view.permissions_window", function()
   it("[delete] drops the active preset's runtime def, revealing the shadowed one", function()
     Permissions.save_preset({
       name = "auto",
-      label = "Auto (shadowed)",
+      -- a label sharing no prefix with the builtin's, so "Auto" reappearing
+      -- in the list is real evidence the shadow is gone
+      label = "Overridden",
       rules = { { tool = "*", decision = "allow" } },
     })
     Permissions.set_active("auto")
     local app = permissions_window.open()
     wait_text(app.bufnr, "[delete]")
     press_on(app, "[delete]")
-    wait_text(app.bufnr, "Auto (allow all)")
+    wait_text(app.bufnr, "Auto")
     assert.equal("builtin", Permissions.get("auto").source)
     -- no runtime def left anywhere → no delete button
     assert.is_nil(text_of(app.bufnr):find("[delete]", 1, true))

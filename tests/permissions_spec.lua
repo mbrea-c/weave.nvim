@@ -31,39 +31,59 @@ describe("permissions engine", function()
     Permissions._reset()
   end)
 
-  it("ships the builtin presets in the legacy mode order", function()
+  it("ships four shapes per sandbox mode, sandboxed first", function()
     local names = {}
     for _, p in ipairs(Permissions.presets()) do
       names[#names + 1] = p.name
     end
+    -- the sandboxed four hold the PLAIN names: the sandbox is the default, so
+    -- a half-remembered name lands on the confined preset, not the open one
     assert.same({
-      "normal",
+      "ask",
+      "read_only",
+      "edit",
       "auto",
-      "allow_edits",
-      "sandboxed_normal",
-      "sandboxed_auto",
-      "sandboxed_allow_edits",
+      "unsandboxed_ask",
+      "unsandboxed_read_only",
+      "unsandboxed_edit",
+      "unsandboxed_auto",
     }, names)
-    assert.equal("normal", Permissions.active().name)
-    assert.equal("Normal (ask)", Permissions.active().label)
+    assert.equal("ask", Permissions.active().name)
+    assert.equal("Ask", Permissions.active().label)
   end)
 
-  it("builtin normal asks for ACP requests and allows client-side tools", function()
+  it("unsandboxed_ask asks for ACP requests and allows client-side tools", function()
+    Permissions.set_mode("off")
+    Permissions.set_active("unsandboxed_ask")
     assert.equal("ask", Permissions.resolve({ tool = "acp:edit" }))
     assert.equal("ask", Permissions.resolve({ tool = "acp:execute", resource = "rm -rf /" }))
     assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = "/tmp/x" }))
     assert.equal("allow", Permissions.resolve({ tool = "perijove:run_cell" }))
   end)
 
-  it("builtin auto allows everything; allow_edits allows only ACP edits", function()
-    Permissions.set_active("auto")
+  it("unsandboxed auto allows everything; edit allows only ACP reads and edits", function()
+    Permissions.set_mode("off")
+    Permissions.set_active("unsandboxed_auto")
     assert.equal("allow", Permissions.resolve({ tool = "acp:execute" }))
     assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/etc/hosts" }))
 
-    Permissions.set_active("allow_edits")
+    Permissions.set_active("unsandboxed_edit")
     assert.equal("allow", Permissions.resolve({ tool = "acp:edit" }))
+    assert.equal("allow", Permissions.resolve({ tool = "acp:read" }))
     assert.equal("ask", Permissions.resolve({ tool = "acp:execute" }))
     assert.equal("allow", Permissions.resolve({ tool = "weave:read" }))
+  end)
+
+  it("unsandboxed read-only turns back writes on BOTH sides", function()
+    Permissions.set_mode("off")
+    Permissions.set_active("unsandboxed_read_only")
+    assert.equal("allow", Permissions.resolve({ tool = "acp:read" }))
+    assert.equal("deny", Permissions.resolve({ tool = "acp:edit" }))
+    assert.equal("deny", Permissions.resolve({ tool = "acp:execute" }))
+    -- denying only the agent's tools would just make it switch to weave's
+    assert.equal("deny", Permissions.resolve({ tool = "weave:write", resource = "/tmp/x" }))
+    assert.equal("deny", Permissions.resolve({ tool = "weave:task_start", resource = "ls" }))
+    assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = "/tmp/x" }))
   end)
 
   it("resolves first-match-wins and falls back to ask when nothing matches", function()
@@ -92,6 +112,8 @@ describe("permissions engine", function()
   end)
 
   it("resolve also returns the matched rule", function()
+    Permissions.set_mode("off")
+    Permissions.set_active("unsandboxed_ask")
     local decision, rule = Permissions.resolve({ tool = "acp:edit" })
     assert.equal("ask", decision)
     assert.equal("acp:*", rule.tool)
@@ -112,12 +134,14 @@ describe("permissions engine", function()
       names[#names + 1] = p.name
     end
     assert.same({
-      "normal",
+      "ask",
+      "read_only",
+      "edit",
       "auto",
-      "allow_edits",
-      "sandboxed_normal",
-      "sandboxed_auto",
-      "sandboxed_allow_edits",
+      "unsandboxed_ask",
+      "unsandboxed_read_only",
+      "unsandboxed_edit",
+      "unsandboxed_auto",
       "team",
     }, names)
     assert.equal("team", Permissions.active().name)
@@ -126,58 +150,65 @@ describe("permissions engine", function()
   end)
 
   it("runtime presets shadow builtins by name; deleting reveals the shadowed def", function()
+    Permissions.set_mode("off")
     Permissions.save_preset({
-      name = "auto",
+      name = "unsandboxed_auto",
       label = "Auto (but no deletes)",
+      for_mode = "off",
       rules = {
         { tool = "acp:delete", decision = "ask" },
         { tool = "*", decision = "allow" },
       },
     })
-    -- still ONE preset called auto, at its builtin position, now runtime-owned
+    -- still ONE preset by that name, at its builtin position, now runtime-owned
     local names = {}
     for _, p in ipairs(Permissions.presets()) do
       names[#names + 1] = p.name
     end
     assert.same({
-      "normal",
+      "ask",
+      "read_only",
+      "edit",
       "auto",
-      "allow_edits",
-      "sandboxed_normal",
-      "sandboxed_auto",
-      "sandboxed_allow_edits",
+      "unsandboxed_ask",
+      "unsandboxed_read_only",
+      "unsandboxed_edit",
+      "unsandboxed_auto",
     }, names)
-    assert.equal("runtime", Permissions.get("auto").source)
+    assert.equal("runtime", Permissions.get("unsandboxed_auto").source)
 
-    Permissions.set_active("auto")
+    Permissions.set_active("unsandboxed_auto")
     assert.equal("ask", Permissions.resolve({ tool = "acp:delete" }))
 
-    Permissions.delete_preset("auto")
-    assert.equal("builtin", Permissions.get("auto").source)
+    Permissions.delete_preset("unsandboxed_auto")
+    assert.equal("builtin", Permissions.get("unsandboxed_auto").source)
     assert.equal("allow", Permissions.resolve({ tool = "acp:delete" }))
   end)
 
-  it("deleting a runtime-only preset drops it and re-points active at normal", function()
+  it("deleting a runtime-only preset drops it and re-points active inside the mode", function()
+    Permissions.set_mode("on")
     Permissions.save_preset({ name = "temp", rules = { { tool = "*", decision = "deny" } } })
     Permissions.set_active("temp")
     Permissions.delete_preset("temp")
     assert.is_nil(Permissions.get("temp"))
-    assert.equal("normal", Permissions.active().name)
+    assert.equal("ask", Permissions.active().name)
   end)
 
   it("cycle() walks the effective preset order and notifies subscribers", function()
+    Permissions.set_mode("on")
     local fired = 0
     local unsub = Permissions.subscribe(function()
       fired = fired + 1
     end)
-    -- the sandbox is off here, so the cycle is the three mode-off presets
+    -- the four sandboxed shapes, in shipped order, starting from `ask`
+    assert.equal("read_only", Permissions.cycle().name)
+    assert.equal("edit", Permissions.cycle().name)
     assert.equal("auto", Permissions.cycle().name)
-    assert.equal("allow_edits", Permissions.cycle().name)
-    assert.equal("normal", Permissions.cycle().name)
-    assert.equal(3, fired)
+    assert.equal("ask", Permissions.cycle().name)
+    assert.equal(4, fired)
     unsub()
     Permissions.cycle()
-    assert.equal(3, fired)
+    assert.equal(4, fired)
   end)
 
   it("save_preset validates loudly", function()
@@ -191,7 +222,7 @@ describe("permissions engine", function()
       Permissions.save_preset({ name = "x", rules = { { decision = "allow" } } })
     end, "tool")
     assert.has_error(function()
-      Permissions.delete_preset("normal") -- no runtime def to delete
+      Permissions.delete_preset("ask") -- no runtime def to delete
     end, "runtime")
   end)
 
@@ -199,7 +230,7 @@ describe("permissions engine", function()
     assert.has_error(function()
       Permissions.set_active("yolo")
     end, "yolo")
-    assert.equal("normal", Permissions.active().name)
+    assert.equal("ask", Permissions.active().name)
   end)
 end)
 
@@ -269,25 +300,19 @@ describe("permissions sandboxed builtins", function()
     Permissions._reset()
   end)
 
-  it("ships three sandboxed variants after the legacy three", function()
+  local SANDBOXED = { "ask", "read_only", "edit", "auto" }
+
+  it("ships the four sandboxed shapes ahead of the unsandboxed ones", function()
     local names = {}
-    for _, p in ipairs(Permissions.presets()) do
+    for _, p in ipairs(Permissions.available("on")) do
       names[#names + 1] = p.name
     end
-    assert.same({
-      "normal",
-      "auto",
-      "allow_edits",
-      "sandboxed_normal",
-      "sandboxed_auto",
-      "sandboxed_allow_edits",
-    }, names)
+    assert.same(SANDBOXED, names)
   end)
 
-  it("sandboxed_normal allows reads inside the project and asks outside it", function()
-    Permissions.set_active("sandboxed_normal")
-    assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = "/home/me/proj/a.lua" }))
-    assert.equal("ask", Permissions.resolve({ tool = "weave:read", resource = "/etc/passwd" }))
+  it("ask asks inside the workspace and denies outside it", function()
+    Permissions.set_active("ask")
+    assert.equal("ask", Permissions.resolve({ tool = "weave:read", resource = "/home/me/proj/a.lua" }))
     assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
     -- the agent's OWN tools are turned back: in mode on they only reach the
     -- empty read-only decoy, and letting them through taught a live agent
@@ -295,44 +320,73 @@ describe("permissions sandboxed builtins", function()
     assert.equal("deny", Permissions.resolve({ tool = "acp:edit" }))
   end)
 
+  it("every sandboxed preset denies outside the workspace, pointing at request_access", function()
+    for _, preset in ipairs(SANDBOXED) do
+      Permissions.set_active(preset)
+      local decision, rule = Permissions.resolve({ tool = "weave:read", resource = "/etc/passwd" })
+      assert.equal("deny", decision, preset .. " reads outside the workspace")
+      assert.truthy(rule.message:find("request_access", 1, true), preset .. " says how to ask")
+    end
+  end)
+
   it("acp:mcp — the agent calling OUR tools — is allowed, not denied", function()
-    for _, preset in ipairs({ "sandboxed_normal", "sandboxed_auto", "sandboxed_allow_edits" }) do
+    for _, preset in ipairs(SANDBOXED) do
       Permissions.set_active(preset)
       assert.equal("allow", Permissions.resolve({ tool = "acp:mcp", resource = "clankbox_read" }))
     end
   end)
 
   it("the acp:* deny carries a message pointing at the client-side tools", function()
-    Permissions.set_active("sandboxed_normal")
+    Permissions.set_active("ask")
     local decision, rule = Permissions.resolve({ tool = "acp:read", resource = "/home/me/proj/a.lua" })
     assert.equal("deny", decision)
     assert.truthy(rule.message:find("weave", 1, true))
   end)
 
-  it("the resourceless task query tools are allowed, not caught by the catch-all ask", function()
-    for _, preset in ipairs({ "sandboxed_normal", "sandboxed_auto", "sandboxed_allow_edits" }) do
+  it("the resourceless task query tools are allowed, not caught by a catch-all", function()
+    for _, preset in ipairs(SANDBOXED) do
       Permissions.set_active(preset)
-      assert.equal("allow", Permissions.resolve({ tool = "weave:task_status" }))
-      assert.equal("allow", Permissions.resolve({ tool = "weave:task_wait" }))
-      assert.equal("allow", Permissions.resolve({ tool = "weave:task_kill" }))
+      assert.equal("allow", Permissions.resolve({ tool = "weave:task_status" }), preset)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:task_wait" }), preset)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:task_kill" }), preset)
     end
   end)
 
-  it("sandboxed_allow_edits allows writes inside the project only", function()
-    Permissions.set_active("sandboxed_allow_edits")
-    -- "allow edits" now means WEAVE's edit tools; the agent's own is denied
-    -- with the rest of acp:*
+  it("read_only allows the read-shaped tools and denies the rest, hull included", function()
+    Permissions.set_active("read_only")
+    assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = "/home/me/proj/a.lua" }))
+    assert.equal("allow", Permissions.resolve({ tool = "weave:grep", resource = "/home/me/proj" }))
+    for _, tool in ipairs({ "weave:write", "weave:edit", "weave:task_start" }) do
+      local decision, rule = Permissions.resolve({ tool = tool, resource = "/home/me/proj/a.lua" })
+      assert.equal("deny", decision, tool)
+      assert.truthy(rule.message:find("read-only", 1, true), tool)
+    end
+    -- and the kernel agrees: tools spawned under it get the project ro
+    assert.same(
+      { path = "/home/me/proj", mode = "ro" },
+      Permissions.tool_sandbox(Permissions.get("read_only")).binds[1]
+    )
+  end)
+
+  it("edit writes inside the workspace unprompted but still asks to run commands", function()
+    Permissions.set_active("edit")
     assert.equal("deny", Permissions.resolve({ tool = "acp:edit" }))
     assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
     assert.equal("allow", Permissions.resolve({ tool = "weave:edit", resource = "/home/me/proj/a.lua" }))
-    assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/etc/hosts" }))
+    assert.equal("ask", Permissions.resolve({ tool = "weave:task_start", resource = "rm -rf /" }))
+    assert.equal("deny", Permissions.resolve({ tool = "weave:write", resource = "/etc/hosts" }))
   end)
 
-  it("sandboxed_auto allows any weave tool inside the project, asks outside", function()
-    Permissions.set_active("sandboxed_auto")
+  it("auto allows any weave tool inside the workspace — except widening the sandbox", function()
+    Permissions.set_active("auto")
     assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
+    assert.equal("allow", Permissions.resolve({ tool = "weave:task_start", resource = "make" }))
     assert.equal("deny", Permissions.resolve({ tool = "acp:execute" }))
-    assert.equal("ask", Permissions.resolve({ tool = "weave:read", resource = "/etc/passwd" }))
+    -- grants are the user's call in every preset
+    assert.equal("ask", Permissions.resolve({ tool = "weave:request_access" }))
+    -- and tools weave does not own still ask: exec_lua runs in the
+    -- UNsandboxed editor, so allowing it would dissolve the confinement
+    assert.equal("ask", Permissions.resolve({ tool = "mcp:exec_lua" }))
   end)
 end)
 
@@ -342,11 +396,13 @@ describe("permissions sandbox mode", function()
   end)
 
   it("set_mode/current_mode reflect the last spawn", function()
+    Permissions.set_mode("off")
     assert.equal("off", Permissions.current_mode())
     Permissions.set_mode("on")
     assert.equal("on", Permissions.current_mode())
+    -- nil = no spawn to speak for; fall back to what the config resolves to
     Permissions.set_mode(nil)
-    assert.equal("off", Permissions.current_mode())
+    assert.equal(require("weave.sandbox").resolve().mode, Permissions.current_mode())
   end)
 
   it("the removed v1 requirement fields error loudly", function()
@@ -368,8 +424,13 @@ describe("permissions sandbox mode", function()
       end
       return out
     end
-    assert.same({ "normal", "auto", "allow_edits" }, names("off"))
-    assert.same({ "sandboxed_normal", "sandboxed_auto", "sandboxed_allow_edits" }, names("on"))
+    assert.same({
+      "unsandboxed_ask",
+      "unsandboxed_read_only",
+      "unsandboxed_edit",
+      "unsandboxed_auto",
+    }, names("off"))
+    assert.same({ "ask", "read_only", "edit", "auto" }, names("on"))
   end)
 
   it("an untagged preset is available under both modes", function()
@@ -387,32 +448,34 @@ describe("permissions sandbox mode", function()
   end)
 
   it("set_active refuses a preset belonging to the other mode", function()
+    Permissions.set_mode("off")
     assert.has_error(function()
-      Permissions.set_active("sandboxed_normal") -- sandbox is off
+      Permissions.set_active("edit") -- sandboxed, and the sandbox is off
     end, "sandbox mode")
-    assert.equal("normal", Permissions.active().name)
+    assert.equal("unsandboxed_ask", Permissions.active().name)
     Permissions.set_mode("on")
     assert.has_error(function()
-      Permissions.set_active("auto")
+      Permissions.set_active("unsandboxed_auto")
     end, "sandbox mode")
   end)
 
   it("cycle() stays inside the presets the mode allows", function()
     Permissions.set_mode("on")
     local seen = {}
-    for _ = 1, 3 do
+    for _ = 1, 4 do
       seen[#seen + 1] = Permissions.cycle().name
     end
     table.sort(seen)
-    assert.same({ "sandboxed_allow_edits", "sandboxed_auto", "sandboxed_normal" }, seen)
+    assert.same({ "ask", "auto", "edit", "read_only" }, seen)
   end)
 
   it("set_mode moves the active preset to its counterpart in the new mode", function()
-    Permissions.set_active("allow_edits")
     Permissions.set_mode("on")
-    assert.equal("sandboxed_allow_edits", Permissions.active().name)
+    Permissions.set_active("edit")
     Permissions.set_mode("off")
-    assert.equal("allow_edits", Permissions.active().name)
+    assert.equal("unsandboxed_edit", Permissions.active().name)
+    Permissions.set_mode("on")
+    assert.equal("edit", Permissions.active().name)
   end)
 
   it("set_mode leaves an untagged preset alone", function()
@@ -422,25 +485,25 @@ describe("permissions sandbox mode", function()
     assert.equal("either", Permissions.active().name)
   end)
 
-  it("setup with no preference defaults to the sandboxed variant under mode on", function()
+  it("setup with no preference keeps the sandboxed default under mode on", function()
     Permissions.set_mode("on")
     Permissions.setup({})
-    assert.equal("sandboxed_normal", Permissions.active().name)
+    assert.equal("ask", Permissions.active().name)
   end)
 
-  it("setup keeps the plain preset when mode is off, and honours a compatible pin", function()
+  it("setup takes the unsandboxed counterpart when mode is off, and honours a compatible pin", function()
     Permissions.set_mode("off")
     Permissions.setup({})
-    assert.equal("normal", Permissions.active().name)
+    assert.equal("unsandboxed_ask", Permissions.active().name)
     Permissions.set_mode("on")
-    Permissions.setup({ preset = "sandboxed_auto" })
-    assert.equal("sandboxed_auto", Permissions.active().name)
+    Permissions.setup({ preset = "auto" })
+    assert.equal("auto", Permissions.active().name)
   end)
 
   it("setup rejects a pinned preset from the other mode", function()
     Permissions.set_mode("on")
     assert.has_error(function()
-      Permissions.setup({ preset = "auto" })
+      Permissions.setup({ preset = "unsandboxed_auto" })
     end, "sandbox mode")
   end)
 
@@ -454,28 +517,36 @@ end)
 describe("permissions grant overlay", function()
   before_each(function()
     Permissions.set_project_root("/home/me/proj")
-    Permissions.set_mode("on") -- the sandboxed_* presets below are mode-on only
+    Permissions.set_mode("on") -- the sandboxed presets below are mode-on only
   end)
   after_each(function()
     Permissions._reset()
   end)
 
   it("starts empty and resolves through the active preset", function()
-    Permissions.set_active("sandboxed_normal")
+    Permissions.set_active("ask")
     assert.same({}, Permissions.grants())
     assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
   end)
 
   it("an overlay rule beats a conflicting preset rule", function()
-    Permissions.set_active("sandboxed_normal")
+    Permissions.set_active("ask")
     Permissions.add_grant({ tool = "weave:write", resource = "${project}/**", decision = "allow" })
     assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
-    assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/etc/hosts" }))
+    -- outside the workspace the preset's closing deny still stands
+    assert.equal("deny", Permissions.resolve({ tool = "weave:write", resource = "/etc/hosts" }))
+  end)
+
+  it("a grant out-votes the outside-the-workspace deny", function()
+    Permissions.set_active("ask")
+    assert.equal("deny", Permissions.resolve({ tool = "weave:read", resource = "/data/x" }))
+    Permissions.add_grant({ tool = "weave:read", resource = "/data/**", decision = "allow" })
+    assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = "/data/x" }))
   end)
 
   it("survives a preset switch and is cleared by clear_overlay", function()
     Permissions.add_grant({ tool = "weave:write", resource = "${project}/**", decision = "allow" })
-    Permissions.set_active("sandboxed_normal")
+    Permissions.set_active("ask")
     assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))
     Permissions.clear_overlay()
     assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/home/me/proj/a.lua" }))

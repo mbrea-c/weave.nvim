@@ -279,8 +279,10 @@ describe("view.panel shell", function()
 
     -- ;;p cycles the active permission preset (default wiring, straight to
     -- the editor-global engine)
+    Permissions.set_mode("on")
     press(";;p")
-    assert.equal("auto", Permissions.active().name)
+    -- ask -> read_only, the next preset available under the sandbox mode
+    assert.equal("read_only", Permissions.active().name)
     Permissions._reset()
     handle.close()
   end)

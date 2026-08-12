@@ -94,19 +94,21 @@ describe("preset sandbox hull", function()
     -- one: a builtin that leaned on DEFAULT_BINDS would leave the hull
     -- invisible at the surface users read and copy from.
     it("every sandboxed builtin states its hull instead of inheriting it", function()
-      for _, name in ipairs({ "sandboxed_normal", "sandboxed_auto", "sandboxed_allow_edits" }) do
+      for _, name in ipairs({ "ask", "read_only", "edit", "auto" }) do
         local preset = Permissions.get(name)
         assert.is_not_nil(preset.sandbox, name .. " declares a sandbox section")
         assert.same({
-          binds = { { path = "/proj/demo", mode = "rw" } },
+          -- read_only mounts the workspace ro; the rest rw. Either way it is
+          -- the workspace and nothing else, with no network.
+          binds = { { path = "/proj/demo", mode = name == "read_only" and "ro" or "rw" } },
           network = false,
         }, Permissions.tool_sandbox(preset))
       end
     end)
 
-    -- ...and the mode-off trio must NOT, since mode off builds no hull at all.
+    -- ...and the mode-off four must NOT, since mode off builds no hull at all.
     it("the unsandboxed builtins declare none", function()
-      for _, name in ipairs({ "normal", "auto", "allow_edits" }) do
+      for _, name in ipairs({ "unsandboxed_ask", "unsandboxed_read_only", "unsandboxed_edit", "unsandboxed_auto" }) do
         assert.is_nil(Permissions.get(name).sandbox)
       end
     end)

@@ -40,7 +40,8 @@ describe("foreign tool middleware", function()
 
   before_each(function()
     saved_ask_store = Gate._ask_store
-    Permissions.set_active("normal")
+    Permissions.set_mode("off")
+    Permissions.set_active("unsandboxed_ask")
   end)
 
   after_each(function()
@@ -49,7 +50,7 @@ describe("foreign tool middleware", function()
   end)
 
   it("passes a foreign tool through when the preset allows it", function()
-    -- "normal" ends in a catch-all allow, so an unlisted tool runs.
+    -- "unsandboxed_ask" ends in a catch-all allow, so an unlisted tool runs.
     local out = call("exec_lua", { code = "return 1" })
     assert.is_true(out.ran)
     assert.is_nil(out.responded)

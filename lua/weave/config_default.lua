@@ -30,11 +30,11 @@
 --- @field ripgrep_path? string Absolute path to `rg` for the glob/grep tools; nil = look on PATH
 
 --- @class weave.PermissionsConfig The client-side permission engine (weave.permissions)
---- @field preset? string Active preset at startup; unset = "normal", or its sandboxed_* variant when sandbox mode is on
+--- @field preset? string Active preset at startup; unset = "ask", or its unsandboxed_* variant when the sandbox is off
 --- @field presets? weave.permissions.Preset[] Additional presets (the setup source; shadow builtins by name)
 
 --- @class weave.SandboxConfig Confinement for the spawned agent process (weave.sandbox; bwrap backend, Linux-only, degrades to "off" elsewhere)
---- @field mode? "on"|"off" "on" = the invariant maximal agent sandbox (design-agent-sandbox-v2.md): project absent, every effect flows through the sandboxed tool layer. (The v1 `profile` key errors loudly.)
+--- @field mode? "on"|"off" Default "on" = the invariant maximal agent sandbox (design-agent-sandbox-v2.md): project absent, every effect flows through the sandboxed tool layer. "off" disables confinement entirely (rules still gate). (The v1 `profile` key errors loudly.)
 --- @field state_paths? string[] Extra rw binds (agent state/auth dirs; known providers ship defaults), ~ ok, missing paths fine
 --- @field ro_paths? string[] Extra ro binds, same rules
 --- @field env_allowlist? string[] Keep only these inherited env vars (default: inherit everything, sandboxed or not)
@@ -227,26 +227,30 @@ local ConfigDefault = {
 
   -- The client-side permission engine (weave.permissions): `preset` picks the
   -- active preset at startup, `presets` adds saved rule configurations beside
-  -- the builtin normal/auto/allow_edits (same name = shadow the builtin).
+  -- the builtin ask/read_only/edit/auto and their unsandboxed_* counterparts
+  -- (same name = shadow the builtin).
   -- Rule shape: { tool = "<glob>", resource = "<glob>"|nil, decision =
   -- "allow"|"deny"|"ask" } — see lua/weave/permissions.lua for the action
   -- vocabulary (acp:<kind>, weave:<tool>, mcp:<tool>, <plugin>:<tool>).
-  -- `preset` is deliberately UNSET here rather than defaulted to "normal": an
-  -- absent value means "no preference", which is what lets sandbox mode on
-  -- select the matching sandboxed_* variant automatically. Setting it pins
-  -- the choice under either mode.
+  -- `preset` is deliberately UNSET here rather than defaulted to "ask": an
+  -- absent value means "no preference", which is what lets the mode actually
+  -- in force pick the matching variant (`ask` sandboxed, `unsandboxed_ask`
+  -- with the sandbox off). Setting it pins the choice, and a preset written
+  -- for the other mode is then a loud error rather than a silent swap.
   permissions = {
     presets = {},
   },
 
   -- Agent process confinement (weave.sandbox, design-agent-sandbox-v2.md):
-  -- default off. Mode "on" runs the agent in the one invariant maximal
-  -- sandbox — the project absent (empty read-only tmpfs), every effect
-  -- flowing through the weave tools, which run in their own per-invocation
-  -- sandboxes under the active preset's hull. bwrap only; on platforms
-  -- without it mode "on" degrades to "off" with a one-time warning.
+  -- default ON. The agent runs in the one invariant maximal sandbox — the
+  -- project absent (empty read-only tmpfs), every effect flowing through the
+  -- weave tools, which run in their own per-invocation sandboxes under the
+  -- active preset's hull. bwrap only; on platforms without it mode "on"
+  -- degrades to "off" with a one-time warning, and the preset in force
+  -- degrades with it (the unsandboxed_* counterpart), so the policy always
+  -- matches the confinement that actually exists.
   sandbox = {
-    mode = "off",
+    mode = "on",
     state_paths = {},
     ro_paths = {},
   },

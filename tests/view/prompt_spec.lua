@@ -198,13 +198,14 @@ describe("view.prompt", function()
     end
 
     -- The active permission preset tints the TITLE and names the preset in
-    -- it; the border edge itself stays a constant 'normal' hl. So on the
-    -- normal preset the title reads "(normal)" and there's no auto tint
+    -- it; the border edge itself stays the constant neutral hl. So on the
+    -- default `ask` preset the title reads "(ask)" and there's no auto tint
     -- anywhere.
-    assert.truthy(text():find("(normal)", 1, true))
+    Permissions.set_mode("on")
+    assert.truthy(text():find("(ask)", 1, true))
     assert.equal(0, #marks_with(handle.bufnr, Theme.PROMPT_BORDER_HL.auto))
 
-    Permissions.cycle() -- normal → auto (the engine, not the store)
+    Permissions.set_active("auto") -- the engine, not the store
     -- the title gains the preset's colour + label; the border_hl is
     -- unchanged, so an auto mark can ONLY come from the title
     assert.truthy(text():find("(auto", 1, true))

@@ -155,27 +155,44 @@ M.PERMISSION_PERSIST_HL = "WeavePermissionPersist"
 vim.api.nvim_set_hl(0, M.PERMISSION_PERSIST_HL, { fg = "#e0af68", bold = true, default = true })
 
 -- Prompt border per permission PRESET (keyed by preset name; custom presets
--- fall back to normal): an ambient reminder of how permission requests are
--- being answered while typing. normal is the neutral fibrous border
+-- fall back to `ask`): an ambient reminder of how permission requests are
+-- being answered while typing. ask is the neutral fibrous border
 -- (FibrousBorder) so the buffer-mounted sidebar reads as one surface — the
 -- prompt is a PAINTED border, not a real float, and FloatBorder made it stand
--- out against the Normal background; auto is amber (everything allowed),
--- allow_edits purple — the mode palette from STATUS_DEFAULT_FG.
+-- out against the Normal background; read-only is blue, edit purple, auto
+-- amber — the mode palette from STATUS_DEFAULT_FG.
+--
+-- The unsandboxed_* presets reuse their shape's colour (the title already
+-- says "unsandboxed"), with one exception: unsandboxed auto — no confinement
+-- AND no prompts — gets its own red, because it is the only state where
+-- nothing at all stands between the agent and the machine.
 M.PROMPT_BORDER_HL = {
-  normal = "WeavePromptBorderNormal",
+  ask = "WeavePromptBorderAsk",
+  read_only = "WeavePromptBorderReadOnly",
+  edit = "WeavePromptBorderEdit",
   auto = "WeavePromptBorderAuto",
-  allow_edits = "WeavePromptBorderAllowEdits",
+  unsandboxed_ask = "WeavePromptBorderAsk",
+  unsandboxed_read_only = "WeavePromptBorderReadOnly",
+  unsandboxed_edit = "WeavePromptBorderEdit",
+  unsandboxed_auto = "WeavePromptBorderUnsandboxedAuto",
 }
 
 M.PROMPT_TITLE_EXTRA = {
-  normal = "normal",
+  ask = "ask",
+  read_only = "read-only",
+  edit = "edit ⏵",
   auto = "auto ⏵⏵",
-  allow_edits = "allow edits ⏵",
+  unsandboxed_ask = "unsandboxed",
+  unsandboxed_read_only = "unsandboxed, read-only",
+  unsandboxed_edit = "unsandboxed, edit ⏵",
+  unsandboxed_auto = "unsandboxed, auto ⏵⏵",
 }
 
-vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.normal, { link = "FibrousBorder", default = true })
+vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.ask, { link = "FibrousBorder", default = true })
+vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.read_only, { fg = "#7dcfff", default = true })
+vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.edit, { fg = "#bb9af7", default = true })
 vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.auto, { fg = "#e0af68", default = true })
-vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.allow_edits, { fg = "#bb9af7", default = true })
+vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.unsandboxed_auto, { fg = "#f7768e", default = true })
 
 -- Inline code feedback: the span a user has attached a comment to, highlighted
 -- in the CODE buffer itself (not in weave's own windows), so it has to be

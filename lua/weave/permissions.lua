@@ -31,10 +31,10 @@
 -- it does not).
 --
 -- Presets coexist from three sources, later shadowing earlier BY NAME:
--- builtin (shipped; the legacy permission modes normal/auto/allow_edits
--- re-encoded), setup (config.permissions.presets), runtime (created or
--- edited in the config window; in-memory for now — persistence is an open
--- question in the design doc). ;;p cycles the effective list.
+-- builtin (shipped; four shapes — ask/read_only/edit/auto — per sandbox
+-- mode), setup (config.permissions.presets), runtime (created or edited in
+-- the config window; in-memory for now — persistence is an open question in
+-- the design doc). ;;p cycles the effective list.
 
 local M = {}
 
@@ -110,76 +110,94 @@ local USE_CLIENT_TOOLS = "builtin tools are sandboxed away from the project; use
 -- the deny below, refusing the agent the tools we just steered it toward.
 local ALLOW_BROKERED = { tool = "acp:mcp", decision = "allow" }
 
--- The legacy permission modes, re-encoded (same names, labels and cycle
--- order, so ;;p muscle memory and the prompt-border palette carry over).
--- "Client-side tools allow by default" preserves phase-0 behavior: the
--- agent-side permission flow already mediates MCP calls over acp:*; rules
--- targeting weave:*/plugin tools are the new, opt-in tightening.
+-- Every sandboxed preset ends its weave:* run with a deny carrying this: the
+-- workspace is the whole world by default, and the way out is to ASK, not to
+-- try a wider path and hope. Saying so in the refusal is what turns a dead
+-- end into the next step — the agent reads it and calls request_access.
 --
--- Every builtin is mode-tagged, because each is written against a world:
--- these three assume the agent's own tools reach the real project (only
--- true in mode off), the sandboxed_* trio below assume they cannot.
+-- The deny is safe to state absolutely because elevation grants land in the
+-- OVERLAY, which resolve() consults before the active preset: an approved
+-- /data grant out-votes this line without editing the preset.
+local OUTSIDE_WORKSPACE = "outside the workspace: call request_access to ask the user for this path"
+
+-- What a read-only preset says when it turns back a write or a command.
+local READ_ONLY = "this preset is read-only; switch presets to write or run commands"
+
+-- The builtins: four policy shapes — ask, read-only, edit, auto — shipped
+-- twice, once per sandbox mode, in that cycle order.
 --
--- Only the sandboxed trio carry a `sandbox` section. That is not an
--- oversight: mode off disables the sandbox outright (tool_sandboxing_on),
--- so a hull declared on a `for_mode = "off"` preset would be documentation
--- of something weave never builds.
+-- The SANDBOXED four come first and hold the plain names, because sandbox
+-- mode on is the default. `edit` is the confined shape; `unsandboxed_edit`
+-- is the one that hands the agent the real filesystem. Naming the safe world
+-- plainly and marking the unsafe one is the only arrangement where a typo,
+-- an old config or a half-remembered name fails toward confinement.
+--
+-- Every builtin is mode-tagged, because each is written against a world: the
+-- sandboxed four assume the agent's own tools cannot reach the project, the
+-- unsandboxed four assume they can. Only the sandboxed four carry a
+-- `sandbox` hull — mode off disables the tool sandbox outright
+-- (tool_sandboxing_on), so a hull there would document something weave never
+-- builds.
+--
+-- Three things are true of all four sandboxed presets:
+--
+--   * they open with acp:mcp ALLOW then a blanket acp:* DENY. The agent's own
+--     tools are turned back (they reach only the empty decoy) while the tools
+--     weave brokers stay reachable. Denying rather than auto-approving is
+--     deliberate: a live opencode run approved its way into the decoy, read
+--     "no files", and reported the project as empty. A deny on the first such
+--     call is a redirection the model acts on, and it costs nothing real —
+--     the tool it wanted could not have worked.
+--
+--   * they close their weave:* run with a deny carrying OUTSIDE_WORKSPACE.
+--     The workspace is the whole world by default; reaching past it is a
+--     request the user answers, not a path the agent can simply take.
+--
+--   * the task QUERY tools are listed one by one, above every
+--     resource-bearing catch-all. tools/init.lua registers them with no
+--     resource extractor, and a resource-bearing rule never matches a
+--     resourceless action, so a `{ tool = "weave:*", resource =
+--     "${project}/**" }` line would sail straight past them — into an ask
+--     that makes the agent beg to read a task's exit code, or into the
+--     closing deny.
 --- @type weave.permissions.Preset[]
 local BUILTIN = {
   {
-    name = "normal",
-    label = "Normal (ask)",
+    name = "ask",
+    label = "Ask",
     source = "builtin",
-    for_mode = "off",
+    for_mode = "on",
     rules = {
-      { tool = "acp:*", decision = "ask" },
+      ALLOW_BROKERED,
+      { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
+      { tool = "weave:task_status", decision = "allow" },
+      { tool = "weave:task_wait", decision = "allow" },
+      { tool = "weave:task_kill", decision = "allow" },
+      -- task_start's resource is the COMMAND LINE, not a path, so it can
+      -- never match a ${project} glob — without a rule of its own it would
+      -- fall through to the closing deny and no command could ever run.
+      { tool = "weave:task_start", decision = "ask" },
+      { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "ask" },
+      { tool = "weave:*", decision = "deny", message = OUTSIDE_WORKSPACE },
+      -- Tools weave does not own (clankbox's exec_lua, other plugins'):
+      -- unmediated they undo the confinement this preset exists for.
+      { tool = "mcp:*", decision = "ask" },
       { tool = "*", decision = "allow" },
+    },
+    -- The hull every TOOL subprocess runs under, stated rather than derived:
+    -- the workspace read-write, nothing else, no network. `binds` REPLACES
+    -- the default (a preset binding only /data really does exclude the
+    -- project), and `tools = { ["weave:task_start"] = { network = true } }`
+    -- overrides these keys for one tool. Elevation grants land on top of
+    -- whatever is here, globally — see M.tool_sandbox.
+    sandbox = {
+      binds = { { path = PROJECT_TOKEN, mode = "rw" } },
+      network = false,
     },
   },
   {
-    name = "auto",
-    label = "Auto (allow all)",
-    source = "builtin",
-    for_mode = "off",
-    rules = {
-      { tool = "*", decision = "allow" },
-    },
-  },
-  {
-    name = "allow_edits",
-    label = "Allow edits",
-    source = "builtin",
-    for_mode = "off",
-    rules = {
-      { tool = "acp:edit", decision = "allow" },
-      { tool = "acp:*", decision = "ask" },
-      { tool = "*", decision = "allow" },
-    },
-  },
-  -- ── The sandboxed variants ────────────────────────────────────────────────
-  --
-  -- Same three shapes, same cycle order, with the client-side exemption
-  -- removed: under sandbox mode on, weave's tools are the agent's ONLY
-  -- route to the world, so they cannot be a free channel around the gate.
-  --
-  -- They open with a blanket acp:* DENY. This is where the agent's own
-  -- tool calls are turned back, and it replaces the blanket auto-approve
-  -- these presets used to rely on. Auto-approving was defensible in theory
-  -- (nothing the agent does directly can land) and wrong in practice: a
-  -- live opencode run approved its way into the empty decoy, read "no
-  -- files", and reported the project as empty. A deny on the FIRST such
-  -- call is a redirection the model acts on, and it costs nothing real —
-  -- the tool it wanted could not have worked.
-  --
-  -- The task query tools are listed one by one above the weave:* catch-all on
-  -- purpose. tools/init.lua registers them with no resource extractor, and a
-  -- resource-bearing rule never matches a resourceless action, so a
-  -- `{ tool = "weave:*", resource = "${project}/**" }` line would sail past
-  -- them into the ask below and make the agent ask permission to read a task's
-  -- exit code.
-  {
-    name = "sandboxed_normal",
-    label = "Sandboxed (ask)",
+    name = "read_only",
+    label = "Read-only",
     source = "builtin",
     for_mode = "on",
     rules = {
@@ -191,58 +209,30 @@ local BUILTIN = {
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
-      { tool = "weave:*", decision = "ask" },
-      -- Tools weave does not own (clankbox's exec_lua, other plugins'):
-      -- unmediated they undo the confinement this preset exists for.
+      -- Resourceless denies: read-only holds wherever the call points, so
+      -- these must not be written as ${project}-scoped rules.
+      { tool = "weave:write", decision = "deny", message = READ_ONLY },
+      { tool = "weave:edit", decision = "deny", message = READ_ONLY },
+      { tool = "weave:task_start", decision = "deny", message = READ_ONLY },
+      { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "ask" },
+      { tool = "weave:*", decision = "deny", message = OUTSIDE_WORKSPACE },
       { tool = "mcp:*", decision = "ask" },
       { tool = "*", decision = "allow" },
     },
-    -- The hull every TOOL subprocess runs under, stated rather than derived:
-    -- the project read-write, nothing else, no network. `binds` REPLACES the
-    -- default (a preset binding only /data really does exclude the project),
-    -- and `tools = { ["weave:task_start"] = { network = true } }` overrides
-    -- these keys for one tool. Elevation grants land on top of whatever is
-    -- here, globally — see M.tool_sandbox.
+    -- Read-only at the kernel too, not just at the gate: anything weave
+    -- spawns under this preset gets the workspace mounted ro, so a tool that
+    -- slips past the rules still cannot write.
     sandbox = {
-      binds = { { path = PROJECT_TOKEN, mode = "rw" } },
+      binds = { { path = PROJECT_TOKEN, mode = "ro" } },
       network = false,
     },
   },
   {
-    name = "sandboxed_auto",
-    label = "Sandboxed (auto)",
+    name = "edit",
+    label = "Edit",
     source = "builtin",
     for_mode = "on",
     rules = {
-      ALLOW_BROKERED,
-      { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
-      { tool = "weave:task_status", decision = "allow" },
-      { tool = "weave:task_wait", decision = "allow" },
-      { tool = "weave:task_kill", decision = "allow" },
-      { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
-      { tool = "weave:*", decision = "ask" },
-      -- Tools weave does not own (clankbox's exec_lua, other plugins'):
-      -- unmediated they undo the confinement this preset exists for.
-      { tool = "mcp:*", decision = "ask" },
-      { tool = "*", decision = "allow" },
-    },
-    -- "Auto" is about how much weave PROMPTS, not about how much the tools
-    -- can reach: the hull stays the project, no network. Widening is the
-    -- elevation path (w:request_access), or an edited copy of this preset.
-    sandbox = {
-      binds = { { path = PROJECT_TOKEN, mode = "rw" } },
-      network = false,
-    },
-  },
-  {
-    name = "sandboxed_allow_edits",
-    label = "Sandboxed (allow edits)",
-    source = "builtin",
-    for_mode = "on",
-    rules = {
-      -- "allow edits" now means WEAVE's write/edit tools run unprompted (see
-      -- below); the agent's own edit tool is denied with the rest, since in
-      -- mode on it can only write into the read-only decoy.
       ALLOW_BROKERED,
       { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
       { tool = "weave:read", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
@@ -253,16 +243,118 @@ local BUILTIN = {
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
-      { tool = "weave:*", decision = "ask" },
-      -- Tools weave does not own (clankbox's exec_lua, other plugins'):
-      -- unmediated they undo the confinement this preset exists for.
+      -- Editing files is not running commands: task_start still asks.
+      { tool = "weave:task_start", decision = "ask" },
+      { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "ask" },
+      { tool = "weave:*", decision = "deny", message = OUTSIDE_WORKSPACE },
       { tool = "mcp:*", decision = "ask" },
       { tool = "*", decision = "allow" },
     },
-    -- Unprompted WRITES are a rule decision; they do not widen the hull.
     sandbox = {
       binds = { { path = PROJECT_TOKEN, mode = "rw" } },
       network = false,
+    },
+  },
+  {
+    name = "auto",
+    label = "Auto",
+    source = "builtin",
+    for_mode = "on",
+    rules = {
+      ALLOW_BROKERED,
+      { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
+      -- The one thing "auto" does not automate: widening the sandbox itself.
+      -- request_access is registered UNgated (its handler is the asking
+      -- mechanism, so wrapping it would prompt twice), which is what makes
+      -- this hold today; the rule states the policy where a reader looks for
+      -- it, and keeps holding if the tool is ever put behind the gate.
+      { tool = "weave:request_access", decision = "ask" },
+      { tool = "weave:task_status", decision = "allow" },
+      { tool = "weave:task_wait", decision = "allow" },
+      { tool = "weave:task_kill", decision = "allow" },
+      -- Resource = the command line, not a path: it needs its own rule, and
+      -- the command is confined by the hull however it is spelled.
+      { tool = "weave:task_start", decision = "allow" },
+      { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:*", decision = "deny", message = OUTSIDE_WORKSPACE },
+      -- Not covered by "all tools": clankbox's exec_lua and friends run in
+      -- the UNSANDBOXED editor, so auto-allowing them would dissolve the
+      -- confinement the rest of this preset is built on.
+      { tool = "mcp:*", decision = "ask" },
+      { tool = "*", decision = "allow" },
+    },
+    -- "Auto" is about how much weave PROMPTS, not about how much the tools
+    -- can reach: the hull stays the workspace, no network. Widening is the
+    -- elevation path (w:request_access), or an edited copy of this preset.
+    sandbox = {
+      binds = { { path = PROJECT_TOKEN, mode = "rw" } },
+      network = false,
+    },
+  },
+  -- ── The unsandboxed variants ──────────────────────────────────────────────
+  --
+  -- The same four shapes for mode off, where the agent's own tools reach the
+  -- real filesystem and weave's tools run unconfined. Policy here is written
+  -- against acp:* — the agent-side permission flow — because that is the only
+  -- point where its builtin read/edit/execute pass through weave at all.
+  --
+  -- weave's OWN tools stay `allow` unless the preset's promise needs
+  -- otherwise (read-only denies the writing ones). That is not laxity: a
+  -- provider raises an ACP permission request for the MCP tools it calls
+  -- (acp:mcp), so gating them again at the gate would ask the same question
+  -- twice for one call.
+  {
+    name = "unsandboxed_ask",
+    label = "Unsandboxed (ask)",
+    source = "builtin",
+    for_mode = "off",
+    rules = {
+      { tool = "acp:*", decision = "ask" },
+      { tool = "*", decision = "allow" },
+    },
+  },
+  {
+    name = "unsandboxed_read_only",
+    label = "Unsandboxed (read-only)",
+    source = "builtin",
+    for_mode = "off",
+    rules = {
+      { tool = "acp:read", decision = "allow" },
+      { tool = "acp:edit", decision = "deny", message = READ_ONLY },
+      { tool = "acp:delete", decision = "deny", message = READ_ONLY },
+      { tool = "acp:move", decision = "deny", message = READ_ONLY },
+      { tool = "acp:execute", decision = "deny", message = READ_ONLY },
+      { tool = "acp:*", decision = "ask" },
+      -- The same promise on weave's side, or the agent just switches tools.
+      { tool = "weave:write", decision = "deny", message = READ_ONLY },
+      { tool = "weave:edit", decision = "deny", message = READ_ONLY },
+      { tool = "weave:task_start", decision = "deny", message = READ_ONLY },
+      { tool = "*", decision = "allow" },
+    },
+  },
+  {
+    name = "unsandboxed_edit",
+    label = "Unsandboxed (edit)",
+    source = "builtin",
+    for_mode = "off",
+    rules = {
+      { tool = "acp:read", decision = "allow" },
+      { tool = "acp:edit", decision = "allow" },
+      { tool = "acp:*", decision = "ask" },
+      { tool = "*", decision = "allow" },
+    },
+  },
+  {
+    name = "unsandboxed_auto",
+    label = "Unsandboxed (auto)",
+    source = "builtin",
+    for_mode = "off",
+    rules = {
+      -- Grants are never automatic, in either world: with the sandbox off
+      -- there is no hull to widen, but request_access still writes allow
+      -- rules into the overlay, and those outlive a preset switch.
+      { tool = "weave:request_access", decision = "ask" },
+      { tool = "*", decision = "allow" },
     },
   },
 }
@@ -271,7 +363,7 @@ local BUILTIN = {
 local setup_presets = {}
 --- @type weave.permissions.Preset[] from save_preset(); shadows both
 local runtime_presets = {}
-local active_name = "normal"
+local active_name = "ask"
 --- @type weave.permissions.Rule[] the grant overlay; consulted BEFORE the active preset
 local overlay = {}
 --- @type weave.permissions.SandboxBind[] elevation grants: binds ADDED to the
@@ -587,15 +679,15 @@ end
 
 --- The active preset (never nil). Falls back to the first preset available
 --- under the current mode if the active name stops existing — mode-aware,
---- because falling back to `normal` under mode on would hand the agent a
---- preset whose whole shape assumes an unsandboxed world.
+--- because falling back to `unsandboxed_ask` under mode on would hand the
+--- agent a preset whose whole shape assumes an unsandboxed world.
 --- @return weave.permissions.Preset
 function M.active()
   local preset = M.get(active_name)
   if preset then
     return preset
   end
-  return M.available()[1] or find(BUILTIN, "normal")
+  return M.available()[1] or find(BUILTIN, "ask")
 end
 
 --- Make `name` the active preset. Unknown names — and presets belonging to
@@ -650,13 +742,15 @@ function M.current_mode()
   return (sok and sandbox.resolve().mode) or "off"
 end
 
---- The preset `name` becomes under `mode`, by the sandboxed_ naming
+--- The preset `name` becomes under `mode`, by the unsandboxed_ naming
 --- convention the builtins ship: the counterpart if one exists, else nil.
+--- Sandbox mode on holds the plain names, so going OFF adds the prefix and
+--- going ON strips it (`edit` <-> `unsandboxed_edit`).
 --- @param name string
 --- @param mode "on"|"off"
 --- @return string|nil
 local function counterpart(name, mode)
-  local other = mode == "on" and ("sandboxed_" .. name) or name:match("^sandboxed_(.+)$")
+  local other = mode == "off" and ("unsandboxed_" .. name) or name:match("^unsandboxed_(.+)$")
   local preset = other and M.get(other)
   if preset and M.preset_allowed(preset, mode) then
     return other
@@ -666,7 +760,7 @@ end
 
 --- Record the mode a session was spawned under, and RECONCILE the active
 --- preset with it: a preset tagged for the mode we just left is wrong here,
---- so it is replaced by its sandboxed_/plain counterpart (or, failing that,
+--- so it is replaced by its plain/unsandboxed_ counterpart (or, failing that,
 --- the first preset the new mode allows). Silent-but-correct beats an error
 --- nobody can act on — this fires from the spawn path, where refusing to
 --- proceed would just strand the session.
@@ -691,7 +785,7 @@ end
 --- return it. Cycling is cheap, frequent and non-destructive: it never
 --- restarts an agent and never prompts. It walks only the presets AVAILABLE
 --- under the mode in force, so ;;p cannot land on one written for the other
---- world (a sandboxed_* preset with the sandbox off would gate weave's tools
+--- world (a sandboxed preset with the sandbox off would gate weave's tools
 --- while leaving the agent's own — the confinement it assumes absent —
 --- wide open).
 --- @return weave.permissions.Preset
@@ -999,7 +1093,10 @@ function M.delete_preset(name)
   end
   table.remove(runtime_presets, i)
   if active_name == name and not M.get(name) then
-    active_name = "normal"
+    -- Deleting the definition you are standing on: fall back to the first
+    -- preset the mode in force allows, not to a fixed name that may belong
+    -- to the other world.
+    active_name = (M.available()[1] or {}).name or "ask"
   end
   notify()
 end
@@ -1034,7 +1131,7 @@ function M.setup(cfg)
     active_name = cfg.preset
   elseif not M.preset_allowed(M.active(), mode) then
     -- No stated preference and the default preset belongs to the other
-    -- world: take its counterpart (normal <-> sandboxed_normal), which is
+    -- world: take its counterpart (ask <-> unsandboxed_ask), which is
     -- the same policy shape written for the mode actually in force.
     active_name = counterpart(active_name, mode) or (M.available(mode)[1] or {}).name or active_name
   end
@@ -1048,7 +1145,7 @@ function M._reset()
   overlay = {}
   bind_overlay = {}
   network_granted = false
-  active_name = "normal"
+  active_name = "ask"
   project_root = nil
   current_mode = nil
   subscribers = {}

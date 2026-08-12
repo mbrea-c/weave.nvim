@@ -22,7 +22,7 @@ describe("acp_bridge sandboxed acp denial", function()
   before_each(function()
     Permissions._reset()
     Permissions.set_mode("on")
-    Permissions.set_active("sandboxed_normal")
+    Permissions.set_active("ask")
   end)
   after_each(function()
     Permissions._reset()
@@ -109,7 +109,7 @@ describe("acp_bridge sandboxed acp denial", function()
 
   it("an unsandboxed session keeps the ask flow", function()
     Permissions.set_mode("off")
-    Permissions.set_active("normal")
+    Permissions.set_active("unsandboxed_ask")
     local store, handlers = setup()
     local answered = "unset"
     handlers.on_request_permission(request(), function(option_id)
@@ -204,6 +204,16 @@ describe("acp_bridge session updates", function()
 end)
 
 describe("acp_bridge tool calls", function()
+  before_each(function()
+    -- the queue assertions need agent-side requests to actually QUEUE, which
+    -- is the unsandboxed world; the sandboxed presets deny them outright
+    Permissions.set_mode("off")
+    Permissions.set_active("unsandboxed_ask")
+  end)
+  after_each(function()
+    Permissions._reset()
+  end)
+
   it("upserts the call and mirrors kiro task commands into the plan", function()
     local store, handlers = setup()
     handlers.on_tool_call({
@@ -270,11 +280,17 @@ describe("acp_bridge permissions", function()
     { optionId = "always", kind = "allow_always" },
   }
 
+  before_each(function()
+    -- this whole block is about the AGENT-side flow (acp:*), which only has
+    -- something to answer with the sandbox off
+    Permissions.set_mode("off")
+    Permissions.set_active("unsandboxed_ask")
+  end)
   after_each(function()
     Permissions._reset()
   end)
 
-  it("normal preset enqueues (preserving the active status) and respond routes to the agent callback", function()
+  it("the ask preset enqueues (preserving the active status) and respond routes to the agent callback", function()
     local store, handlers = setup()
     store:set_status("generating") -- the turn is live when the approval is asked for
     local answered
@@ -292,7 +308,7 @@ describe("acp_bridge permissions", function()
 
   it("an allow resolution answers with the agent's own allow option, enqueuing nothing", function()
     local store, handlers = setup()
-    Permissions.set_active("auto")
+    Permissions.set_active("unsandboxed_auto")
     local answered
     handlers.on_request_permission({ toolCall = { toolCallId = "t1" }, options = ALLOW }, function(option_id)
       answered = option_id
@@ -304,7 +320,7 @@ describe("acp_bridge permissions", function()
 
   it("allow still surfaces requests carrying no allow option", function()
     local store, handlers = setup()
-    Permissions.set_active("auto")
+    Permissions.set_active("unsandboxed_auto")
     local answered
     handlers.on_request_permission(
       { toolCall = { toolCallId = "t1" }, options = { { optionId = "no", kind = "reject_once" } } },
@@ -316,9 +332,9 @@ describe("acp_bridge permissions", function()
     assert.equal(1, store.state.permission_count)
   end)
 
-  it("allow_edits auto-allows edit tool calls and surfaces the rest", function()
+  it("the edit preset auto-allows edit tool calls and surfaces the rest", function()
     local store, handlers = setup()
-    Permissions.set_active("allow_edits")
+    Permissions.set_active("unsandboxed_edit")
     local answered
     handlers.on_request_permission(
       { toolCall = { toolCallId = "t1", kind = "edit" }, options = ALLOW },

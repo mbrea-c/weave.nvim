@@ -369,11 +369,11 @@ function M.Prompt(ctx, props)
             -- builtin presets keep their shipped titles/colours; a custom
             -- preset shows its label over the neutral border
             text = "Prompt (" .. (Theme.PROMPT_TITLE_EXTRA[preset.name] or preset.label or preset.name) .. ")",
-            hl = Theme.PROMPT_BORDER_HL[preset.name] or Theme.PROMPT_BORDER_HL.normal,
+            hl = Theme.PROMPT_BORDER_HL[preset.name] or Theme.PROMPT_BORDER_HL.ask,
             align = "left",
           },
         },
-        border_hl = Theme.PROMPT_BORDER_HL.normal,
+        border_hl = Theme.PROMPT_BORDER_HL.ask,
       },
       on_create = function(bufnr)
         st.bufnr = bufnr

@@ -24,7 +24,7 @@ describe("request_access", function()
     queued = nil
     Permissions._reset()
     Permissions.set_project_root("/proj/demo")
-    -- elevations are a mode-on concept, and the sandboxed_* presets the
+    -- elevations are a mode-on concept, and the sandboxed presets the
     -- assertions below select belong to that mode
     Permissions.set_mode("on")
     Gate._ask_store = function()
@@ -71,17 +71,18 @@ describe("request_access", function()
     assert.is_not_nil(found)
     assert.equal("rw", found.mode)
     -- and the gate agrees, even under a restrictive preset
-    Permissions.set_active("sandboxed_normal")
+    Permissions.set_active("ask")
     assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/data/corpus/x.txt" }))
   end)
 
   it("a granted ro folder allows only the read-shaped tools", function()
     local answer = request({ path = "/data/refs", mode = "ro" })
     answer("allow_once")
-    Permissions.set_active("sandboxed_normal")
+    Permissions.set_active("ask")
     assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = "/data/refs/a" }))
     assert.equal("allow", Permissions.resolve({ tool = "weave:grep", resource = "/data/refs" }))
-    assert.equal("ask", Permissions.resolve({ tool = "weave:write", resource = "/data/refs/a" }))
+    -- no write grant was asked for, so writing there stays outside the hull
+    assert.equal("deny", Permissions.resolve({ tool = "weave:write", resource = "/data/refs/a" }))
     local hull = Permissions.tool_sandbox()
     assert.equal("ro", hull.binds[#hull.binds].mode)
   end)

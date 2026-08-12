@@ -52,6 +52,11 @@ describe("tools permission gate", function()
 
   before_each(function()
     saved_ask_store = Gate._ask_store
+    -- these exercise the gate itself against ad-hoc presets, over tmpfiles
+    -- outside any workspace; the sandboxed defaults deny exactly that (see
+    -- the sandboxed-default test below), so pin the unconfined world here
+    Permissions.set_mode("off")
+    Permissions.set_active("unsandboxed_ask")
   end)
 
   after_each(function()
@@ -71,10 +76,18 @@ describe("tools permission gate", function()
     assert.equal(raw.inputSchema, tools.read.inputSchema)
   end)
 
-  it("the default preset lets the suite run unchanged", function()
+  it("the unsandboxed default lets the suite run unchanged", function()
     local path = tmpfile("hello gate\n")
     local result = call(wrapped_tools().read, { path = path })
     assert.truthy(text_of(result):find("hello gate", 1, true))
+  end)
+
+  it("the sandboxed default refuses the same read, and says how to ask", function()
+    Permissions.set_mode("on")
+    Permissions.set_active("ask")
+    local result = call(wrapped_tools().read, { path = tmpfile("hello gate\n") })
+    assert.is_true(result.isError)
+    assert.truthy(text_of(result):find("request_access", 1, true))
   end)
 
   it("a deny rule answers isError naming the preset, and the tool never runs", function()

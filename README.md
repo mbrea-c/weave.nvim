@@ -197,28 +197,38 @@ highlighted, and neither are the always options on an agent-side ACP request,
 whose bookkeeping is the agent's own and leaves weave's store untouched.
 
 `;;p` cycles the active preset; the prompt border colour is an ambient
-reminder. Six builtin presets ship, three per [sandbox mode](#sandbox).
+reminder. Eight builtins ship: four shapes, once per [sandbox mode](#sandbox).
 
-With the sandbox **off**: **normal** (every ACP request asks), **auto**
-(allow everything), **allow edits** (ACP edit calls auto-allow, the rest
-ask); client-side tools default to allow in all three.
+| | with the sandbox **on** (default) | with it **off** |
+|---|---|---|
+| **Ask** | every tool call inside the workspace asks | every ACP request asks |
+| **Read-only** | reads and searches run; writes and commands are denied, and the workspace is mounted read-only | ACP reads allowed, edits/deletes/commands denied |
+| **Edit** | reads and writes run unprompted; commands still ask | ACP reads and edits allowed, the rest asks |
+| **Auto** | every weave tool runs unprompted inside the workspace | everything allowed |
 
-With the sandbox **on**, three **sandboxed** variants mirror those shapes,
-with two differences. weave's own tools are no longer exempt (reads and
-searches inside the project are allowed, everything else `weave:*` asks),
-and `acp:*` is **denied** outright — under mode on the agent's builtin tools
-only reach an empty read-only stand-in for the project, so letting them
-through buys a confusing failure at best and a confident wrong answer at
-worst. "Allow edits" accordingly now means weave's *write/edit tools* run
-unprompted.
+Two rules hold across all four sandboxed presets. `acp:*` is **denied** —
+under mode on the agent's builtin tools only reach an empty read-only
+stand-in for the project, so letting them through buys a confusing failure at
+best and a confident wrong answer at worst; the deny carries a message
+pointing at weave's tools, which stay reachable (`acp:mcp`). And the
+**workspace is the whole world**: anything outside it is denied with a
+message naming `request_access`, the tool the agent uses to ask you for a
+path. An approved grant lands in the overlay, which is consulted first, so it
+out-votes that deny without editing the preset.
+
+Even **Auto** keeps two things on a leash: sandbox grants (`request_access`
+always asks — it is the user's call by construction) and tools weave does not
+own (`mcp:*`, e.g. clankbox's `exec_lua`, which runs in the *unsandboxed*
+editor).
 
 Presets are **mode-scoped**: each builtin is tagged for the mode it was
 written against, and only presets for the mode you are in are offered —
 `;;p` cannot cycle into one from the other world, and selecting one is an
 error rather than a silent mismatch. Your own presets are untagged (usable
 in both) unless you set `for_mode = "on" | "off"`. Switching modes carries
-the active preset to its counterpart, so `allow_edits` becomes
-`sandboxed_allow_edits` and back.
+the active preset to its counterpart, so `edit` becomes `unsandboxed_edit`
+and back. The sandboxed four hold the plain names because the sandbox is the
+default: a half-remembered name lands on the confined preset.
 
 Resource globs may contain `${project}`, which expands to the session's cwd,
 so "inside the project" is expressible in a static preset table.
@@ -227,7 +237,7 @@ Answering an `ask` for a weave tool offers four options: allow/reject once,
 and allow/reject **for project**. The "always" pair records a **session
 grant** — a rule consulted ahead of the active preset, listed with a per-row
 `[revoke]` in the configuration window, and discarded on exit. Grants never
-rewrite the preset, so `normal` keeps meaning what it means everywhere else.
+rewrite the preset, so `ask` keeps meaning what it means everywhere else.
 Inside the project a grant covers the project; outside it, only that exact
 path.
 
@@ -378,7 +388,7 @@ send never loses hand-written comments.
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
 | `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit, glob/grep, task lifecycle) via clankbox; `clankbox_path` and `ripgrep_path` override binary/checkout auto-detection |
 | `permissions` | `table` | `{ presets = {} }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
-| `sandbox` | `table` | `{ mode = "off" }` | Agent process confinement via bubblewrap (see [Sandbox](#sandbox)) |
+| `sandbox` | `table` | `{ mode = "on" }` | Agent process confinement via bubblewrap (see [Sandbox](#sandbox)) |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
 | `view` | `table` | see below | Default panel geometry |
 | `keys` | `table` | see [Keybinds](#keybinds) | Key(s) per named action |
@@ -605,7 +615,7 @@ against an empty file and claiming the agent wrote it from scratch.
 ```lua
 require("weave").setup({
   permissions = {
-    preset = "normal",           -- active at startup (unset = normal, or its sandboxed variant under mode on)
+    preset = "ask",              -- active at startup (unset = ask, or unsandboxed_ask with the sandbox off)
                                  -- a pinned preset must suit the configured mode, or setup errors
     presets = {                  -- the "setup" preset source
       {
@@ -692,8 +702,8 @@ inert; the rules still gate every call.
 ### Sandbox
 
 `sandbox` (design doc: `design-agent-sandbox-v2.md` in the superproject) has
-two modes. **Off** is today's unsandboxed behavior. **On** runs the agent
-process inside the one invariant maximal
+two modes, and **on is the default**. **Off** is the old unsandboxed
+behavior. **On** runs the agent process inside the one invariant maximal
 [bubblewrap](https://github.com/containers/bubblewrap) sandbox — there is
 nothing to configure on it, because the agent process is not a policy
 surface; all capability lives at the tool layer:
@@ -724,12 +734,15 @@ surface; all capability lives at the tool layer:
 
 Mode **off** disables the sandbox entirely — the agent process and every
 tool invocation run unwrapped. The permission engine still gates every
-call; what mode off removes is kernel enforcement, not policy.
+call; what mode off removes is kernel enforcement, not policy. bwrap is
+Linux-only: where it is missing, mode on degrades to off with a one-time
+warning, and the active preset degrades with it (to its `unsandboxed_*`
+counterpart) so the policy never vouches for confinement that isn't there.
 
 ```lua
 require("weave").setup({
   sandbox = {
-    mode = "off",                    -- "off" (default) | "on"
+    mode = "on",                     -- "on" (default) | "off"
     state_paths = { "~/.myagent" },  -- extra rw binds on top of shipped per-provider defaults
     ro_paths = {},                   -- extra ro binds
     env_allowlist = nil,             -- nil = inherit the full environment (default)
