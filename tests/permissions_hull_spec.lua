@@ -91,6 +91,82 @@ describe("preset sandbox hull", function()
     end)
   end)
 
+  describe("per-tool overrides", function()
+    before_each(function()
+      Permissions.save_preset({
+        name = "pertool",
+        rules = {},
+        sandbox = {
+          binds = { { path = "${project}" } },
+          network = false,
+          tools = {
+            ["weave:task_start"] = { network = true },
+            ["weave:grep"] = { binds = { { path = "/data", mode = "ro" } } },
+          },
+        },
+      })
+    end)
+
+    it("an override replaces only the keys it sets", function()
+      local preset = Permissions.get("pertool")
+      -- network override: binds still the global ones
+      local tasks = Permissions.tool_sandbox(preset, "weave:task_start")
+      assert.is_true(tasks.network)
+      assert.same({ { path = "/proj/demo", mode = "rw" } }, tasks.binds)
+      -- binds override: network still the global one
+      local grep = Permissions.tool_sandbox(preset, "weave:grep")
+      assert.is_false(grep.network)
+      assert.same({ { path = "/data", mode = "ro" } }, grep.binds)
+    end)
+
+    it("a tool with no override, and the toolless call, get the global hull", function()
+      local preset = Permissions.get("pertool")
+      local expected = { binds = { { path = "/proj/demo", mode = "rw" } }, network = false }
+      assert.same(expected, Permissions.tool_sandbox(preset, "weave:read"))
+      assert.same(expected, Permissions.tool_sandbox(preset))
+    end)
+
+    it("elevation grants apply GLOBALLY, overridden tools included", function()
+      Permissions.add_bind_grant({ path = "/granted", mode = "rw" })
+      Permissions.set_network_granted(true)
+      local preset = Permissions.get("pertool")
+      for _, tool in ipairs({ "weave:grep", "weave:task_start", "weave:read" }) do
+        local hull = Permissions.tool_sandbox(preset, tool)
+        assert.is_true(hull.network)
+        assert.equal("/granted", hull.binds[#hull.binds].path)
+      end
+    end)
+
+    it("validates overrides like the global section", function()
+      assert_errors_with(function()
+        Permissions.save_preset({
+          name = "bad",
+          rules = {},
+          sandbox = { tools = { ["weave:read"] = { binds = { { mode = "rw" } } } } },
+        })
+      end, 'sandbox.tools["weave:read"].binds[1].path')
+      assert_errors_with(function()
+        Permissions.save_preset({
+          name = "bad2",
+          rules = {},
+          sandbox = { tools = { ["weave:read"] = { network = 1 } } },
+        })
+      end, "network must be a boolean")
+    end)
+
+    it("lint counts a per-tool bind as reachable", function()
+      local warnings = Permissions.lint_preset({
+        name = "override_reach",
+        sandbox = {
+          binds = { { path = "${project}" } },
+          tools = { ["weave:grep"] = { binds = { { path = "/data" } } } },
+        },
+        rules = { { tool = "weave:grep", resource = "/data/**", decision = "allow" } },
+      })
+      assert.same({}, warnings)
+    end)
+  end)
+
   describe("lint_preset", function()
     it("passes a preset whose path rules live inside the hull", function()
       local warnings = Permissions.lint_preset({

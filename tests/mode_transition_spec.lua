@@ -107,12 +107,23 @@ describe("preset selection needs no transition", function()
     Permissions._reset()
   end)
 
-  it("every preset activates directly under every mode", function()
+  -- Selecting a preset the CURRENT mode allows is free: no confirmation, no
+  -- restart. Only the mode toggle itself restarts, which is what makes the
+  -- mode tags safe to enforce strictly — the presets for the mode you are in
+  -- are always reachable without one.
+  it("any preset for the current mode activates directly", function()
     Permissions.set_mode("off")
-    Permissions.set_active("sandboxed_normal")
-    assert.equal("sandboxed_normal", Permissions.active().name)
-    Permissions.set_mode("on")
     Permissions.set_active("auto")
     assert.equal("auto", Permissions.active().name)
+    Permissions.set_mode("on")
+    Permissions.set_active("sandboxed_auto")
+    assert.equal("sandboxed_auto", Permissions.active().name)
+  end)
+
+  it("a preset from the other mode needs the transition, not set_active", function()
+    Permissions.set_mode("off")
+    assert.has_error(function()
+      Permissions.set_active("sandboxed_normal")
+    end, "sandbox mode")
   end)
 end)

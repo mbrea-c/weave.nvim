@@ -94,6 +94,22 @@ describe("tools permission gate", function()
     assert.equal(0, vim.fn.filereadable(path))
   end)
 
+  -- A refusal is the one channel a deny has to the agent, so a rule can use
+  -- it to redirect rather than only block.
+  it("a deny rule's message rides back with the refusal", function()
+    local path = vim.fn.tempname() .. "-denied.txt"
+    Permissions.save_preset({
+      name = "redirecting",
+      rules = {
+        { tool = "weave:write", decision = "deny", message = "write through the review queue instead" },
+        { tool = "*", decision = "allow" },
+      },
+    })
+    Permissions.set_active("redirecting")
+    local result = call(wrapped_tools().write, { path = path, content = "nope" })
+    assert.truthy(text_of(result):find("write through the review queue instead", 1, true))
+  end)
+
   it("resource rules match the ABSOLUTE path, whatever the agent passed", function()
     Permissions.save_preset({
       name = "cwd-jail",

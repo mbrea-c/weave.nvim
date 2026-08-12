@@ -604,3 +604,56 @@ describe("session restore picker", function()
     assert.is_nil(client.calls.loads)
   end)
 end)
+
+-- Under sandbox mode on the agent wakes up in an empty read-only stand-in for
+-- the project. Its builtin WRITES fail loudly there, but its READS succeed
+-- against the emptiness — so without being told, an agent concludes the
+-- project is empty and reports that as fact (observed against a live
+-- opencode session). The note is how it learns where the real project is.
+describe("session sandbox steering", function()
+  --- a started session whose client claims mode on, recording FULL prompts
+  local function sandboxed(mode)
+    local session, client, store = started()
+    client.sandbox_mode = mode
+    client.sent = {}
+    function client:send_prompt(_sid, prompt, callback)
+      self.sent[#self.sent + 1] = prompt
+      self._prompt_cbs[#self._prompt_cbs + 1] = callback
+    end
+    return session, client, store
+  end
+
+  it("rides on the first prompt of a mode-on session, ahead of the user's text", function()
+    local session, client, store = sandboxed("on")
+    session:submit("what does this project do?")
+    pump()
+
+    assert.equal(2, #client.sent[1])
+    assert.truthy(client.sent[1][1].text:find("request_access", 1, true))
+    assert.equal("what does this project do?", client.sent[1][2].text)
+    -- a separate block, so the transcript still echoes only what was typed
+    assert.equal("what does this project do?", store.state.entries[1].text)
+  end)
+
+  it("only the first prompt carries it", function()
+    local session, client = sandboxed("on")
+    session:submit("one")
+    pump()
+    client:end_turn()
+    pump()
+    session:submit("two")
+    pump()
+
+    assert.equal(1, #client.sent[2])
+    assert.equal("two", client.sent[2][1].text)
+  end)
+
+  it("an unsandboxed session sends the prompt untouched", function()
+    local session, client = sandboxed("off")
+    session:submit("hello")
+    pump()
+
+    assert.equal(1, #client.sent[1])
+    assert.equal("hello", client.sent[1][1].text)
+  end)
+end)

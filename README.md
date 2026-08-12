@@ -197,14 +197,28 @@ highlighted, and neither are the always options on an agent-side ACP request,
 whose bookkeeping is the agent's own and leaves weave's store untouched.
 
 `;;p` cycles the active preset; the prompt border colour is an ambient
-reminder. Six builtin presets ship. Three re-encode the historical modes:
-**normal** (every ACP request asks), **auto** (allow everything), **allow
-edits** (ACP edit calls auto-allow, the rest ask); client-side tools default
-to allow in all three. Three **sandboxed** variants mirror them for use with
-[sandbox mode on](#sandbox) — same shapes, but weave's own tools are no
-longer exempt: reads and searches inside the project are allowed, everything
-else `weave:*` asks. When mode `on` is configured and you have not set
-`permissions.preset`, the matching sandboxed variant is selected for you.
+reminder. Six builtin presets ship, three per [sandbox mode](#sandbox).
+
+With the sandbox **off**: **normal** (every ACP request asks), **auto**
+(allow everything), **allow edits** (ACP edit calls auto-allow, the rest
+ask); client-side tools default to allow in all three.
+
+With the sandbox **on**, three **sandboxed** variants mirror those shapes,
+with two differences. weave's own tools are no longer exempt (reads and
+searches inside the project are allowed, everything else `weave:*` asks),
+and `acp:*` is **denied** outright — under mode on the agent's builtin tools
+only reach an empty read-only stand-in for the project, so letting them
+through buys a confusing failure at best and a confident wrong answer at
+worst. "Allow edits" accordingly now means weave's *write/edit tools* run
+unprompted.
+
+Presets are **mode-scoped**: each builtin is tagged for the mode it was
+written against, and only presets for the mode you are in are offered —
+`;;p` cannot cycle into one from the other world, and selecting one is an
+error rather than a silent mismatch. Your own presets are untagged (usable
+in both) unless you set `for_mode = "on" | "off"`. Switching modes carries
+the active preset to its counterpart, so `allow_edits` becomes
+`sandboxed_allow_edits` and back.
 
 Resource globs may contain `${project}`, which expands to the session's cwd,
 so "inside the project" is expressible in a static preset table.
@@ -592,13 +606,15 @@ against an empty file and claiming the agent wrote it from scratch.
 require("weave").setup({
   permissions = {
     preset = "normal",           -- active at startup (unset = normal, or its sandboxed variant under mode on)
+                                 -- a pinned preset must suit the configured mode, or setup errors
     presets = {                  -- the "setup" preset source
       {
         name = "docs-only",
         label = "Docs only",
+        -- for_mode = "on",      -- optional: restrict to one sandbox mode (unset = both)
         rules = {
           { tool = "weave:write", resource = "*.md", decision = "allow" },
-          { tool = "weave:write", decision = "deny" },
+          { tool = "weave:write", decision = "deny", message = "only markdown is editable here" },
           { tool = "acp:*", decision = "ask" },
           { tool = "*", decision = "allow" },
         },
@@ -607,6 +623,11 @@ require("weave").setup({
   },
 })
 ```
+
+A rule may also carry `message = "..."`, said to the agent when that rule
+refuses a client-side tool call (the refusal text is a deny's only channel
+back, so it can redirect rather than merely block) and shown to you when it
+refuses an ACP request, where the protocol carries no text.
 
 Rules are evaluated in order, first match wins; no match resolves `ask`.
 Globs are whole-string, `*` matching any run (across `/`, so `"/etc/*"`
@@ -639,6 +660,9 @@ invocations run under, deliberately **orthogonal** to the rules:
     binds = { { path = "${project}" },   -- mode defaults to "rw"
               { path = "/data", mode = "ro" } },
     network = false,                     -- default: tool sandboxes get no network
+    tools = {                            -- per-tool overrides (exact tool names, no globs)
+      ["weave:task_start"] = { network = true },
+    },
   },
 }
 ```
@@ -649,6 +673,16 @@ binds REPLACE that default. The one confusing combination — a non-deny rule
 whose resource no bind can reach (the gate says yes, the tool then dies at
 the kernel wall) — is flagged with a warning when the preset is saved or
 loaded.
+
+`sandbox.tools` is the escape hatch for one tool needing something the rest
+should not have: keys present in an override replace the global value, keys
+absent inherit it (above, tasks get the network while their binds stay the
+preset's). Session **elevation grants** — what `request_access` writes when
+you approve it — are deliberately global: they widen every tool's hull,
+overridden ones included, since granting access answers "may we reach this
+at all". The `sandbox` section is orthogonal to the sandbox MODE in a second
+sense too: with the mode off, nothing is bwrap'd at all and the section is
+inert; the rules still gate every call.
 
 ### Sandbox
 
@@ -669,11 +703,23 @@ surface; all capability lives at the tool layer:
 - **Tool invocations** (tasks, searches) each run in their own bwrap
   sandbox derived from the active preset's `sandbox` section on EVERY
   spawn: only the listed binds, **network off by default**. A preset switch
-  applies to the very next task — no restarts.
-- **Agentside permission prompts are auto-approved** under mode on: nothing
-  the agent does directly can have real effects, so the prompt gated
-  nothing and only double-prompted. Your rules govern the `weave:*` calls,
-  which are where the effects actually happen.
+  or a granted elevation applies to the very next task — no restarts.
+- **Agentside permission requests are denied** by the sandboxed presets
+  (`acp:* deny`), not auto-approved: the tools they gate cannot reach the
+  real project anyway, and a denial on the first attempt redirects the
+  agent to the `weave:*` tools, which is where the effects actually happen.
+  Weave says why once in the transcript — ACP's permission response has no
+  text channel to say it to the agent.
+- **The agent is told once, up front.** The first prompt of a mode-on
+  conversation carries a short steering note explaining that the visible
+  working directory is an empty stand-in and the weave tools are the way
+  out. This is not politeness: builtin *writes* fail loudly (EROFS), but
+  builtin *reads* succeed against the emptiness, so an unsteered agent will
+  report the project as empty and mean it.
+
+Mode **off** disables the sandbox entirely — the agent process and every
+tool invocation run unwrapped. The permission engine still gates every
+call; what mode off removes is kernel enforcement, not policy.
 
 ```lua
 require("weave").setup({
@@ -701,7 +747,7 @@ Backend support: Linux with `bwrap` on `PATH`. Anywhere else mode `on`
 degrades to `off` with a one-time warning — nothing breaks; the permission
 rules still apply, only kernel enforcement and tool-forcing are lost. The
 degradation is applied when the mode is *resolved*, so everything
-downstream (the permissions window, the sidebar, the auto-approve flow)
+downstream (the permissions window, the sidebar, which presets are offered)
 reports `off` too, rather than vouching for a confinement that is not
 there.
 
@@ -730,10 +776,11 @@ One caveat worth knowing before it looks like a bug: a session restored
 into a different mode comes back without knowledge of any tasks that were
 running, and may carry history referencing paths it can no longer reach.
 
-Whether an agent **recovers** into the weave MCP tools when its builtin
-tools hit the read-only wall is provider- and model-dependent, and is not
-something this plugin can guarantee. Try mode `on` with your provider on a
-scratch project before relying on it.
+Whether an agent **recovers** into the weave MCP tools is provider- and
+model-dependent. Weave gives it two pushes — the steering note on the first
+prompt and the `acp:*` denials thereafter — and with opencode that is
+enough. It is still not something this plugin can guarantee: try mode `on`
+with your provider on a scratch project before relying on it.
 
 ---
 

@@ -24,6 +24,9 @@ describe("request_access", function()
     queued = nil
     Permissions._reset()
     Permissions.set_project_root("/proj/demo")
+    -- elevations are a mode-on concept, and the sandboxed_* presets the
+    -- assertions below select belong to that mode
+    Permissions.set_mode("on")
     Gate._ask_store = function()
       return fake_store()
     end

@@ -333,9 +333,9 @@ function M.tool_sandboxing_on()
 end
 
 --- The task store's spawn seam: `sh -c command`, wrapped under the ACTIVE
---- preset's hull when tool sandboxing is on. Resolved per invocation, so a
---- preset switch (or, later, an elevation grant) applies to the very next
---- task with no restart anywhere.
+--- preset's hull for `weave:task_start` when tool sandboxing is on. Resolved
+--- per invocation, so a preset switch, a per-tool override or an elevation
+--- grant applies to the very next task with no restart anywhere.
 --- @param command string
 --- @return string command
 --- @return string[] args
@@ -344,7 +344,7 @@ function M.wrap_shell(command)
     return "sh", { "-c", command }
   end
   local ok, Permissions = pcall(require, "weave.permissions")
-  local hull = ok and Permissions.tool_sandbox() or { binds = {}, network = false }
+  local hull = ok and Permissions.tool_sandbox(nil, "weave:task_start") or { binds = {}, network = false }
   return M.wrap_tool("sh", { "-c", command }, hull)
 end
 

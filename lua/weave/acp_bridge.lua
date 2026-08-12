@@ -10,6 +10,11 @@ local Permissions = require("weave.permissions")
 --- @class weave.AcpBridge
 local AcpBridge = {}
 
+-- Stores whose user has already been told why agent-side requests are being
+-- refused (see the deny path below). Weak keys: a closed session's store
+-- must not be kept alive by a bookkeeping flag.
+local denial_explained = setmetatable({}, { __mode = "k" })
+
 -- ── Permission resolution ───────────────────────────────────────────────────
 --
 -- Every session/request_permission resolves through the client-side
@@ -17,6 +22,15 @@ local AcpBridge = {}
 -- action (acp:<kind> plus a resource string) and the ACTIVE preset decides
 -- allow/deny/ask. Crucially, allow and deny never fabricate an outcome:
 -- they select one of the request's OWN options.
+--
+-- This holds under BOTH sandbox modes. Mode on used to bypass the engine
+-- and auto-approve everything here, on the theory that a fully confined
+-- agent's own tools cannot land anything real anyway. True, but the
+-- interesting half is what the agent concludes from being let through: a
+-- live run approved its way into the empty read-only project decoy and
+-- reported the project as empty. The sandboxed presets now DENY acp:*
+-- instead (with a `message`), so the first builtin call turns the agent
+-- toward the clientside tools that actually work.
 --
 -- WHY allow_ONCE, not allow_always: "allow_always" tells the AGENT to
 -- persist a standing grant for that tool. If a preset auto-selected it,
@@ -26,14 +40,74 @@ local AcpBridge = {}
 -- next request prompts again. Presets must be fully reversible. The same
 -- holds for reject_once over reject_always on the deny side.
 
+--- The MCP servers weave itself wires into the agent: its own tool suite
+--- (clankbox) plus every configured server, all of which weave brokers and
+--- gates CLIENT-side. Names, for recognising the agent's requests to call
+--- them (see brokered_call below).
+--- @return string[]
+local function brokered_names()
+  local names = { "clankbox" }
+  local ok, Config = pcall(require, "weave.config")
+  if not ok then
+    return names
+  end
+  local lists = { Config.mcp_servers }
+  for _, provider in pairs(Config.acp_providers or {}) do
+    lists[#lists + 1] = provider.mcpServers
+  end
+  for _, list in ipairs(lists) do
+    for _, srv in ipairs(list or {}) do
+      if type(srv.name) == "string" and srv.name ~= "" then
+        names[#names + 1] = srv.name
+      end
+    end
+  end
+  return names
+end
+
+--- Is this request the agent asking to call a tool WEAVE brokers, rather
+--- than to run one of its own builtins?
+---
+--- Providers ask permission for MCP tool calls too, naming the tool in the
+--- title (opencode: "clankbox_read", kind "other"; Claude Code:
+--- "mcp__clankbox__read"). Those calls are already mediated where it counts
+--- — every frame crosses the broker or the MCP proxy, where the real gate
+--- sits — so re-deciding them here is at best a double prompt and at worst
+--- (a sandboxed preset's acp:* deny) weave blocking the agent from the very
+--- tools it just told it to use. Matching on the server name is loose on
+--- purpose: a false positive costs a redundant approval of an already-gated
+--- call, a false negative breaks the sandbox's only way out.
+--- @param tc table toolCall
+--- @return boolean
+local function brokered_call(tc)
+  local title = type(tc.title) == "string" and tc.title or nil
+  if not title then
+    return false
+  end
+  for _, name in ipairs(brokered_names()) do
+    if title ~= name and title:find(name, 1, true) then
+      return true
+    end
+  end
+  return false
+end
+
 --- The engine action for an ACP permission request: the tool-call kind under
 --- the acp: namespace, and the most concrete resource the request carries —
 --- the first location path (edits/reads), else the command line from
 --- rawInput (execute), else its file path fields.
+---
+--- One exception: a request to call a tool weave brokers resolves as
+--- `acp:mcp` with the tool name as its resource, keeping it addressable by
+--- rules while separating it from the agent's own tools, which are what the
+--- sandboxed presets exist to turn back.
 --- @param request table The ACP RequestPermission params
 --- @return weave.permissions.Action
 local function acp_action(request)
   local tc = (request and request.toolCall) or {}
+  if brokered_call(tc) then
+    return { tool = "acp:mcp", resource = tc.title }
+  end
   local resource
   local loc = type(tc.locations) == "table" and tc.locations[1] or nil
   if type(loc) == "table" and type(loc.path) == "string" then
@@ -146,19 +220,14 @@ end
 
 --- Build the ACP client handlers backed by a session store.
 --- @param store weave.store.SessionStore
---- @param opts? { is_restoring?: fun(): boolean, sandbox_mode?: fun(): string|nil }
+--- @param opts? { is_restoring?: fun(): boolean }
 ---  is_restoring: predicate read per-update; when it returns true
 ---  (load_session replay in flight) status mutations are skipped.
----  sandbox_mode: THIS session's spawn confinement (the client's frozen
----  mode, not the selected session's) — read per-request.
 --- @return weave.acp.ClientHandlers handlers
 function AcpBridge.build_handlers(store, opts)
   opts = opts or {}
   local is_restoring = opts.is_restoring or function()
     return false
-  end
-  local sandbox_mode = opts.sandbox_mode or function()
-    return nil
   end
 
   --- @type weave.acp.ClientHandlers
@@ -203,21 +272,6 @@ function AcpBridge.build_handlers(store, opts)
     end,
 
     on_request_permission = function(request, callback)
-      -- Sandbox mode on (the invariant maximal agent sandbox): nothing the
-      -- agent does DIRECTLY can have real effects, so its permission
-      -- requests gate nothing. Auto-answer allow and delete the
-      -- double-prompt; the real gate is the clientside tool layer, which
-      -- every effectful operation must cross anyway
-      -- (design-agent-sandbox-v2.md). Falls through to the ordinary flow
-      -- when the agent offers no allow option (never guess an optionId).
-      if sandbox_mode() == "on" then
-        local auto = option_for(request.options, "allow")
-        if auto then
-          callback(auto)
-          return
-        end
-      end
-
       -- The active preset may answer this request without the user (see the
       -- permission-resolution note above). The tool call still renders (the
       -- user should see what was auto-answered) — that arrives via
@@ -225,8 +279,17 @@ function AcpBridge.build_handlers(store, opts)
       -- skips the enqueue + surfacing. An allow with no allow option falls
       -- through to the queue (never guess); a deny with no reject option
       -- answers the cancelled outcome (respond nil).
-      local decision = Permissions.resolve(acp_action(request))
+      local decision, rule = Permissions.resolve(acp_action(request))
       if decision == "deny" then
+        -- ACP's permission response carries an optionId and nothing else, so
+        -- a rule's `message` cannot reach the agent here (the mode-on
+        -- steering note is what tells it where to go instead). Say it to the
+        -- USER, once per session: a preset that turns the agent's own tools
+        -- back without explanation reads as the agent malfunctioning.
+        if rule and rule.message and not denial_explained[store] then
+          denial_explained[store] = true
+          store:append_entry({ kind = "agent", text = "⚠️ " .. rule.message })
+        end
         callback(option_for(request.options, "deny"))
         return
       end

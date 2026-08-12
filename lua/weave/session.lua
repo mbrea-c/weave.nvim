@@ -47,6 +47,7 @@ local SessionStore = require("weave.session_store")
 --- @field _turn_active boolean Whether a prompt turn is currently in flight
 --- @field _steer_text? string Prompt to resend once a steered turn ends as cancelled
 --- @field _restoring boolean Whether a session/load history replay is in flight
+--- @field _steered_session? string ACP session id already given the mode-on steering note
 --- @field _config table<string, weave.session.ConfigKind> by category key
 --- @field _config_order string[] category keys in capture order
 local Session = {}
@@ -409,12 +410,30 @@ function Session:_build_handlers()
     is_restoring = function()
       return self._restoring
     end,
-    -- THIS session's frozen spawn confinement (drives the mode-on
-    -- auto-approve): the client's, never the globally selected session's.
-    sandbox_mode = function()
-      return self._client and self._client.sandbox_mode or nil
-    end,
   })
+end
+
+-- What the agent is told, once, when it wakes up inside the mode-on sandbox.
+-- Without it the confinement is silently misleading rather than merely
+-- restrictive: builtin WRITES fail loudly (EROFS on the read-only project
+-- tmpfs), but builtin READS succeed against the empty decoy, so an unsteered
+-- agent concludes the project is empty and says so with confidence. Observed
+-- against a live opencode session, not hypothesised.
+local STEERING_NOTE = table.concat({
+  "[weave] Your process is sandboxed: the working directory you can see is an empty",
+  "read-only stand-in, NOT the real project, and your builtin file/search/shell tools",
+  "cannot reach it (reads will look empty rather than fail). The real project is",
+  "reachable only through the weave MCP tools (read, write, edit, glob, grep,",
+  "task_start, ...). Use those for everything. If you need access beyond the project",
+  "(another directory, or network for a command), ask with request_access.",
+}, "\n")
+
+--- THIS session's frozen spawn confinement — the client's, never the
+--- globally selected session's.
+--- @private
+--- @return "on"|"off"|nil
+function Session:_sandbox_mode()
+  return self._client and self._client.sandbox_mode or nil
 end
 
 --- Resolve the MCP servers to hand the agent at session creation. A
@@ -589,8 +608,17 @@ function Session:_send_now(text)
   self._store:set_status("thinking")
   self._turn_active = true
 
-  local prompt = { { type = "text", text = text } }
   local session_id = self._session_id
+
+  -- The steering note rides on the FIRST prompt of a sandboxed conversation,
+  -- as a separate content block ahead of the user's text: prepending it to
+  -- `text` itself would put words in the user's mouth in the transcript
+  -- echo (already appended above) and in the agent's own history.
+  local prompt = { { type = "text", text = text } }
+  if self:_sandbox_mode() == "on" and self._steered_session ~= session_id then
+    self._steered_session = session_id
+    table.insert(prompt, 1, { type = "text", text = STEERING_NOTE })
+  end
 
   self._client:send_prompt(session_id, prompt, function(_response, err)
     vim.schedule(function()

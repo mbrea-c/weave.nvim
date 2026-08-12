@@ -82,21 +82,24 @@ end
 --- @param run fun()
 --- @param respond fun(ret: string|table)
 function M.mediate(action, title, kind, run, respond)
-  local decision = Permissions.resolve(action)
+  local decision, rule = Permissions.resolve(action)
 
   if decision == "allow" then
     return run() -- a sync throw propagates into clankbox's pcall
   end
 
   if decision == "deny" then
-    return respond(
-      refusal(
-        ("permission denied: %s is blocked by the active weave permission preset %q"):format(
-          describe(action),
-          Permissions.active().name
-        )
-      )
+    -- A rule's `message` rides back with the refusal: this text is the one
+    -- channel a deny has to the agent, so a preset can redirect ("use X
+    -- instead") rather than only block.
+    local text = ("permission denied: %s is blocked by the active weave permission preset %q"):format(
+      describe(action),
+      Permissions.active().name
     )
+    if rule and rule.message then
+      text = text .. " — " .. rule.message
+    end
+    return respond(refusal(text))
   end
 
   -- ask: surface through the session's existing permission queue

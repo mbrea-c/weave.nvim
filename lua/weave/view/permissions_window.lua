@@ -139,9 +139,9 @@ local function open_editor(preset)
 end
 
 --- One preset row: the active marker + label as an activate button, the
---- source tag dimmed beside it. Every preset is selectable under every
---- sandbox mode (v2: preset choice is policy; the hull bounds blast radius
---- regardless), so there is no greyed/incompatible state anymore.
+--- source tag dimmed beside it. Rows are always actionable — presets for
+--- the other sandbox mode are absent from the list rather than shown
+--- greyed, since selecting one is not a thing weave will do.
 --- @param p weave.permissions.Preset
 --- @param active_name string
 local function preset_row(p, active_name)
@@ -185,7 +185,9 @@ end
 local function Window(ctx)
   local active = use_permissions(ctx)
   local rows = { header("Permission presets") }
-  for _, p in ipairs(Permissions.presets()) do
+  -- Only the presets this sandbox mode allows: one written for the other
+  -- mode would be actively wrong here, and set_active refuses it anyway.
+  for _, p in ipairs(Permissions.available()) do
     rows[#rows + 1] = preset_row(p, active.name)
   end
 
@@ -299,7 +301,7 @@ end
 --- Permissions header). Returns the fibrous app handle.
 function M.open()
   local mount = require("fibrous.inline.mount")
-  local size = #Permissions.presets() + #(Permissions.active().rules or {}) + 15
+  local size = #Permissions.available() + #(Permissions.active().rules or {}) + 15
   local app = mount.floating(Window, {}, {
     width = 64,
     height = math.min(math.max(size, 10), math.max(vim.o.lines - 6, 8)),

@@ -13,13 +13,16 @@ local function setup(opts)
   return store, handlers
 end
 
--- Mode on (the session's client spawned under the invariant maximal
--- sandbox): agentside permission requests gate nothing the agent can
--- actually do, so the bridge auto-answers allow and the double-prompt
--- disappears. The REAL gate is the clientside tool layer.
-describe("acp_bridge mode-on auto-approve", function()
+-- Under sandbox mode on, agent-side permission requests are DENIED by the
+-- preset rather than bypassed. The bridge itself knows nothing about modes:
+-- it resolves every request through the engine, in both modes, and a
+-- sandboxed preset's `acp:* deny` is what turns the agent's builtin tools
+-- back toward the client-side ones.
+describe("acp_bridge sandboxed acp denial", function()
   before_each(function()
     Permissions._reset()
+    Permissions.set_mode("on")
+    Permissions.set_active("sandboxed_normal")
   end)
   after_each(function()
     Permissions._reset()
@@ -35,41 +38,79 @@ describe("acp_bridge mode-on auto-approve", function()
     }
   end
 
-  it("a mode-on session auto-answers allow, nothing queued", function()
-    local store, handlers = setup({
-      sandbox_mode = function()
-        return "on"
-      end,
-    })
+  it("answers the agent's own reject option, queueing nothing", function()
+    local store, handlers = setup()
     local answered
     handlers.on_request_permission(request(), function(option_id)
       answered = option_id
     end)
-    assert.equal("a1", answered)
+    assert.equal("r1", answered)
     assert.is_nil(store:get_permission())
   end)
 
-  it("no allow option offered: falls through to the ordinary flow", function()
-    local store, handlers = setup({
-      sandbox_mode = function()
-        return "on"
-      end,
-    })
-    local answered = "unset"
-    -- active preset "normal": acp:* asks, so this must enqueue for the user
-    handlers.on_request_permission(request({ { optionId = "r1", kind = "reject_once" } }), function(option_id)
-      answered = option_id
-    end)
-    assert.equal("unset", answered)
-    assert.is_not_nil(store:get_permission())
+  it("tells the user why, once per session", function()
+    local store, handlers = setup()
+    local function ask()
+      handlers.on_request_permission(request(), function() end)
+    end
+    ask()
+    local entries = store.state.entries
+    assert.equal(1, #entries)
+    assert.truthy(entries[1].text:find("weave", 1, true))
+    ask()
+    ask()
+    assert.equal(1, #store.state.entries) -- explained once, not per call
   end)
 
-  it("an unsandboxed session keeps the preset flow", function()
-    local store, handlers = setup({
-      sandbox_mode = function()
-        return "off"
-      end,
-    })
+  -- Providers ask permission for MCP tool calls too, naming the tool in the
+  -- title. Those are the agent reaching for the CLIENT-side tools — already
+  -- gated at the broker — so the acp:* deny must not catch them, or weave
+  -- blocks the only way out of the sandbox it just steered the agent toward.
+  -- (Live opencode: title "clankbox_read", kind "other", no locations.)
+  it("lets through the agent's request to call a tool weave brokers", function()
+    local store, handlers = setup()
+    local answered
+    handlers.on_request_permission({
+      toolCall = { kind = "other", title = "clankbox_read", locations = {} },
+      options = {
+        { optionId = "once", kind = "allow_once" },
+        { optionId = "reject", kind = "reject_once" },
+      },
+    }, function(option_id)
+      answered = option_id
+    end)
+    assert.equal("once", answered)
+    assert.is_nil(store:get_permission())
+  end)
+
+  it("recognises the double-underscore spelling too", function()
+    local _, handlers = setup()
+    local answered
+    handlers.on_request_permission({
+      toolCall = { kind = "other", title = "mcp__clankbox__task_start" },
+      options = { { optionId = "once", kind = "allow_once" }, { optionId = "r", kind = "reject_once" } },
+    }, function(option_id)
+      answered = option_id
+    end)
+    assert.equal("once", answered)
+  end)
+
+  it("still denies a builtin tool whose title merely looks tool-ish", function()
+    local _, handlers = setup()
+    local answered
+    handlers.on_request_permission({
+      toolCall = { kind = "read", title = "Read", locations = { { path = "/x" } } },
+      options = { { optionId = "once", kind = "allow_once" }, { optionId = "r", kind = "reject_once" } },
+    }, function(option_id)
+      answered = option_id
+    end)
+    assert.equal("r", answered)
+  end)
+
+  it("an unsandboxed session keeps the ask flow", function()
+    Permissions.set_mode("off")
+    Permissions.set_active("normal")
+    local store, handlers = setup()
     local answered = "unset"
     handlers.on_request_permission(request(), function(option_id)
       answered = option_id
