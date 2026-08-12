@@ -246,6 +246,27 @@ local function meta_line(text)
   return { comp = ui.label, props = { text = text, style = { text_hl = "@comment" } } }
 end
 
+--- One "    │ " gutter'd content row that WRAPS instead of running off the
+--- edge. The gutter is its own cell in a row, so continuation lines land under
+--- the text rather than under the rail, and the rail marks where the block
+--- starts.
+---
+--- Character wrap, not word wrap: these carry dumps, paths and command lines,
+--- where indentation and inner spacing are information and re-flowing on word
+--- boundaries would quietly rewrite them.
+--- @param text string one physical line of content
+--- @param hl? string highlight for the text (default: none)
+local function gutter_row(text, hl)
+  return {
+    comp = ui.row,
+    props = {},
+    children = {
+      { comp = ui.label, props = { text = "    │ ", style = { text_hl = "@comment" } } },
+      { comp = ui.text, props = { text = text, wrap = "char", style = hl and { text_hl = hl } or nil } },
+    },
+  }
+end
+
 --- Append labels for a labeled, indented, truncated vim.inspect dump of an
 --- arbitrary tool input/output table. No-op when the value is absent.
 --- @param children table[] accumulator of component specs
@@ -259,7 +280,7 @@ local function append_raw_block(children, label, value)
   local lines = vim.split(vim.inspect(value), "\n")
   local shown = math.min(#lines, M.RAW_BLOCK_MAX_LINES)
   for i = 1, shown do
-    children[#children + 1] = { comp = ui.label, props = { text = "    │ " .. lines[i] } }
+    children[#children + 1] = gutter_row(lines[i])
   end
   if #lines > shown then
     children[#children + 1] = meta_line(string.format("    │ … %d more lines", #lines - shown))
@@ -287,6 +308,15 @@ function M.Header(_, props)
     comp = ui.button,
     props = {
       theme = false, -- bare header, no button chrome
+      -- The header WRAPS. A tool call's title is its meaningful argument — a
+      -- command line, a path, a search pattern — and those are routinely wider
+      -- than the panel; clipped at the edge, the header showed the start of a
+      -- command and hid what it actually did.
+      --
+      -- Character wrap, not word wrap: the chevron/status/kind glyphs are
+      -- positioned by exact spacing, and word wrap tokenizes on %S+ — it
+      -- rebuilt the prefix with single spaces and moved the icons.
+      wrap = "char",
       label = {
         { chevron .. " ", hl = "@comment" },
         { status_icon .. " ", hl = header_hl },
@@ -342,10 +372,11 @@ function M.Metadata(_, props)
   append_raw_block(children, "output", tc.output)
 
   for _, body_line in ipairs(tc.body or {}) do
-    -- A body element may itself contain newlines (it's content, not a
-    -- label); paragraphs handle those, keeping the "│" gutter per row.
+    -- A body element may itself contain newlines (it's content, not a label);
+    -- split them out so each physical line keeps its own "│" gutter, and let
+    -- gutter_row wrap whatever is too wide for the pane.
     for _, physical in ipairs(vim.split(body_line, "\n")) do
-      children[#children + 1] = { comp = ui.label, props = { text = "    │ " .. physical } }
+      children[#children + 1] = gutter_row(physical)
     end
   end
 

@@ -8,6 +8,7 @@
 -- reactive/view/render.lua (transcript_lines).
 
 local ui = require("fibrous.inline.components")
+local Json = require("weave.utils.json")
 local Keys = require("weave.keys")
 local Peek = require("weave.view.peek")
 local Theme = require("weave.view.theme")
@@ -28,6 +29,18 @@ local M = {}
 local function peek_keys(entry)
   return Keys.on_key("peek", function()
     Peek.open(entry.text, entry.kind)
+  end)
+end
+
+--- The same action over a TOOL CALL, whose raw source is the call itself:
+--- indented JSON of the whole block. A tool call has no prose to show — the
+--- entry IS the projection (a one-line header, a capped input dump), so the
+--- peek is the only place the full command, arguments and output are legible.
+--- @param block table normalized tool-call block
+--- @return table<string, fun()>
+local function tool_peek_keys(block)
+  return Keys.on_key("peek", function()
+    Peek.open(Json.pretty(block), ToolCall.tool_tag(block), "json")
   end)
 end
 
@@ -105,9 +118,17 @@ end
 --- One tool call. Rendering (and any registered override) lives in
 --- weave.view.tool_call — see its header for the subrenderer/override
 --- contract. This just forwards the store slice it was memo'd on.
+---
+--- The peek key rides on a wrapper col rather than on the rendering, so it
+--- covers a REGISTERED renderer's entry too: whatever someone else chose to
+--- draw, K still shows the call weave actually received.
 --- @param props { store: weave.store.SessionStore, block: table, expanded: boolean, awaiting: boolean, show_diff: boolean }
 function M.ToolCallEntry(_, props)
-  return { comp = ToolCall.Dispatch, props = props }
+  return {
+    comp = ui.col,
+    props = { on_key = tool_peek_keys(props.block) },
+    children = { { comp = ToolCall.Dispatch, props = props } },
+  }
 end
 
 --- The HEAD permission request with its option buttons, plus a "1 of N" line

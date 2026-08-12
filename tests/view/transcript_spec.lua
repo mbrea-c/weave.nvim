@@ -57,8 +57,30 @@ local function mount_transcript(store, width, prefs)
   return mount.floating(
     transcript.Transcript,
     { store = store, prefs = prefs or Prefs:new() },
-    { width = width or 60, height = 20, mode = "scroll" }
+    -- `keys` is what the panel declares for the peek action; routing K to the
+    -- entry under the cursor is a mount-level opt, so the specs that press it
+    -- have to ask for it too.
+    { width = width or 60, height = 20, mode = "scroll", keys = { "K" } }
   )
+end
+
+--- The first window (other than the mount's) whose buffer contains `needle` —
+--- the peek modal, found by its content rather than by window order.
+local function wait_float(needle, exclude)
+  local win, buf
+  vim.wait(2000, function()
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      if w ~= exclude then
+        local b = vim.api.nvim_win_get_buf(w)
+        if table.concat(vim.api.nvim_buf_get_lines(b, 0, -1, false), "\n"):find(needle, 1, true) then
+          win, buf = w, b
+          return true
+        end
+      end
+    end
+    return false
+  end, 10)
+  return win, buf
 end
 
 local function tool_header(status, kind, title, expanded)
@@ -293,6 +315,46 @@ describe("view.transcript tool calls", function()
     assert.equal("    +local a = 2", lines[4])
     assert.same({ { row = 2, col = 4, end_col = 16 } }, marks_with(handle.bufnr, "DiffDelete"))
     assert.same({ { row = 3, col = 4, end_col = 16 } }, marks_with(handle.bufnr, "DiffAdd"))
+    handle.unmount()
+  end)
+
+  it("wraps a long title instead of clipping it at the pane edge", function()
+    local store = SessionStore:new()
+    local command = "grep --line-number --recursive 'needle' /very/long/path/to/the/haystack"
+    store:upsert_tool_call({ tool_call_id = "t1", kind = "execute", argument = command, status = "completed" })
+    local handle = mount_transcript(store, 40)
+
+    local lines = trimmed(handle.bufnr)
+    assert.is_true(#lines > 1, "the header spans more than one row")
+    -- every character of the command survives, in order, across the rows
+    local joined = table.concat(lines, "")
+    assert.truthy(joined:find(command:sub(1, 20), 1, true))
+    assert.truthy(joined:find("haystack", 1, true))
+    handle.unmount()
+  end)
+
+  it("K over a tool call peeks at the raw call as JSON", function()
+    local store = SessionStore:new()
+    store:upsert_tool_call({
+      tool_call_id = "t1",
+      kind = "execute",
+      argument = "ls",
+      status = "completed",
+      input = { command = "ls -la /tmp" },
+    })
+    local handle = mount_transcript(store)
+
+    move_cursor(handle, 1, 0)
+    press(handle, "K")
+    local win, buf = wait_float('"command"', handle.winid)
+    assert.is_not_nil(win, "the peek float")
+    local text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+    -- the rendered header shows "ls"; the peek shows the call weave received
+    assert.truthy(text:find('"command": "ls -la /tmp"', 1, true))
+    assert.truthy(text:find('"tool_call_id": "t1"', 1, true))
+    assert.equal("json", vim.bo[buf].filetype)
+
+    pcall(vim.api.nvim_win_close, win, true)
     handle.unmount()
   end)
 

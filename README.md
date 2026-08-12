@@ -140,7 +140,7 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | `<C-Down>` | `recall_newer` | In the prompt: back down towards your draft |
 | `za` | `toggle_tool_call` | On a tool-call header: expand/collapse it (same as `<CR>` activation) |
 | `zR` / `zM` | `expand_all` / `collapse_all` | Expand / collapse all tool calls |
-| `K` | `peek` | Over a transcript entry: its raw source in a scrollable float (yank/search-friendly) |
+| `K` | `peek` | Over a transcript entry: its raw source in a scrollable float (yank/search-friendly). Over a **tool call**: the whole call as indented JSON. Dismissed with `q`/`<Esc>` — or by focusing anything else |
 | `;;t` | `toggle_thoughts` | Toggle thinking blocks |
 | `;;d` | `toggle_diffs` | Toggle edit diffs |
 | `;;c` | `toggle_conceal` | Toggle markdown prettifying (conceal) |
@@ -526,6 +526,13 @@ header shows the call's meaningful argument instead: the file path for
 `read`/`write`/`edit`/`glob`, the pattern for `grep`, the command for
 `task_start`, the task id for the other `task_*` tools. Everything else keeps
 its normal title (the agent's title, else the file path, else an id label).
+
+Those titles are routinely wider than the panel, so the header **wraps** rather
+than clipping at the edge, and so do the expanded raw input/output and content
+lines (character wrap, which keeps a dump's indentation intact). For the whole
+call at once — every field, uncapped — press `K` over it: the peek float shows
+the block weave received as indented JSON. That works over an overridden
+rendering too, since the key rides on the entry rather than on what drew it.
 
 Register an override with a **match predicate** and a `render` component:
 

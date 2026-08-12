@@ -227,6 +227,13 @@ describe("tools wiring", function()
     package.preload["clankbox"] = function()
       return fake_clankbox()
     end
+    -- Pin the "no broker" condition instead of leaving it to whatever
+    -- clankbox is installed on the machine: the real module rides in on the
+    -- packpath (which `package.preload["clankbox"]` does not shadow), and an
+    -- older one errors inside listen() rather than being absent.
+    package.preload["clankbox.broker"] = function()
+      return {}
+    end
     Config.tools.clankbox_path = stub_checkout()
     Config.mcp_servers = {}
     local client = started()
