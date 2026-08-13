@@ -11,6 +11,50 @@ local function scratch(lines)
   return buf
 end
 
+-- The layer is parameterized because the SAME mechanism serves both
+-- directions: the user's comments awaiting send, and the agent's annotations
+-- (weave.annotations). They must not share a namespace — `at()` is a reverse
+-- lookup, and one that mixed the two would hand "dismiss the annotation under
+-- my cursor" a user comment instead.
+describe("feedback anchor layers", function()
+  it("keeps two layers' marks apart", function()
+    local mine = Anchors.layer({ name = "weave_test_layer_a", hl = "WeaveTestA" })
+    local theirs = Anchors.layer({ name = "weave_test_layer_b", hl = "WeaveTestB" })
+    local buf = scratch({ "one", "two" })
+
+    local a = mine.set(buf, { lnum = 1, end_lnum = 1 })
+    theirs.set(buf, { lnum = 1, end_lnum = 1 })
+
+    assert.same({ a }, mine.at(buf, 1))
+    assert.equal(1, #theirs.at(buf, 1))
+    assert.truthy(mine.range(buf, a))
+    -- clearing one leaves the other standing
+    mine.clear(buf, a)
+    assert.same({}, mine.at(buf, 1))
+    assert.equal(1, #theirs.at(buf, 1))
+  end)
+
+  it("carries its own highlight group", function()
+    local layer = Anchors.layer({ name = "weave_test_layer_c", hl = "WeaveTestC" })
+    local buf = scratch({ "one" })
+    local id = layer.set(buf, { lnum = 1, end_lnum = 1 })
+    local mark = vim.api.nvim_buf_get_extmark_by_id(buf, layer.NS, id, { details = true })
+    assert.equal("WeaveTestC", mark[3].hl_group)
+  end)
+
+  it("passes extra extmark options through, which is how a message gets rendered", function()
+    local layer = Anchors.layer({ name = "weave_test_layer_d", hl = "WeaveTestD" })
+    local buf = scratch({ "one" })
+    local id = layer.set(buf, { lnum = 1, end_lnum = 1 }, {
+      virt_lines = { { { "a note", "WeaveTestD" } } },
+      virt_lines_above = true,
+    })
+    local mark = vim.api.nvim_buf_get_extmark_by_id(buf, layer.NS, id, { details = true })
+    assert.same({ { { "a note", "WeaveTestD" } } }, mark[3].virt_lines)
+    assert.is_true(mark[3].virt_lines_above)
+  end)
+end)
+
 describe("feedback anchors", function()
   it("round-trips a whole-line range", function()
     local buf = scratch({ "one", "two", "three" })

@@ -188,6 +188,18 @@ local BUILTIN = {
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
+      -- Annotating changes nothing — a virtual-text overlay on the user's
+      -- screen, no file touched — and it is the agent's whole feedback channel
+      -- in tutor mode, where one review leaves a dozen notes. Approving each
+      -- would make the mode unusable, so every preset allows it. Still
+      -- workspace-scoped: the note is free, pointing it at a file outside the
+      -- project is a path to ask for like any other. The other three carry no
+      -- resource (they name an annotation id), so they need rules of their own
+      -- above any resource-bearing catch-all.
+      { tool = "weave:annotate", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:annotate_list", decision = "allow" },
+      { tool = "weave:annotate_update", decision = "allow" },
+      { tool = "weave:annotate_dismiss", decision = "allow" },
       -- task_start's resource is the COMMAND LINE and web_fetch's is a URL,
       -- neither of which can match a ${project} glob — without rules of their
       -- own they fall through to the closing deny, and no command could ever
@@ -234,6 +246,13 @@ local BUILTIN = {
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
+      -- Feedback ON the code is not a write TO it: read-only is the preset
+      -- tutor mode normally runs under, and denying its one output channel
+      -- would leave the agent able to review and unable to say anything.
+      { tool = "weave:annotate", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:annotate_list", decision = "allow" },
+      { tool = "weave:annotate_update", decision = "allow" },
+      { tool = "weave:annotate_dismiss", decision = "allow" },
       -- Resourceless denies: read-only holds wherever the call points, so
       -- these must not be written as ${project}-scoped rules.
       { tool = "weave:write", decision = "deny", message = READ_ONLY },
@@ -275,6 +294,10 @@ local BUILTIN = {
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
+      { tool = "weave:annotate", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:annotate_list", decision = "allow" },
+      { tool = "weave:annotate_update", decision = "allow" },
+      { tool = "weave:annotate_dismiss", decision = "allow" },
       -- Editing files is not running commands: task_start still asks, and so
       -- does leaving the machine.
       { tool = "weave:task_start", decision = "ask" },
@@ -310,6 +333,10 @@ local BUILTIN = {
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
+      { tool = "weave:annotate", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:annotate_list", decision = "allow" },
+      { tool = "weave:annotate_update", decision = "allow" },
+      { tool = "weave:annotate_dismiss", decision = "allow" },
       -- Resource = a command line / a URL, not a path: these need their own
       -- rules, and both are confined by the hull however they are spelled.
       { tool = "weave:task_start", decision = "allow" },

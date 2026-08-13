@@ -309,6 +309,35 @@ function M.tutor(arg)
   return on
 end
 
+--- Dismiss the agent's annotation under the cursor — "read it, done with it".
+--- With nothing under the cursor, says so rather than guessing at which of
+--- them you meant.
+---
+--- Bind it yourself; weave sets no global keymaps of its own:
+---   vim.keymap.set("n", ";;x", require("weave").dismiss_annotation)
+--- @return boolean dismissed
+function M.dismiss_annotation()
+  local Annotations = require("weave.annotations")
+  local bufnr = vim.api.nvim_get_current_buf()
+  local lnum = vim.api.nvim_win_get_cursor(0)[1]
+  if not Annotations.dismiss_at(bufnr, lnum) then
+    Logger.notify("no agent annotation here", vim.log.levels.INFO)
+    return false
+  end
+  return true
+end
+
+--- Dismiss every annotation, or every one on the current file.
+--- @param opts { buffer?: boolean }|nil
+function M.dismiss_annotations(opts)
+  opts = opts or {}
+  local Annotations = require("weave.annotations")
+  local path = opts.buffer and vim.api.nvim_buf_get_name(0) or nil
+  local n = #Annotations.list({ path = path })
+  Annotations.clear({ path = path })
+  Logger.notify(("dismissed %d annotation(s)"):format(n), vim.log.levels.INFO)
+end
+
 --- Whether the current tab has an open panel.
 --- @return boolean
 function M.is_open()

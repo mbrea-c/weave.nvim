@@ -381,6 +381,84 @@ Registering an existing name replaces it rather than stacking. A sink that
 returns an error or throws is reported and **the draft is kept**, so a failed
 send never loses hand-written comments.
 
+### Tutor mode
+
+The same idea pointed the other way: instead of you reviewing the agent's code,
+the agent reviews **yours**, as you write it. Turn it on for a session and
+weave starts sending it what you change, unprompted, and asks it to teach
+rather than to do.
+
+```vim
+:Weave tutor        " toggle for the session selected in this tab
+:Weave tutor on
+:Weave tutor off
+```
+
+It is **per session** — a tutor in one panel and an ordinary assistant in
+another is a normal thing to want. Collection is editor-global and runs
+whenever *any* session has it on; each session tracks what it has already sent,
+so two of them never eat each other's window.
+
+What the agent receives is one **squashed diff** of everything you changed
+since its last update — not a replay of every keystroke. A line you typed and
+retyped five times arrives as whatever it finally says, and a change you made
+and then undid does not arrive at all. File creations and deletions are in
+there too.
+
+By default a batch goes out after **15 seconds of quiet**, or after **60
+seconds** regardless if you never stop typing, and it **interrupts** the turn in
+flight (the same thing `<C-x>` does). For the impatient, send now:
+
+```lua
+vim.keymap.set("n", ";;ts", require("weave.tutor").flush_now, { desc = "weave: send my edits now" })
+```
+
+Sends appear in the transcript as a single quiet line (`⇅ sent 2 files you
+changed`) rather than as prose you appear to have written; `K` on it shows the
+diff that went out. They do not join your `<C-Up>` prompt history either.
+
+**Only your edits are sent.** Anything weave's own `w:write`/`w:edit` tools do
+is excluded, and so is a reload from disk. The one gap is a shell command the
+agent runs itself — a formatter, a codemod — which weave cannot see the writes
+of; the shipped tutor prompt tells the agent that a hunk may be its own work.
+
+#### What the agent sends back
+
+Feedback lands **on the code**, through the `annotate` tool: a highlighted span
+(`WeaveAnnotation`, teal by default) with the message rendered beside it as
+virtual lines. That is the point — chat scrolls away, an annotation sits on the
+line it is about.
+
+```lua
+-- read it, done with it
+vim.keymap.set("n", ";;x", require("weave").dismiss_annotation, { desc = "weave: dismiss annotation here" })
+-- clear the lot
+vim.keymap.set("n", ";;X", require("weave").dismiss_annotations, { desc = "weave: dismiss all annotations" })
+```
+
+The agent can also list, rewrite and dismiss its own annotations
+(`annotate_list` / `annotate_update` / `annotate_dismiss`), and `annotate` with
+no span is a plain `vim.notify` for something that has no one line to point at.
+
+Annotations are anchored with extmarks, like your comments are, so they follow
+the code while you keep typing. Because in tutor mode you are *always* typing,
+the tool also takes the text the agent expected to find at that line: if it has
+moved, the note is re-found by that text, and if the text is nowhere the call
+is **refused** rather than highlighting whatever moved into the spot. An
+annotation on a file you have since closed waits for you to open it again.
+
+Every builtin preset allows annotating, **read-only included** — that is the
+preset tutor mode normally runs under, and an agent that can review but not
+speak would be useless. It is still workspace-scoped like every other weave
+tool. Both directions of feedback are documented together under [Inline code
+feedback](#inline-code-feedback); they share the anchoring layer but not their
+namespaces, so `;;x` never dismisses one of your own comments.
+
+Everything about the mode is configurable — see `tutor` under
+[Configuration](#configuration). The three prompts especially: they are the
+whole agent-facing contract, and rewriting them is how you get the tutor you
+actually want.
+
 ---
 
 ## Configuration
@@ -395,6 +473,7 @@ send never loses hand-written comments.
 | `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit, glob/grep, task lifecycle, web_fetch) via clankbox; `clankbox_path`, `ripgrep_path` and `curl_path` override binary/checkout auto-detection |
 | `permissions` | `table` | `{ presets = {} }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
 | `sandbox` | `table` | `{ mode = "on" }` | Agent process confinement (bubblewrap on Linux, Seatbelt on macOS — see [Sandbox](#sandbox)) |
+| `tutor` | `table` | see below | [Tutor mode](#tutor-mode): timing, and the three prompts that make the agent a tutor |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
 | `view` | `table` | see below | Default panel geometry |
 | `keys` | `table` | see [Keybinds](#keybinds) | Key(s) per named action |
@@ -407,6 +486,22 @@ overrides it for that panel.
 | `width` | `integer` | `100` | Total docked panel width (columns) |
 | `sidebar_width` | `integer` | `30` | Sidebar column width (clamped to at most half the panel) |
 | `prompt_height` | `integer` | `5` | Prompt input height (rows) |
+
+`tutor` configures [tutor mode](#tutor-mode). The three prompts are the entire
+agent-facing contract — the defaults ask for annotations over chat, discourage
+empty praise, and forbid it from doing the work for you, but a tutor for
+learning Rust and a tutor for reviewing a colleague's style want different
+words. The rest is timing.
+
+| `tutor` field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `debounce_ms` | `integer` | `15000` | Quiet time after an edit before the batch goes out |
+| `max_wait_ms` | `integer` | `60000` | Ceiling from the first unsent edit, so continuous typing still gets sent |
+| `on_flush` | `string` | `"interrupt"` | `"interrupt"` cancels the turn in flight (like `<C-x>`); `"queue"` waits behind it. `flush_now()` always interrupts |
+| `max_diff_bytes` | `integer` | `102400` | Cap on one batch's diff; truncation is announced, never silent |
+| `enabled_prompt` | `string` | see source | Sent when tutor mode goes on — what makes the agent a tutor |
+| `disabled_prompt` | `string` | see source | Sent when it goes off |
+| `edits_prompt` | `string` | see source | Preamble ahead of each batch of edits |
 
 ```lua
 require("weave").setup({
@@ -903,6 +998,12 @@ weave.is_open()        -- boolean: does the current tab have a panel?
 weave.sessions(opts)   -- open the session modal; returns its handle
 weave.get_session()    -- the current tab's selected Session (or nil)
 weave.stop()           -- close every session (and all their panels)
+
+weave.attach(path)     -- attach a file to the next prompt (asks if omitted)
+weave.tutor(arg)       -- tutor mode for this tab's session: "on"/"off"/nil to toggle
+
+weave.dismiss_annotation()   -- drop the agent's annotation under the cursor
+weave.dismiss_annotations()  -- drop them all ({ buffer = true } for this file only)
 ```
 
 `open`/`toggle` accept `{ provider?, width?, sidebar_width?, prompt_height? }`
@@ -985,12 +1086,44 @@ and returns the comment (or `nil, err`). `comment_line` / `comment_selection` /
 float — useful in tests. `send` accepts `{ sink? }`, defaulting to `"weave"`.
 See [Inline code feedback](#inline-code-feedback) above for the full picture.
 
+### Tutor mode and annotations
+
+```lua
+local tutor = require("weave.tutor")
+
+tutor.enable(session)     -- session defaults to this tab's selected one
+tutor.disable(session)
+tutor.toggle(session)
+tutor.is_on(session)      -- boolean
+tutor.flush_now(session)  -- send pending edits NOW, interrupting
+```
+
+```lua
+local annotations = require("weave.annotations")
+
+annotations.add(opts)              -- { path|bufnr, lnum, end_lnum?, message, position?, expect? }
+annotations.list(filter)           -- every outstanding one, resolved to where it sits now
+annotations.get(id)
+annotations.update(id, opts)       -- { message?, position? }
+annotations.dismiss(id)
+annotations.at_cursor(bufnr, lnum) -- the one under a position, or nil
+annotations.dismiss_at(bufnr, lnum)
+annotations.clear(filter)          -- { path? }
+annotations.subscribe(fn)          -- called on every change; returns unsubscribe
+```
+
+`add` returns the annotation, or `nil, err` — notably when the code it points
+at is gone, which is a refusal rather than a guess. See [Tutor
+mode](#tutor-mode) for the whole picture.
+
 ### Commands
 
 | Command | Action |
 | --- | --- |
 | `:Weave` | Toggle the panel |
 | `:Weave sessions` | Open the session modal |
+| `:Weave attach <file>` | Attach a file to the next prompt |
+| `:Weave tutor [on\|off]` | Tutor mode for this tab's session (no argument toggles) |
 
 ---
 
@@ -1018,14 +1151,23 @@ See [Inline code feedback](#inline-code-feedback) above for the full picture.
       task_store.lua       managed shell tasks (the task_* tool lifecycle)
       feedback.lua         inline code feedback: the PUBLIC API users bind
       feedback_store.lua   the one open draft — comments from every source
-      feedback_anchors.lua extmark anchoring + the yellow highlight, so a
-                             comment follows its code as the agent edits
+      feedback_anchors.lua extmark anchoring + highlight, parameterized over
+                             namespace: the SAME layer serves the user's
+                             comments and the agent's annotations
       feedback_format.lua  draft → the message the agent reads
       feedback_sinks.lua   where a sent draft goes (registry + the weave sink)
+      annotations.lua      the agent's notes ON the user's code (tutor mode's
+                             output channel): anchor + virt_lines in one mark
+      revision.lua         a user edit as before/after CONTENT per file; merge
+                             is what makes squashing a burst exact
+      revision_log.lua     collection: bursts, per-session cursors, and the
+                             attribution that keeps the agent's writes out
+      tutor.lua            the mode itself: per-session, debounced sends
       init.lua             setup() + :Weave, panels per tabpage
     lua/weave/tools/     the MCP tool suite hosted by clankbox: fs (read/
                            write/edit, buffer-aware), search (glob/grep over
                            ripgrep, buffer-aware), tasks (task lifecycle),
+                           annotate (feedback on the user's code),
                            gate (the permission wrap over every def)
     lua/weave/view/      fibrous components: transcript, sidebar, prompt,
                            panel (one docked pane, one mount; the transcript

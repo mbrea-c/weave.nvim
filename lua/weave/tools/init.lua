@@ -26,6 +26,10 @@ M.OWNS = {
   task_kill = true,
   request_access = true,
   web_fetch = true,
+  annotate = true,
+  annotate_list = true,
+  annotate_update = true,
+  annotate_dismiss = true,
 }
 
 --- The fs tools' resource for the permission engine: the ABSOLUTE path (so
@@ -82,6 +86,16 @@ function M.register_into(server)
     return type(args.url) == "string" and args.url ~= "" and args.url or nil
   end
   server.register_tool("web_fetch", Gate.wrap("web_fetch", web_fetch.def, { resource = url_resource, kind = "fetch" }))
+  -- Feedback ON the user's code (weave.annotations): the agent's half of
+  -- inline code feedback, and its whole output channel in tutor mode. Gated on
+  -- the PATH like the fs tools, so a rule can scope where the agent may leave
+  -- notes; the query/edit/dismiss three carry no resource, like the task query
+  -- tools, because they name an annotation id rather than a file.
+  local annotate = require("weave.tools.annotate")
+  server.register_tool("annotate", Gate.wrap("annotate", annotate.annotate, { resource = fs_resource }))
+  server.register_tool("annotate_list", Gate.wrap("annotate_list", annotate.annotate_list))
+  server.register_tool("annotate_update", Gate.wrap("annotate_update", annotate.annotate_update))
+  server.register_tool("annotate_dismiss", Gate.wrap("annotate_dismiss", annotate.annotate_dismiss))
   -- The elevation tool goes in UNwrapped: it IS the asking mechanism (its
   -- handler always prompts), so gating it would prompt twice per question.
   server.register_tool("request_access", require("weave.tools.access").def)

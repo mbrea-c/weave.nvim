@@ -86,6 +86,38 @@ describe("permissions engine", function()
     assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = "/tmp/x" }))
   end)
 
+  -- Annotations are the agent's whole output channel in tutor mode, and they
+  -- change nothing: a virtual-text overlay, no file touched. Making the user
+  -- approve twenty of them during one review would make the mode unusable, so
+  -- every builtin allows them — including read_only, which is the preset tutor
+  -- mode will normally run under.
+  it("allows annotating under every builtin, read_only included", function()
+    Permissions.set_project_root("/home/me/proj")
+    for _, name in ipairs({ "ask", "read_only", "edit", "auto" }) do
+      Permissions.set_mode("on")
+      Permissions.set_active(name)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:annotate", resource = "/home/me/proj/a.lua" }), name)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:annotate_list" }), name)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:annotate_update" }), name)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:annotate_dismiss" }), name)
+    end
+    for _, name in ipairs({ "unsandboxed_ask", "unsandboxed_read_only", "unsandboxed_edit", "unsandboxed_auto" }) do
+      Permissions.set_mode("off")
+      Permissions.set_active(name)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:annotate", resource = "/tmp/a.lua" }), name)
+    end
+  end)
+
+  -- ...but they are still workspace-scoped under the sandbox, like every other
+  -- weave tool: a note on a file outside the project is a path the agent has
+  -- to ask for.
+  it("still refuses to annotate outside the workspace when sandboxed", function()
+    Permissions.set_project_root("/home/me/proj")
+    Permissions.set_mode("on")
+    Permissions.set_active("read_only")
+    assert.equal("deny", Permissions.resolve({ tool = "weave:annotate", resource = "/etc/hosts" }))
+  end)
+
   it("resolves first-match-wins and falls back to ask when nothing matches", function()
     Permissions.save_preset({
       name = "locked",
