@@ -124,6 +124,27 @@ describe("seatbelt agent profile", function()
     assert.truthy(at(profile, '(subpath "/private/tmp")'))
   end)
 
+  -- A process cannot BOOT if it cannot stat its own cwd: getcwd walks the path
+  -- to the root, and node dies in bootstrap on EPERM from uv_cwd before any of
+  -- our code runs. bwrap never hits this because its project is an empty tmpfs
+  -- — the directory still EXISTS and stats fine, it just has nothing in it.
+  -- Denying existence is not something this backend can afford, so it denies
+  -- CONTENT: file-read-data (which covers directory listing) and every write,
+  -- leaving file-read-metadata alone.
+  it("denies content, never metadata, or the agent cannot find its own cwd", function()
+    local profile = agent()
+    assert.truthy(at(profile, '(deny file-read-data file-write* (subpath "/Users/u/proj"))'))
+    assert.truthy(at(profile, '(deny file-read-data file-write* (subpath "/Users/u"))'))
+    -- the blanket form is what broke it; it must not come back
+    assert.is_nil(at(profile, "(deny file-read* "))
+  end)
+
+  it("keeps metadata readable in the tool hull too", function()
+    local profile = tool()
+    assert.truthy(at(profile, '(deny file-read-data file-write* (subpath "/Users/u"))'))
+    assert.is_nil(at(profile, "(deny file-read* "))
+  end)
+
   it("denies $HOME and the project, then punches the grants back through", function()
     local profile = agent({
       grants = {
@@ -131,8 +152,8 @@ describe("seatbelt agent profile", function()
         { path = "/Users/u/notes", mode = "ro" },
       },
     })
-    local home = at(profile, '(deny file-read* file-write* (subpath "/Users/u"))')
-    local proj = at(profile, '(deny file-read* file-write* (subpath "/Users/u/proj"))')
+    local home = at(profile, '(deny file-read-data file-write* (subpath "/Users/u"))')
+    local proj = at(profile, '(deny file-read-data file-write* (subpath "/Users/u/proj"))')
     local state = at(profile, '(allow file-read* file-write* (subpath "/Users/u/.claude"))')
     local notes = at(profile, '(allow file-read* (subpath "/Users/u/notes"))')
     assert.truthy(home and proj and state and notes)
@@ -168,7 +189,7 @@ describe("seatbelt tool profile", function()
     -- a tool reads the project through bwrap's read-only root bind whether
     -- or not the hull binds it; the hull's rw bind is what grants WRITES
     local profile = tool()
-    assert.truthy(at(profile, '(deny file-read* file-write* (subpath "/Users/u"))'))
+    assert.truthy(at(profile, '(deny file-read-data file-write* (subpath "/Users/u"))'))
     assert.is_nil(at(profile, "/proj"))
   end)
 

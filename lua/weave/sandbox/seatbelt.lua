@@ -45,6 +45,23 @@ local READ = "file-read*"
 local WRITE = "file-write*"
 local RW = "file-read* file-write*"
 
+--- What "hide this subtree" means here, and it is NOT `file-read*`.
+---
+--- A process cannot BOOT if it cannot stat its own working directory: getcwd
+--- walks the path to the root, and node dies in bootstrap on EPERM from uv_cwd
+--- before a line of agent code runs (`shell-init: error retrieving current
+--- directory`, then `process.cwd failed`). bwrap never meets this, because its
+--- hidden project is an empty TMPFS — the directory still exists and stats
+--- fine, it simply contains nothing. Denying existence is a luxury only a
+--- mount namespace has.
+---
+--- So this backend denies CONTENT and leaves metadata alone: `file-read-data`
+--- covers both reading a file and listing a directory, which is the whole of
+--- what "hidden" has to mean, while `file-read-metadata` keeps stat() working
+--- so paths still resolve. The cost is that the agent can learn whether a path
+--- it already knows about exists — it cannot enumerate, and it cannot read.
+local DENY_CONTENT = "file-read-data file-write*"
+
 --- @return boolean
 function M.available()
   return vim.fn.has("mac") == 1 and vim.fn.executable(M.EXEC) == 1
@@ -152,7 +169,7 @@ local function floor(p, home, fs)
   p.raw("(deny file-write*)")
   p.rule("allow", WRITE, { "/dev" })
   p.rule("allow", RW, M.scratch_paths(fs))
-  p.rule("deny", RW, { home })
+  p.rule("deny", DENY_CONTENT, { home })
 end
 
 --- The agent hull as SBPL.
@@ -164,10 +181,12 @@ function M.profile_agent(hull, fs)
   p.raw("(version 1)")
   p.raw(";; weave agent hull — generated per spawn; last matching rule wins.")
   floor(p, hull.home, fs)
-  -- The project. bwrap mounts an empty read-only tmpfs here; the closest
-  -- this backend gets is a flat denial, so the agent is told "no" instead of
-  -- being shown "nothing".
-  p.rule("deny", RW, { hull.cwd })
+  -- The project. bwrap mounts an empty read-only tmpfs here; the closest this
+  -- backend gets is denying its CONTENT, so the agent is told "no" instead of
+  -- being shown "nothing". Metadata stays readable — this is usually the
+  -- agent's cwd, and a process that cannot stat its own cwd never starts (see
+  -- DENY_CONTENT).
+  p.rule("deny", DENY_CONTENT, { hull.cwd })
   -- ...then the ordered grants punched back through, exactly as the bwrap
   -- mounts stack on each other.
   for _, grant in ipairs(hull.grants or {}) do

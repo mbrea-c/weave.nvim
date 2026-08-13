@@ -100,6 +100,39 @@ Two failure modes to expect first: a profile so strict the child never starts
 resolved the path somewhere else (quiet, dangerous — see `M.normalize` and the
 firmlink handling).
 
+The first one has already happened once, and it is worth knowing the shape.
+Denying `file-read*` on the project killed the agent in node's bootstrap:
+
+    shell-init: error retrieving current directory: getcwd: ... not permitted
+    Error: EPERM: process.cwd failed with error operation not permitted, uv_cwd
+
+The project is the agent's **cwd**, `getcwd` walks that path to the root, and
+`file-read*` takes `file-read-metadata` with it, so the process could not stat
+the directory it was standing in. bwrap never meets this: its hidden project is
+an empty tmpfs, which still stats fine. The fix is `DENY_CONTENT` in
+`seatbelt.lua` — deny `file-read-data` (file contents AND directory listing)
+and every write, leave metadata alone. Anything else that needs "hide this
+subtree" must use the same shape.
+
+To iterate without going through weave, print the profile a spawn would use and
+run `sandbox-exec` by hand:
+
+```lua
+:lua local _, a = require("weave.sandbox").wrap("claude-agent-acp", {}, { mode = "on" })
+     vim.fn.writefile(vim.split(a[2], "\n"), "/tmp/weave.sbpl")
+```
+
+```sh
+# does anything start at all?
+sandbox-exec -f /tmp/weave.sbpl /bin/sh -c 'pwd && echo booted'
+# ...and is it still confined? both of these must fail
+sandbox-exec -f /tmp/weave.sbpl /bin/sh -c 'ls'
+sandbox-exec -f /tmp/weave.sbpl /bin/sh -c 'cat some-project-file'
+```
+
+Both halves matter. A profile that boots but lists the project is worse than
+one that refuses to boot, because only the second kind announces itself.
+
 ### Benchmarks
 
 Weave reuses fibrous' bench harnesses, so the numbers sit on the same ruler as
