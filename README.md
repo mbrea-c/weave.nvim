@@ -498,10 +498,11 @@ overrides it for that panel.
 | `prompt_height` | `integer` | `5` | Prompt input height (rows) |
 
 `tutor` configures [tutor mode](#tutor-mode). The three prompts are the entire
-agent-facing contract — the defaults ask for annotations over chat, discourage
-empty praise, and forbid it from doing the work for you, but a tutor for
-learning Rust and a tutor for reviewing a colleague's style want different
-words. The rest is timing.
+agent-facing contract — the defaults ask for annotations over chat, press for
+**brevity** (you are mid-flow, and every annotation pushes your code down the
+screen), discourage empty praise, and forbid it from doing the work for you.
+But a tutor for learning Rust and a tutor for reviewing a colleague's style
+want different words. The rest is timing.
 
 | `tutor` field | Type | Default | Meaning |
 | --- | --- | --- | --- |
