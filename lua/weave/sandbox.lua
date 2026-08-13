@@ -75,6 +75,21 @@ function M.backend_name()
   return backend and backend.name or nil
 end
 
+--- The backend named together with what it actually confines. The two backends
+--- do NOT deliver the same thing — seatbelt does not confine reads at all —
+--- and "sandbox: on" alone would let a macOS user believe it did.
+--- @return string|nil
+function M.backend_summary()
+  local backend = M._backend()
+  if not backend then
+    return nil
+  end
+  if not backend.confines then
+    return backend.name
+  end
+  return ("%s — %s"):format(backend.name, backend.confines)
+end
+
 --- The backend a wrap should use: `_available` is the one gate everything
 --- else in weave already consults (degrade, tool_sandboxing_on), so honour
 --- it here too rather than letting a wrap confine a process weave has

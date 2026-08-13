@@ -928,23 +928,34 @@ whichever backend the machine has, first match winning:
 |---|---|---|---|
 | backend | `bwrap` on `PATH` | `sandbox-exec` (ships with the OS) | none |
 | mechanism | mount namespace | Seatbelt syscall filter (SBPL) | — |
-| mode `on` | enforced | enforced, weaker (below) | degrades to `off` |
+| confines | files **and** network | **writes** and network — **reads are not confined** | — |
+| mode `on` | enforced | partially enforced (below) | degrades to `off` |
 
-The hull is the same on both, but Seatbelt is a syscall filter with path
-predicates, not a mount namespace, and that forces three differences worth
-knowing before you rely on macOS confinement:
+> **On macOS, mode `on` does not stop the agent reading anything.** It stops it
+> *writing* outside its grants, and stops its tools reaching the network. It
+> can read the project, `$HOME`, and the rest of the disk. The permissions
+> window says so beside the mode rather than reporting a bare `on`.
 
-- **Nothing is hidden, only denied.** Where bubblewrap shows the agent an
-  empty read-only tmpfs over the project and `$HOME`, Seatbelt returns
-  `EPERM`. Better for reads — a denial is self-describing where an empty
-  directory reads as fact — but worse for writes: an agent that
-  unconditionally creates `~/.something` at startup gets a hard error where
-  Linux let it write into the throwaway tmpfs. The shipped per-provider state
-  grants cover that for the providers weave knows; anything else goes in
-  `state_paths`.
+That is a limitation of the mechanism, not a shortcut. Seatbelt has no mount
+namespace, so a subtree cannot be swapped for an empty one — it can only be
+denied — and denying reads on the agent's **cwd**, or any ancestor of it, stops
+the process from starting at all: `getcwd` walks that path to the root, and node
+dies in bootstrap with `EPERM ... uv_cwd`. Two narrower attempts (denying
+`file-read*`, then only `file-read-data`) both died the same way on a real
+kernel. Read confinement here would mean enumerating and re-allowing every
+ancestor of the cwd, and getting that subtly wrong fails *quietly* — in the
+direction where weave claims a confinement it is not delivering. An honest
+"writes and network" beats a read rule nobody can verify.
+
+The permission engine is unaffected and still gates every call, so the
+`read_only` preset still refuses writes on both platforms. What macOS loses is
+the kernel backstop underneath the reads.
+
+Two smaller differences:
+
 - **`/tmp` is the host's**, not a private one, so scratch space is shared.
-- **No pid/ipc/uts isolation and mach lookups stay open.** This confines the
-  filesystem and the network, not the process.
+- **No pid/ipc/uts isolation and mach lookups stay open**, and a denied write
+  is `EPERM` where bubblewrap gives `EROFS`.
 
 Anywhere else mode `on` degrades to `off` with a one-time warning — nothing
 breaks; the permission rules still apply, only kernel enforcement and

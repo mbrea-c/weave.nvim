@@ -124,48 +124,44 @@ describe("seatbelt agent profile", function()
     assert.truthy(at(profile, '(subpath "/private/tmp")'))
   end)
 
-  -- A process cannot BOOT if it cannot stat its own cwd: getcwd walks the path
-  -- to the root, and node dies in bootstrap on EPERM from uv_cwd before any of
-  -- our code runs. bwrap never hits this because its project is an empty tmpfs
-  -- — the directory still EXISTS and stats fine, it just has nothing in it.
-  -- Denying existence is not something this backend can afford, so it denies
-  -- CONTENT: file-read-data (which covers directory listing) and every write,
-  -- leaving file-read-metadata alone.
-  it("denies content, never metadata, or the agent cannot find its own cwd", function()
-    local profile = agent()
-    assert.truthy(at(profile, '(deny file-read-data file-write* (subpath "/Users/u/proj"))'))
-    assert.truthy(at(profile, '(deny file-read-data file-write* (subpath "/Users/u"))'))
-    -- the blanket form is what broke it; it must not come back
-    assert.is_nil(at(profile, "(deny file-read* "))
+  -- The defining limitation, pinned so it cannot be undone by accident. Two
+  -- attempts at read confinement (`file-read*`, then `file-read-data` with
+  -- metadata left alone) BOTH killed the agent on a real kernel: getcwd walks
+  -- the cwd's path to the root, and denying reads anywhere along it means node
+  -- dies in bootstrap on uv_cwd. Read confinement here needs every ancestor of
+  -- the cwd enumerated and re-allowed, and getting that wrong fails QUIETLY —
+  -- so this backend does not attempt it, and says so.
+  it("never denies reads, because the agent cannot boot without its cwd", function()
+    local profile = agent({ grants = { { path = "/Users/u/.claude", mode = "rw" } } })
+    assert.is_nil(profile:match("%(deny file%-read"))
+    assert.is_nil(at(profile, '(deny file-read-data file-write* (subpath "/Users/u"))'))
   end)
 
-  it("keeps metadata readable in the tool hull too", function()
-    local profile = tool()
-    assert.truthy(at(profile, '(deny file-read-data file-write* (subpath "/Users/u"))'))
-    assert.is_nil(at(profile, "(deny file-read* "))
+  it("never denies reads in the tool hull either", function()
+    assert.is_nil(tool():match("%(deny file%-read"))
   end)
 
-  it("denies $HOME and the project, then punches the grants back through", function()
+  -- What it DOES deliver: nothing on the disk is writable except the grants,
+  -- devices and scratch.
+  it("denies every write, then grants back only what the hull asked for", function()
     local profile = agent({
       grants = {
         { path = "/Users/u/.claude", mode = "rw" },
         { path = "/Users/u/notes", mode = "ro" },
       },
     })
-    local home = at(profile, '(deny file-read-data file-write* (subpath "/Users/u"))')
-    local proj = at(profile, '(deny file-read-data file-write* (subpath "/Users/u/proj"))')
+    local deny = at(profile, "(deny file-write*)")
     local state = at(profile, '(allow file-read* file-write* (subpath "/Users/u/.claude"))')
-    local notes = at(profile, '(allow file-read* (subpath "/Users/u/notes"))')
-    assert.truthy(home and proj and state and notes)
-    -- last matching rule wins, so every grant has to come after both denies
-    assert.is_true(home < state)
-    assert.is_true(proj < state)
-    assert.is_true(proj < notes)
+    assert.truthy(deny and state)
+    assert.is_true(deny < state)
+    -- a `ro` grant is a no-op: reading was never taken away, so there is
+    -- nothing to give back, and emitting an allow would only be noise
+    assert.is_nil(at(profile, "/Users/u/notes"))
   end)
 
   it("preserves grant order, so a later grant out-votes an earlier one", function()
     local profile = agent({
-      grants = { { path = "/Users/u/a", mode = "ro" }, { path = "/Users/u/a/b", mode = "rw" } },
+      grants = { { path = "/Users/u/a", mode = "rw" }, { path = "/Users/u/a/b", mode = "rw" } },
     })
     assert.is_true(at(profile, '(subpath "/Users/u/a")') < at(profile, '(subpath "/Users/u/a/b")'))
   end)
@@ -177,20 +173,12 @@ describe("seatbelt tool profile", function()
     assert.is_nil(at(tool({ network = true }), "(deny network*)"))
   end)
 
-  it("grants exactly the hull's binds, rw and ro", function()
+  it("grants the hull's rw binds; ro binds have nothing to grant", function()
     local profile = tool({
       binds = { { path = "/proj/demo", mode = "rw" }, { path = "/data", mode = "ro" } },
     })
     assert.truthy(at(profile, '(allow file-read* file-write* (subpath "/proj/demo"))'))
-    assert.truthy(at(profile, '(allow file-read* (subpath "/data"))'))
-  end)
-
-  it("hides $HOME but not the project — same as the bwrap tool floor", function()
-    -- a tool reads the project through bwrap's read-only root bind whether
-    -- or not the hull binds it; the hull's rw bind is what grants WRITES
-    local profile = tool()
-    assert.truthy(at(profile, '(deny file-read-data file-write* (subpath "/Users/u"))'))
-    assert.is_nil(at(profile, "/proj"))
+    assert.is_nil(at(profile, "/data"))
   end)
 
   it("leaves a read-only bind unwritable under the global write deny", function()

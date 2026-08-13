@@ -2,38 +2,54 @@
 -- hulls as weave.sandbox.bwrap through an SBPL profile passed inline with
 -- `sandbox-exec -p`.
 --
--- Seatbelt is a syscall filter with path predicates, NOT a mount namespace,
--- and that single difference is where every deviation from the Linux backend
--- comes from:
+-- ── THIS BACKEND DOES NOT CONFINE READS ─────────────────────────────────────
 --
---   * Nothing can be HIDDEN, only denied. Where bwrap shows the agent an
---     empty read-only tmpfs over the project and $HOME, this backend returns
---     EPERM. Better for the read case — an empty directory reads as fact,
---     which is exactly the failure the first-prompt steering note exists to
---     pre-empt, while a denial is self-describing — but a different failure
---     SHAPE, so nothing may match on EROFS or on "the directory was empty".
---     It is worse for the write case: an agent that unconditionally creates
---     ~/.something on startup gets a hard error here where bwrap let it
---     write into the throwaway tmpfs. The state-dir grants cover the
---     providers weave ships defaults for; anything else goes in state_paths.
+-- Say it first because everything else here is downstream of it. On macOS,
+-- mode "on" means the agent cannot WRITE outside its grants and its tools have
+-- no network. It can READ the project, and $HOME, and the rest of the disk.
+-- That is a real and material gap against the bwrap backend, and weave says so
+-- in the permissions window rather than letting "sandbox: on" imply parity.
+--
+-- It is not a shortcut taken for convenience. Seatbelt is a syscall filter
+-- with path predicates and NO mount namespace, so a subtree cannot be replaced
+-- with an empty one — it can only be denied. And denying reads on the agent's
+-- own cwd, or on any ancestor of it, kills the process before it starts:
+-- `getcwd` walks that path to the root, and node dies in bootstrap with
+--
+--     shell-init: error retrieving current directory: getcwd: cannot access
+--     parent directories: Operation not permitted
+--     Error: EPERM: process.cwd failed ... uv_cwd
+--
+-- Two attempts went into narrowing that — first denying `file-read*`, then
+-- only `file-read-data` while leaving metadata alone — and both died the same
+-- way on a real kernel. bwrap never meets any of it, because its hidden
+-- project is an empty TMPFS: the directory still exists, still stats, still
+-- lists, and merely contains nothing. Read confinement here would mean
+-- enumerating and re-allowing every ancestor of the cwd, and getting that
+-- subtly wrong fails QUIETLY, in the direction where weave claims a
+-- confinement it is not delivering. An honest "writes and network" beats a
+-- read rule nobody can verify.
+--
+-- The rest of the differences from the Linux backend:
+--
 --   * /tmp is the host's, not a private one. Scratch space is shared with
 --     everything else on the machine.
---   * No pid/ipc/uts isolation, and mach lookups stay open. This confines
---     the filesystem and the network, not the process — weaker than bwrap,
---     and worth saying out loud rather than letting "sandbox: on" imply
---     parity.
+--   * No pid/ipc/uts isolation, and mach lookups stay open.
+--   * A denied WRITE is EPERM, where bwrap gives EROFS against the read-only
+--     project mount — so nothing may match on either spelling.
 --
 -- SBPL evaluates rules IN ORDER with the LAST match winning, which is the
 -- same later-mounts-on-top semantics the bwrap grant list already relies on,
 -- so both backends consume the hull's ordered grants unchanged.
---
--- Not verified against a real macOS kernel — the profile builders are pure
--- string functions and specced exhaustively as such, but whether the kernel
--- enforces what they say has to be checked on a Mac (see DEVELOPMENT.md).
 
 local M = {}
 
 M.name = "seatbelt"
+
+--- What this backend actually delivers, for the permissions window. bwrap says
+--- "files + network"; this one must not, and the difference belongs where the
+--- user decides whether to trust the mode — not only in a comment.
+M.confines = "writes + network; reads NOT confined"
 
 --- The binary. Formally deprecated by Apple for over a decade and still the
 --- only supported way to hand an inline profile to an arbitrary child (nix's
@@ -41,26 +57,8 @@ M.name = "seatbelt"
 --- the man page", not "will stop working next release".
 M.EXEC = "sandbox-exec"
 
-local READ = "file-read*"
 local WRITE = "file-write*"
 local RW = "file-read* file-write*"
-
---- What "hide this subtree" means here, and it is NOT `file-read*`.
----
---- A process cannot BOOT if it cannot stat its own working directory: getcwd
---- walks the path to the root, and node dies in bootstrap on EPERM from uv_cwd
---- before a line of agent code runs (`shell-init: error retrieving current
---- directory`, then `process.cwd failed`). bwrap never meets this, because its
---- hidden project is an empty TMPFS — the directory still exists and stats
---- fine, it simply contains nothing. Denying existence is a luxury only a
---- mount namespace has.
----
---- So this backend denies CONTENT and leaves metadata alone: `file-read-data`
---- covers both reading a file and listing a directory, which is the whole of
---- what "hidden" has to mean, while `file-read-metadata` keeps stat() working
---- so paths still resolve. The cost is that the agent can learn whether a path
---- it already knows about exists — it cannot enumerate, and it cannot read.
-local DENY_CONTENT = "file-read-data file-write*"
 
 --- @return boolean
 function M.available()
@@ -160,16 +158,18 @@ local function builder(fs)
   }
 end
 
---- The shared floor both profiles open with: read everything (bwrap's
---- `--ro-bind / /` is exactly that — the confinement is on WRITES and on the
---- two hidden subtrees, not on reads of the system), write nothing except
---- devices and scratch, then $HOME denied.
-local function floor(p, home, fs)
+--- The shared floor both profiles open with: read everything, write nothing
+--- except devices and scratch. `$HOME` is NOT denied — see the header; denying
+--- reads on an ancestor of the cwd stops the process from starting at all.
+--- @param p table profile builder
+--- @param _home string unused: kept in the signature so the day read
+---   confinement becomes possible, the subtree to hide is already to hand
+--- @param fs table|nil
+local function floor(p, _home, fs)
   p.raw("(allow default)")
   p.raw("(deny file-write*)")
   p.rule("allow", WRITE, { "/dev" })
   p.rule("allow", RW, M.scratch_paths(fs))
-  p.rule("deny", DENY_CONTENT, { home })
 end
 
 --- The agent hull as SBPL.
@@ -181,25 +181,27 @@ function M.profile_agent(hull, fs)
   p.raw("(version 1)")
   p.raw(";; weave agent hull — generated per spawn; last matching rule wins.")
   floor(p, hull.home, fs)
-  -- The project. bwrap mounts an empty read-only tmpfs here; the closest this
-  -- backend gets is denying its CONTENT, so the agent is told "no" instead of
-  -- being shown "nothing". Metadata stays readable — this is usually the
-  -- agent's cwd, and a process that cannot stat its own cwd never starts (see
-  -- DENY_CONTENT).
-  p.rule("deny", DENY_CONTENT, { hull.cwd })
-  -- ...then the ordered grants punched back through, exactly as the bwrap
-  -- mounts stack on each other.
+  -- No rule for the project: bwrap mounts an empty read-only tmpfs over it,
+  -- and this backend cannot. It is unWRITABLE (the floor's blanket write deny)
+  -- but readable, and that is the gap the header is about — the project is
+  -- normally the agent's cwd, and denying reads there is what stopped it
+  -- booting on a real kernel, twice.
+  --
+  -- The ordered grants still stack exactly as the bwrap mounts do; here they
+  -- only ever ADD write access, since reading was never taken away. A `ro`
+  -- grant is therefore a no-op rather than a mistake: it says "readable",
+  -- which is already true.
   for _, grant in ipairs(hull.grants or {}) do
-    p.rule("allow", grant.mode == "ro" and READ or RW, { grant.path })
+    if grant.mode ~= "ro" then
+      p.rule("allow", RW, { grant.path })
+    end
   end
   return p.build()
 end
 
---- A tool hull as SBPL. Note what is NOT here: the project is not denied
---- unless it happens to live under $HOME. That matches bwrap, where a tool
---- reads the project through the read-only root bind whether or not the hull
---- binds it — a hull's `rw` bind is what grants WRITES, and `ro` is what
---- re-exposes something the $HOME denial would otherwise have taken.
+--- A tool hull as SBPL. What a tool CANNOT do here is write outside its `rw`
+--- binds, and reach the network unless the hull grants it. What it can do,
+--- unlike under bwrap, is read anything — including $HOME. See the header.
 --- @param hull weave.sandbox.ToolHull
 --- @param fs table|nil
 --- @return string
@@ -216,8 +218,12 @@ function M.profile_tool(hull, fs)
     -- denies the network).
     p.raw("(deny network*)")
   end
+  -- `ro` binds are no-ops: reading was never taken away, so a bind that only
+  -- promises readability already holds. Only `rw` adds anything.
   for _, b in ipairs(hull.binds or {}) do
-    p.rule("allow", b.mode == "ro" and READ or RW, { b.path })
+    if b.mode ~= "ro" then
+      p.rule("allow", RW, { b.path })
+    end
   end
   return p.build()
 end

@@ -275,10 +275,11 @@ local function Window(ctx)
   rows[#rows + 1] = blank()
   rows[#rows + 1] = header("Sandbox")
   local mode = Permissions.current_mode()
-  -- Name the backend beside the mode: bwrap and seatbelt do NOT confine
-  -- identically (seatbelt has no mount namespace, no process isolation), so
-  -- "on" alone would paper over which set of guarantees is actually in force.
-  local backend = mode == "on" and require("weave.sandbox").backend_name() or nil
+  -- Name the backend AND what it confines: bwrap and seatbelt do not deliver
+  -- the same thing — seatbelt has no mount namespace and does not confine
+  -- reads at all — so "on" alone would let a macOS user believe the project
+  -- was unreadable when it is merely unwritable.
+  local backend = mode == "on" and require("weave.sandbox").backend_summary() or nil
   rows[#rows + 1] = {
     comp = ui.row,
     props = { gap = 2 },

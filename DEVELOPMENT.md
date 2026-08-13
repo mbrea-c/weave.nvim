@@ -83,36 +83,41 @@ weave builds the argv it meant to. Everything above it (including all of
 `tests/sandbox/seatbelt_spec.lua`) is string-level: it pins the profile, not
 the kernel.
 
-**The macOS backend has never been run against a real macOS kernel.** The SBPL
-it generates is specced exhaustively, and the mapping from hull to rules is
-argued in `lua/weave/sandbox/seatbelt.lua`, but nobody has confirmed that
-Seatbelt enforces it. On a Mac, the first thing to do is run the suite and read
-the `sandbox integration (seatbelt)` block: it asserts the three invariants
-that matter (the project's contents unreachable, a write that never lands,
-`$HOME` empty) plus that a network-denied hull cannot reach the internet. If
-those pass, the backend does what it claims. If they fail, `mode = "on"` is
-lying on that platform and the honest fix is to make `available()` return
-false until it is fixed — a sandbox that claims confinement it does not deliver
-is worse than an unsandboxed agent the user knows about.
+**The macOS backend confines writes and the network, not reads**, and that is
+now a deliberate, documented limit rather than an untested claim — see the
+header of `lua/weave/sandbox/seatbelt.lua` and the Sandbox section of the
+README. On a Mac, run the suite and read the `sandbox integration (seatbelt)`
+block: the invariants it asserts are the ones the backend still owes (a write
+that never lands, a network-denied hull that cannot reach the internet). If
+those fail, `mode = "on"` is lying on that platform and the honest fix is to
+make `available()` return false until it is fixed — a sandbox that claims
+confinement it does not deliver is worse than an unsandboxed agent the user
+knows about.
 
-Two failure modes to expect first: a profile so strict the child never starts
-(loud, harmless), and a path rule that silently never fires because macOS
-resolved the path somewhere else (quiet, dangerous — see `M.normalize` and the
-firmlink handling).
+Two failure modes to expect: a profile so strict the child never starts (loud,
+harmless), and a path rule that silently never fires because macOS resolved the
+path somewhere else (quiet, dangerous — see `M.normalize` and the firmlink
+handling).
 
-The first one has already happened once, and it is worth knowing the shape.
-Denying `file-read*` on the project killed the agent in node's bootstrap:
+The first has happened twice, both times trying to confine reads, and the shape
+is worth knowing before anyone tries a third time:
 
-    shell-init: error retrieving current directory: getcwd: ... not permitted
+    shell-init: error retrieving current directory: getcwd: cannot access
+    parent directories: Operation not permitted
     Error: EPERM: process.cwd failed with error operation not permitted, uv_cwd
 
-The project is the agent's **cwd**, `getcwd` walks that path to the root, and
-`file-read*` takes `file-read-metadata` with it, so the process could not stat
-the directory it was standing in. bwrap never meets this: its hidden project is
-an empty tmpfs, which still stats fine. The fix is `DENY_CONTENT` in
-`seatbelt.lua` — deny `file-read-data` (file contents AND directory listing)
-and every write, leave metadata alone. Anything else that needs "hide this
-subtree" must use the same shape.
+The project is the agent's **cwd**. `getcwd` walks that path to the root, so a
+read denial anywhere along it — the project, `$HOME`, any ancestor — kills the
+process in node's bootstrap, before a line of agent code runs. Denying
+`file-read*` did it; narrowing to `file-read-data` and leaving
+`file-read-metadata` alone did it too. bwrap never meets any of this because
+its hidden project is an empty tmpfs: it still exists, still stats, still
+lists, and merely contains nothing.
+
+So if you want read confinement here, the only route is to enumerate every
+ancestor of the cwd and re-allow listing on each `(literal ...)` while denying
+their subtrees — and to prove it with the probe below, because the failure mode
+of getting it slightly wrong is the quiet one.
 
 To iterate without going through weave, print the profile a spawn would use and
 run `sandbox-exec` by hand:
@@ -125,13 +130,14 @@ run `sandbox-exec` by hand:
 ```sh
 # does anything start at all?
 sandbox-exec -f /tmp/weave.sbpl /bin/sh -c 'pwd && echo booted'
-# ...and is it still confined? both of these must fail
+# ...and is it still confined? this must fail
+sandbox-exec -f /tmp/weave.sbpl /bin/sh -c 'touch should-not-exist'
+# reads are NOT confined today: this succeeds, and that is the known gap
 sandbox-exec -f /tmp/weave.sbpl /bin/sh -c 'ls'
-sandbox-exec -f /tmp/weave.sbpl /bin/sh -c 'cat some-project-file'
 ```
 
-Both halves matter. A profile that boots but lists the project is worse than
-one that refuses to boot, because only the second kind announces itself.
+Both halves matter. A profile that boots but writes is worse than one that
+refuses to boot, because only the second kind announces itself.
 
 ### Benchmarks
 

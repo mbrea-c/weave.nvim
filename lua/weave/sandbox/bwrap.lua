@@ -15,6 +15,10 @@ local M = {}
 
 M.name = "bwrap"
 
+--- What this backend delivers, for the permissions window (see the seatbelt
+--- backend, which delivers strictly less and has to say so).
+M.confines = "files + network"
+
 --- @return boolean
 function M.available()
   return vim.fn.has("linux") == 1 and vim.fn.executable("bwrap") == 1
