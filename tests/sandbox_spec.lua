@@ -1,10 +1,14 @@
--- weave.sandbox: the bwrap spawn wrapper (design-agent-sandbox.md phase 2).
+-- weave.sandbox: the spawn wrapper (design-agent-sandbox-v2.md).
 -- Sandbox.wrap is a pure argv rewrite — given the provider command and a
--- resolved sandbox config it returns the bwrap invocation (or the command
--- untouched for profile "off" / no backend). These specs pin the argv per
--- profile; the final describe actually spawns bwrap when a backend exists.
+-- resolved sandbox config it builds the agent hull and hands it to a
+-- backend (or returns the command untouched for mode "off" / no backend).
+-- These specs pin the hull as the BWRAP backend renders it, so they force
+-- that backend rather than depending on what the machine has installed;
+-- weave/sandbox/seatbelt_spec.lua pins the macOS rendering of the same
+-- hulls. The final describe spawns whatever backend is really available.
 
 local Sandbox = require("weave.sandbox")
+local Bwrap = require("weave.sandbox.bwrap")
 
 -- Deterministic wrap opts: fixed home/cwd, no nvim socket, no runtime
 -- ro-binds (progpath/clankbox are environment-dependent).
@@ -41,13 +45,13 @@ local function find_seq(list, seq)
 end
 
 describe("sandbox wrap", function()
-  local real_available = Sandbox._available
+  local real_backend = Sandbox._backend
   local real_exists = Sandbox._exists
   local real_realpath = Sandbox._realpath
 
   before_each(function()
-    Sandbox._available = function()
-      return true
+    Sandbox._backend = function()
+      return Bwrap
     end
     -- the argv specs work on made-up paths; existence and symlink
     -- resolution are their own specs below
@@ -60,7 +64,7 @@ describe("sandbox wrap", function()
   end)
 
   after_each(function()
-    Sandbox._available = real_available
+    Sandbox._backend = real_backend
     Sandbox._exists = real_exists
     Sandbox._realpath = real_realpath
     Sandbox._reset()
@@ -176,8 +180,8 @@ describe("sandbox wrap", function()
   end)
 
   it("degrades to off with a single notify when no backend is available", function()
-    Sandbox._available = function()
-      return false
+    Sandbox._backend = function()
+      return nil
     end
     local notified = {}
     local orig = vim.notify
@@ -196,6 +200,43 @@ describe("sandbox wrap", function()
     assert.equal(1, #notified)
     assert.truthy(notified[1].msg:find("sandbox"))
     assert.equal(vim.log.levels.WARN, notified[1].level)
+  end)
+end)
+
+describe("sandbox backend selection", function()
+  local Seatbelt = require("weave.sandbox.seatbelt")
+  local real_bwrap, real_seatbelt = Bwrap.available, Seatbelt.available
+
+  after_each(function()
+    Bwrap.available, Seatbelt.available = real_bwrap, real_seatbelt
+    Sandbox._reset()
+  end)
+
+  local function availability(bwrap, seatbelt)
+    Bwrap.available = function()
+      return bwrap
+    end
+    Seatbelt.available = function()
+      return seatbelt
+    end
+  end
+
+  it("prefers bwrap, falls back to seatbelt, then to nothing", function()
+    availability(true, true)
+    assert.equal("bwrap", Sandbox.backend_name())
+    availability(false, true)
+    assert.equal("seatbelt", Sandbox.backend_name())
+    availability(false, false)
+    assert.is_nil(Sandbox.backend_name())
+    assert.is_false(Sandbox._available())
+  end)
+
+  it("routes both wraps through whichever backend was selected", function()
+    availability(false, true)
+    local cmd = Sandbox.wrap("gemini", { "--acp" }, opts())
+    assert.equal("sandbox-exec", cmd)
+    local tool = Sandbox.wrap_tool("sh", { "-c", "x" }, { binds = {}, network = false, home = "/home/u" })
+    assert.equal("sandbox-exec", tool)
   end)
 end)
 
@@ -250,7 +291,7 @@ end)
 describe("tool sandbox wrap", function()
   local Config = require("weave.config")
   local Permissions = require("weave.permissions")
-  local real_available = Sandbox._available
+  local real_backend = Sandbox._backend
   local real_exists = Sandbox._exists
   local real_realpath = Sandbox._realpath
   local saved_sandbox
@@ -259,8 +300,8 @@ describe("tool sandbox wrap", function()
     saved_sandbox = vim.deepcopy(Config.sandbox)
     Permissions._reset()
     Permissions.set_project_root("/proj/demo")
-    Sandbox._available = function()
-      return true
+    Sandbox._backend = function()
+      return Bwrap
     end
     Sandbox._exists = function()
       return true
@@ -273,14 +314,14 @@ describe("tool sandbox wrap", function()
   after_each(function()
     Config.sandbox = saved_sandbox
     Permissions._reset()
-    Sandbox._available = real_available
+    Sandbox._backend = real_backend
     Sandbox._exists = real_exists
     Sandbox._realpath = real_realpath
   end)
 
   it("no backend: the command is untouched", function()
-    Sandbox._available = function()
-      return false
+    Sandbox._backend = function()
+      return nil
     end
     local cmd, args = Sandbox.wrap_tool("rg", { "-n", "x" }, { binds = {}, network = false })
     assert.equal("rg", cmd)
@@ -338,10 +379,16 @@ describe("tool sandbox wrap", function()
   end)
 end)
 
--- Only when a backend actually exists (Linux + bwrap on PATH): spawn the
--- wrapped argv and verify the mode-on semantics for real.
-if Sandbox._available() then
-  describe("sandbox integration", function()
+-- Only when a backend actually exists (Linux + bwrap, or macOS +
+-- sandbox-exec): spawn the wrapped argv and verify the mode-on semantics
+-- for real. Split into the invariants BOTH backends owe — the project's
+-- contents unreachable, a write that never lands, $HOME empty — and the
+-- bwrap-only shapes, because seatbelt has no mount namespace and DENIES
+-- where bwrap shows an empty read-only tmpfs (EPERM, not EROFS; a failing
+-- `ls`, not a clean empty listing).
+local live_backend = Sandbox._backend()
+if live_backend then
+  describe("sandbox integration (" .. live_backend.name .. ")", function()
     local cwd
 
     before_each(function()
@@ -365,61 +412,93 @@ if Sandbox._available() then
       return out
     end
 
-    it("mode on: the project is not there at all", function()
-      local out = run("ls " .. cwd)
-      assert.equal(0, out.code, out.stderr)
-      assert.is_nil(out.stdout:find("f%.txt"))
+    it("mode on: the project's contents are unreachable", function()
+      -- The invariant, whatever the mechanism: the listing does not name the
+      -- file and reading it does not produce its contents.
+      local ls = run("ls " .. cwd)
+      assert.is_nil(ls.stdout:find("f%.txt"))
+      local cat = run("cat " .. cwd .. "/f.txt")
+      assert.is_true(cat.code ~= 0)
+      assert.is_nil(cat.stdout:find("hello"))
     end)
 
-    it("mode on: a builtin-style write dies on EROFS, never a silent void", function()
+    it("mode on: a builtin-style write never lands", function()
       local out = run("touch " .. cwd .. "/w.txt")
       assert.is_true(out.code ~= 0)
-      assert.truthy(out.stderr:lower():find("read%-only"))
       assert.equal(0, vim.fn.filereadable(cwd .. "/w.txt"))
     end)
 
     it("mode on: home is hidden", function()
       local out = run("ls ~")
-      assert.equal(0, out.code, out.stderr)
       assert.is_nil(out.stdout:find("%S"))
     end)
+
+    if live_backend.name == "bwrap" then
+      it("bwrap: the project reads as cleanly EMPTY, and writes as EROFS", function()
+        -- The shape the first-prompt steering note exists for: a listing
+        -- that SUCCEEDS and comes back empty, so an unsteered model reports
+        -- "empty project" as fact. Seatbelt cannot reproduce it (it denies
+        -- rather than hides), which is why nothing outside this spec may
+        -- depend on either shape.
+        local ls = run("ls " .. cwd)
+        assert.equal(0, ls.code, ls.stderr)
+        local out = run("touch " .. cwd .. "/w.txt")
+        assert.truthy(out.stderr:lower():find("read%-only"))
+      end)
+    end
 
     local function run_tool(hull, script)
       local cmd, args = Sandbox.wrap_tool("sh", { "-c", script }, hull)
       return vim.system(vim.list_extend({ cmd }, args), { text = true }):wait()
     end
 
-    it("tool hull: bound dir writable, everything else the ro floor", function()
+    it("tool hull: bound dir writable, home not", function()
       local out = run_tool(
         { binds = { { path = cwd, mode = "rw" } }, network = false },
-        "cat " .. cwd .. "/f.txt && touch " .. cwd .. "/t.txt && ls ~"
+        "cat " .. cwd .. "/f.txt && touch " .. cwd .. "/t.txt; ls ~"
       )
-      assert.equal(0, out.code, out.stderr)
       assert.truthy(out.stdout:find("hello"))
       assert.equal(1, vim.fn.filereadable(cwd .. "/t.txt"))
-      -- home is an empty tmpfs
+      -- nothing of $HOME shows up after the file's contents
       assert.is_nil(out.stdout:find("%S", out.stdout:find("hello") + 6))
     end)
 
-    it("tool hull: network off means a lonely loopback", function()
-      -- /proc is freshly mounted (--proc), so /proc/net/dev reflects the
-      -- process's OWN netns — unlike /sys, which rides the host ro bind
-      local out = run_tool({ binds = {}, network = false }, "cat /proc/net/dev")
-      assert.equal(0, out.code, out.stderr)
-      assert.truthy(out.stdout:find("lo:"))
-      local host = vim.system({ "cat", "/proc/net/dev" }, { text = true }):wait()
-      local function ifaces(s)
-        local n = 0
-        for _ in s:gmatch("%f[%w][%w%d]+:") do
-          n = n + 1
-        end
-        return n
-      end
-      -- the host has more interfaces than the sandbox's lonely lo (if it
-      -- does not, this machine cannot distinguish the two — skip honestly)
-      if ifaces(host.stdout) > 1 then
-        assert.equal(1, ifaces(out.stdout))
-      end
+    it("tool hull: a read-only bind refuses writes", function()
+      local out = run_tool({ binds = { { path = cwd, mode = "ro" } }, network = false }, "touch " .. cwd .. "/ro.txt")
+      assert.is_true(out.code ~= 0)
+      assert.equal(0, vim.fn.filereadable(cwd .. "/ro.txt"))
     end)
+
+    if live_backend.name ~= "bwrap" then
+      -- /proc is Linux-only; on seatbelt, prove the network denial the way
+      -- the platform allows — an outbound connect that cannot resolve.
+      it("tool hull: network off blocks an outbound connection", function()
+        local out = run_tool({ binds = {}, network = false }, "curl -sS -m 5 https://example.com")
+        assert.is_true(out.code ~= 0)
+      end)
+    end
+
+    if live_backend.name == "bwrap" then
+      it("tool hull: network off means a lonely loopback", function()
+        -- /proc is freshly mounted (--proc), so /proc/net/dev reflects the
+        -- process's OWN netns — unlike /sys, which rides the host ro bind
+        local out = run_tool({ binds = {}, network = false }, "cat /proc/net/dev")
+        assert.equal(0, out.code, out.stderr)
+        assert.truthy(out.stdout:find("lo:"))
+        local host = vim.system({ "cat", "/proc/net/dev" }, { text = true }):wait()
+        local function ifaces(s)
+          local n = 0
+          for _ in s:gmatch("%f[%w][%w%d]+:") do
+            n = n + 1
+          end
+          return n
+        end
+        -- the host has more interfaces than the sandbox's lonely lo (if it
+        -- does not, this machine cannot distinguish the two — skip honestly)
+        if ifaces(host.stdout) > 1 then
+          assert.equal(1, ifaces(out.stdout))
+        end
+      end)
+    end
   end)
 end

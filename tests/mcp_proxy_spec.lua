@@ -174,9 +174,10 @@ describe("mcp proxy", function()
 
   it("a per-server sandbox section bwraps the real process", function()
     local Sandbox = require("weave.sandbox")
-    local real_available, real_exists, real_realpath = Sandbox._available, Sandbox._exists, Sandbox._realpath
-    Sandbox._available = function()
-      return true
+    local real_backend, real_exists, real_realpath = Sandbox._backend, Sandbox._exists, Sandbox._realpath
+    -- pin the backend: this spec asserts the BWRAP rendering of the hull
+    Sandbox._backend = function()
+      return require("weave.sandbox.bwrap")
     end
     Sandbox._exists = function()
       return true
@@ -205,7 +206,7 @@ describe("mcp proxy", function()
     end, 10)
 
     McpProxy._spawn = real_spawn
-    Sandbox._available = real_available
+    Sandbox._backend = real_backend
     Sandbox._exists = real_exists
     Sandbox._realpath = real_realpath
 

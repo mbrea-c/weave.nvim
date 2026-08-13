@@ -416,14 +416,17 @@ end
 
 -- What the agent is told, once, when it wakes up inside the mode-on sandbox.
 -- Without it the confinement is silently misleading rather than merely
--- restrictive: builtin WRITES fail loudly (EROFS on the read-only project
--- tmpfs), but builtin READS succeed against the empty decoy, so an unsteered
--- agent concludes the project is empty and says so with confidence. Observed
--- against a live opencode session, not hypothesised.
+-- restrictive: under bwrap, builtin WRITES fail loudly (EROFS on the
+-- read-only project tmpfs) but builtin READS succeed against the empty decoy,
+-- so an unsteered agent concludes the project is empty and says so with
+-- confidence. Observed against a live opencode session, not hypothesised.
+-- Worded to cover the seatbelt backend too, where the same reads are DENIED
+-- rather than answered with nothing — a note that promised one shape would be
+-- wrong on the other platform.
 local STEERING_NOTE = table.concat({
-  "[weave] Your process is sandboxed: the working directory you can see is an empty",
-  "read-only stand-in, NOT the real project, and your builtin file/search/shell tools",
-  "cannot reach it (reads will look empty rather than fail). The real project is",
+  "[weave] Your process is sandboxed: the working directory you can see is NOT the real",
+  "project, and your builtin file/search/shell tools cannot reach it — depending on the",
+  "platform they will either come back EMPTY or be denied outright. The real project is",
   "reachable only through the weave MCP tools (read, write, edit, glob, grep,",
   "task_start, ...). Use those for everything. If you need access beyond the project",
   "(another directory, or network for a command), ask with request_access.",

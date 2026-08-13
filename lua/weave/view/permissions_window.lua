@@ -268,18 +268,22 @@ local function Window(ctx)
   end
 
   -- The running agent's confinement, shown as session STATE rather than as a
-  -- toggle: the bwrap argv was built at spawn, so anything that reads as "I
+  -- toggle: the sandbox argv was built at spawn, so anything that reads as "I
   -- turned the sandbox on" while a process spawned under `off` still holds
   -- an open session is a confinement claim that is not true. The button is
   -- the one remaining restart in the design (mode_transition).
   rows[#rows + 1] = blank()
   rows[#rows + 1] = header("Sandbox")
   local mode = Permissions.current_mode()
+  -- Name the backend beside the mode: bwrap and seatbelt do NOT confine
+  -- identically (seatbelt has no mount namespace, no process isolation), so
+  -- "on" alone would paper over which set of guarantees is actually in force.
+  local backend = mode == "on" and require("weave.sandbox").backend_name() or nil
   rows[#rows + 1] = {
     comp = ui.row,
     props = { gap = 2 },
     children = {
-      { comp = ui.label, props = { text = "  " .. mode } },
+      { comp = ui.label, props = { text = "  " .. mode .. (backend and (" (" .. backend .. ")") or "") } },
       bare_button(mode == "on" and "[restart unsandboxed…]" or "[restart sandboxed…]", function()
         require("weave.mode_transition").request_mode(mode == "on" and "off" or "on")
       end),

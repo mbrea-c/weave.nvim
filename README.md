@@ -30,8 +30,10 @@ prompt — is a pure `state → render` projection of it.
   `glob`/`grep` MCP tools shell out to it. Without it `grep` errors and `glob`
   falls back to a slower walk.
 - **[bubblewrap](https://github.com/containers/bubblewrap)** (optional, Linux)
-  — the [Sandbox](#sandbox) backend. Without it a configured `mode = "on"`
-  degrades to `off` with a warning.
+  — the preferred [Sandbox](#sandbox) backend. On macOS weave falls back to
+  Seatbelt (`sandbox-exec`, part of the OS), which confines less — see
+  [Backends](#backends). With neither, a configured `mode = "on"` degrades to
+  `off` with a warning.
 
 ---
 
@@ -55,7 +57,8 @@ fibrous.url = "github:mbrea-c/fibrous.nvim";
 
 The two optional runtime binaries are exposed as
 `packages.weave.passthru.runtimeDeps` (`ripgrep`, `bubblewrap` — the latter on
-Linux only, so the list is just `ripgrep` on darwin). A vim plugin
+Linux only, so the list is just `ripgrep` on darwin, where the sandbox backend
+is the OS's own `sandbox-exec`). A vim plugin
 has no wrapper of its own to put programs on `PATH`, so splice them into
 whatever does — home-manager's `programs.neovim.extraPackages`, nixvim's
 `extraPackages`, or `environment.systemPackages`:
@@ -391,7 +394,7 @@ send never loses hand-written comments.
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
 | `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit, glob/grep, task lifecycle, web_fetch) via clankbox; `clankbox_path`, `ripgrep_path` and `curl_path` override binary/checkout auto-detection |
 | `permissions` | `table` | `{ presets = {} }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
-| `sandbox` | `table` | `{ mode = "on" }` | Agent process confinement via bubblewrap (see [Sandbox](#sandbox)) |
+| `sandbox` | `table` | `{ mode = "on" }` | Agent process confinement (bubblewrap on Linux, Seatbelt on macOS — see [Sandbox](#sandbox)) |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
 | `view` | `table` | see below | Default panel geometry |
 | `keys` | `table` | see [Keybinds](#keybinds) | Key(s) per named action |
@@ -721,7 +724,7 @@ have to grant the whole session network access to read a doc page. Session **ele
 you approve it — are deliberately global: they widen every tool's hull,
 overridden ones included, since granting access answers "may we reach this
 at all". The `sandbox` section is orthogonal to the sandbox MODE in a second
-sense too: with the mode off, nothing is bwrap'd at all and the section is
+sense too: with the mode off, nothing is wrapped at all and the section is
 inert; the rules still gate every call.
 
 ### Attachments
@@ -753,19 +756,19 @@ Staged copies are deleted when the editor exits.
 `sandbox` (design doc: `design-agent-sandbox-v2.md` in the superproject) has
 two modes, and **on is the default**. **Off** is the old unsandboxed
 behavior. **On** runs the agent process inside the one invariant maximal
-[bubblewrap](https://github.com/containers/bubblewrap) sandbox — there is
-nothing to configure on it, because the agent process is not a policy
-surface; all capability lives at the tool layer:
+sandbox — there is nothing to configure on it, because the agent process is
+not a policy surface; all capability lives at the tool layer:
 
 - The **agent process** sees: its own state/auth dirs, the network (the
   model API is non-negotiable), the scoped clankbox broker socket — and
-  nothing else. The project directory is an **empty read-only tmpfs**, so
-  its builtin write tools fail loudly (EROFS) instead of writing into a
-  void, and the weave `w:*` tools are the only paths that persist.
-  `$NVIM` (nvim's raw RPC socket — `nvim_exec_lua`, a full escape) never
-  enters the sandbox; the broker socket speaks scoped MCP and nothing else.
-- **Tool invocations** (tasks, searches) each run in their own bwrap
-  sandbox derived from the active preset's `sandbox` section on EVERY
+  nothing else. The project directory is unreachable — under bubblewrap an
+  **empty read-only tmpfs**, so its builtin write tools fail loudly (EROFS)
+  instead of writing into a void — and the weave `w:*` tools are the only
+  paths that persist. `$NVIM` (nvim's raw RPC socket — `nvim_exec_lua`, a
+  full escape) never enters the sandbox; the broker socket speaks scoped MCP
+  and nothing else.
+- **Tool invocations** (tasks, searches) each run in their own sandbox
+  derived from the active preset's `sandbox` section on EVERY
   spawn: only the listed binds, **network off by default**. A preset switch
   or a granted elevation applies to the very next task — no restarts.
 - **Agentside permission requests are denied** by the sandboxed presets
@@ -777,16 +780,16 @@ surface; all capability lives at the tool layer:
 - **The agent is told once, up front.** The first prompt of a mode-on
   conversation carries a short steering note explaining that the visible
   working directory is an empty stand-in and the weave tools are the way
-  out. This is not politeness: builtin *writes* fail loudly (EROFS), but
-  builtin *reads* succeed against the emptiness, so an unsteered agent will
-  report the project as empty and mean it.
+  out. This is not politeness: under bubblewrap builtin *writes* fail loudly
+  (EROFS), but builtin *reads* succeed against the emptiness, so an unsteered
+  agent will report the project as empty and mean it.
 
 Mode **off** disables the sandbox entirely — the agent process and every
 tool invocation run unwrapped. The permission engine still gates every
-call; what mode off removes is kernel enforcement, not policy. bwrap is
-Linux-only: where it is missing, mode on degrades to off with a one-time
-warning, and the active preset degrades with it (to its `unsandboxed_*`
-counterpart) so the policy never vouches for confinement that isn't there.
+call; what mode off removes is kernel enforcement, not policy. Where no
+backend is available, mode on degrades to off with a one-time warning, and
+the active preset degrades with it (to its `unsandboxed_*` counterpart) so
+the policy never vouches for confinement that isn't there.
 
 ```lua
 require("weave").setup({
@@ -810,17 +813,43 @@ missing paths). The per-provider `sandbox` table overrides scalars (`mode`,
 ones. `kiro-acp` ships `mode = "off"`: Kiro self-sandboxes via aim-sandbox,
 and nesting user namespaces inside it is expected to fail.
 
-Backend support: Linux with `bwrap` on `PATH`. Anywhere else mode `on`
-degrades to `off` with a one-time warning — nothing breaks; the permission
-rules still apply, only kernel enforcement and tool-forcing are lost. The
-degradation is applied when the mode is *resolved*, so everything
-downstream (the permissions window, the sidebar, which presets are offered)
-reports `off` too, rather than vouching for a confinement that is not
-there.
+#### Backends
+
+Weave builds the hull — what the process may see and reach — and hands it to
+whichever backend the machine has, first match winning:
+
+| | Linux | macOS | elsewhere |
+|---|---|---|---|
+| backend | `bwrap` on `PATH` | `sandbox-exec` (ships with the OS) | none |
+| mechanism | mount namespace | Seatbelt syscall filter (SBPL) | — |
+| mode `on` | enforced | enforced, weaker (below) | degrades to `off` |
+
+The hull is the same on both, but Seatbelt is a syscall filter with path
+predicates, not a mount namespace, and that forces three differences worth
+knowing before you rely on macOS confinement:
+
+- **Nothing is hidden, only denied.** Where bubblewrap shows the agent an
+  empty read-only tmpfs over the project and `$HOME`, Seatbelt returns
+  `EPERM`. Better for reads — a denial is self-describing where an empty
+  directory reads as fact — but worse for writes: an agent that
+  unconditionally creates `~/.something` at startup gets a hard error where
+  Linux let it write into the throwaway tmpfs. The shipped per-provider state
+  grants cover that for the providers weave knows; anything else goes in
+  `state_paths`.
+- **`/tmp` is the host's**, not a private one, so scratch space is shared.
+- **No pid/ipc/uts isolation and mach lookups stay open.** This confines the
+  filesystem and the network, not the process.
+
+Anywhere else mode `on` degrades to `off` with a one-time warning — nothing
+breaks; the permission rules still apply, only kernel enforcement and
+tool-forcing are lost. The degradation is applied when the mode is
+*resolved*, so everything downstream (the permissions window, the sidebar,
+which presets are offered) reports `off` too, rather than vouching for a
+confinement that is not there.
 
 #### Choosing the mode
 
-The bwrap argv is built once, at spawn, so the mode cannot change on a
+The sandbox argv is built once, at spawn, so the mode cannot change on a
 running agent — the on/off toggle is the ONE remaining restart in the
 design. Two places to choose:
 
@@ -980,8 +1009,10 @@ See [Inline code feedback](#inline-code-feedback) above for the full picture.
                              resolution through the engine)
       permissions.lua      the client-side permission engine: rules, presets
                              (builtin/setup/runtime), the active preset
-      sandbox.lua          bwrap argv rewrites: the invariant agent sandbox
-                             (mode on/off) and per-invocation tool hulls
+      sandbox.lua          hull POLICY: the invariant agent sandbox (mode
+                             on/off) and per-invocation tool hulls
+      sandbox/             hull MECHANISM: bwrap.lua (Linux), seatbelt.lua
+                             (macOS SBPL); first available one wins
       session.lua          one conversation: client, turns, queue/steer/cancel
       registry.lua         active sessions (editor-global) + per-tab selection
       task_store.lua       managed shell tasks (the task_* tool lifecycle)

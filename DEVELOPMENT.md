@@ -74,6 +74,32 @@ make test-file FILE=tests/acp/load_spec.lua
 
 A non-zero exit code means at least one test failed.
 
+### Verifying the sandbox
+
+`tests/sandbox_spec.lua` ends with an integration block that only runs when a
+backend is actually present, and it spawns the wrapped argv for real — that is
+the only part of the suite that proves the sandbox CONFINES rather than that
+weave builds the argv it meant to. Everything above it (including all of
+`tests/sandbox/seatbelt_spec.lua`) is string-level: it pins the profile, not
+the kernel.
+
+**The macOS backend has never been run against a real macOS kernel.** The SBPL
+it generates is specced exhaustively, and the mapping from hull to rules is
+argued in `lua/weave/sandbox/seatbelt.lua`, but nobody has confirmed that
+Seatbelt enforces it. On a Mac, the first thing to do is run the suite and read
+the `sandbox integration (seatbelt)` block: it asserts the three invariants
+that matter (the project's contents unreachable, a write that never lands,
+`$HOME` empty) plus that a network-denied hull cannot reach the internet. If
+those pass, the backend does what it claims. If they fail, `mode = "on"` is
+lying on that platform and the honest fix is to make `available()` return
+false until it is fixed — a sandbox that claims confinement it does not deliver
+is worse than an unsandboxed agent the user knows about.
+
+Two failure modes to expect first: a profile so strict the child never starts
+(loud, harmless), and a path rule that silently never fires because macOS
+resolved the path somewhere else (quiet, dangerous — see `M.normalize` and the
+firmlink handling).
+
 ### Benchmarks
 
 Weave reuses fibrous' bench harnesses, so the numbers sit on the same ruler as
