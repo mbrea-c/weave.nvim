@@ -88,7 +88,7 @@ local function arm(session, state)
   disarm(state)
   local conf = cfg()
   local delay = M._delay(state, M._now(), {
-    debounce_ms = conf.debounce_ms or 15000,
+    debounce_ms = conf.debounce_ms or 7000,
     max_wait_ms = conf.max_wait_ms or 60000,
   })
   state.timer = vim.defer_fn(function()

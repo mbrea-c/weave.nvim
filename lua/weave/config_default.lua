@@ -274,7 +274,7 @@ local ConfigDefault = {
   -- are the whole agent-facing contract and are meant to be rewritten: they
   -- are what makes the agent behave like a tutor rather than an assistant.
   tutor = {
-    debounce_ms = 15000,
+    debounce_ms = 7000,
     max_wait_ms = 60000,
     on_flush = "interrupt",
     max_diff_bytes = 100 * 1024,

@@ -415,7 +415,7 @@ retyped five times arrives as whatever it finally says, and a change you made
 and then undid does not arrive at all. File creations and deletions are in
 there too.
 
-By default a batch goes out after **15 seconds of quiet**, or after **60
+By default a batch goes out after **7 seconds of quiet**, or after **60
 seconds** regardless if you never stop typing, and it **interrupts** the turn in
 flight (the same thing `<C-x>` does). For the impatient, send now:
 
@@ -506,7 +506,7 @@ want different words. The rest is timing.
 
 | `tutor` field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `debounce_ms` | `integer` | `15000` | Quiet time after an edit before the batch goes out |
+| `debounce_ms` | `integer` | `7000` | Quiet time after an edit before the batch goes out |
 | `max_wait_ms` | `integer` | `60000` | Ceiling from the first unsent edit, so continuous typing still gets sent |
 | `on_flush` | `string` | `"interrupt"` | `"interrupt"` cancels the turn in flight (like `<C-x>`); `"queue"` waits behind it. `flush_now()` always interrupts |
 | `max_diff_bytes` | `integer` | `102400` | Cap on one batch's diff; truncation is announced, never silent |
