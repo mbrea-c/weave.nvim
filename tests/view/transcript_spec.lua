@@ -122,6 +122,22 @@ describe("view.transcript entries", function()
     handle.unmount()
   end)
 
+  -- Tutor-mode sends are weave talking on the user's behalf. They render as a
+  -- one-line marker, never as prose the user appears to have written, and the
+  -- payload (a diff, usually) stays behind the peek key rather than flooding
+  -- the timeline every debounce window.
+  it("renders a tutor entry as a single labelled line, not its payload", function()
+    local store = SessionStore:new()
+    store:append_entry({
+      kind = "tutor",
+      text = "sent 2 files you changed",
+      payload = "--- a/x.lua\n+++ b/x.lua\n@@ -1 +1 @@\n-one\n+two\n",
+    })
+    local handle = mount_transcript(store)
+    assert.same({ "⇅ sent 2 files you changed" }, trimmed(handle.bufnr))
+    handle.unmount()
+  end)
+
   it("streams live: chunks appended after mount show up coalesced", function()
     local store = SessionStore:new()
     local handle = mount_transcript(store)

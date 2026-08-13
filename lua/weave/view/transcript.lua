@@ -86,6 +86,36 @@ function M.UserEntry(_, props)
   return { comp = ui.col, props = { on_key = peek_keys(props.entry) }, children = children }
 end
 
+--- Tutor-mode sends: weave talking to the agent on the user's behalf. One
+--- labelled line, quiet, with the payload behind the peek key — the payload is
+--- a diff of everything the user just did, and pasting that into the timeline
+--- every debounce window would bury the conversation it exists to support.
+--- @param props { entry: weave.store.ChatEntry }
+function M.TutorEntry(_, props)
+  local entry = props.entry
+  return {
+    comp = ui.col,
+    props = {
+      on_key = Keys.on_key("peek", function()
+        Peek.open(entry.payload or entry.text or "", "tutor", "diff")
+      end),
+    },
+    children = {
+      {
+        comp = ui.row,
+        props = {},
+        children = {
+          { comp = ui.label, props = { text = "⇅ ", style = { text_hl = Theme.TUTOR_MSG_HL } } },
+          {
+            comp = ui.paragraph,
+            props = { text = one_line(entry.text), style = { text_hl = Theme.TUTOR_MSG_HL } },
+          },
+        },
+      },
+    },
+  }
+end
+
 --- @param props { entry: weave.store.ChatEntry }
 function M.ThoughtEntry(_, props)
   return {
@@ -258,6 +288,8 @@ function M.Transcript(ctx, props)
       end
     elseif entry.kind == "user" then
       children[#children + 1] = { comp = M.UserEntry, key = entry, memo = true, props = { entry = entry } }
+    elseif entry.kind == "tutor" then
+      children[#children + 1] = { comp = M.TutorEntry, key = entry, memo = true, props = { entry = entry } }
     elseif entry.kind == "thought" then
       if prefs.show_thoughts then
         children[#children + 1] = { comp = M.ThoughtEntry, key = entry, memo = true, props = { entry = entry } }

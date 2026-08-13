@@ -746,3 +746,144 @@ describe("session attachments", function()
     assert.equal("b.png", store.state.attachments[1].name)
   end)
 end)
+
+-- Steering is cancel-then-resend, so whatever is waiting to be resent has to
+-- survive a SECOND interruption arriving before the turn has finished dying.
+-- It used to be one slot, which silently dropped one of them — and tutor mode
+-- steers on a timer, so the collision stops being hypothetical.
+describe("session steer queue", function()
+  it("delivers two steers that land during one dying turn, in order", function()
+    local session, client = started()
+    session:submit("go")
+    pump()
+    session:steer("wait")
+    session:steer("actually this")
+    pump()
+
+    -- one cancel, not two: the turn is already dying
+    assert.equal(1, client.calls.cancel_turns)
+    client:end_turn()
+    pump()
+
+    local blocks = client.calls.blocks[2]
+    assert.equal(2, #blocks)
+    assert.equal("wait", blocks[1].text)
+    assert.equal("actually this", blocks[2].text)
+  end)
+
+  it("still drains the ordinary queue after the steers", function()
+    local session, client, store = started()
+    session:submit("go")
+    pump()
+    session:submit("queued")
+    session:steer("first")
+    pump()
+    client:end_turn()
+    pump()
+
+    assert.equal("first", client.calls.blocks[2][1].text)
+    client:end_turn()
+    pump()
+    assert.equal("queued", client.calls.prompts[3])
+    assert.equal(0, #store.state.queued)
+  end)
+
+  it("cancel drops queued steers", function()
+    local session, client = started()
+    session:submit("go")
+    pump()
+    session:steer("never mind")
+    session:cancel()
+    pump()
+    client:end_turn()
+    pump()
+    assert.equal(1, #client.calls.prompts)
+  end)
+end)
+
+-- Tutor mode sends diffs, not messages the user typed. They must not read as
+-- the user's words in the transcript, and must not join the prompt recall
+-- history — <Up> is for prompts, and a diff blob there is unusable.
+describe("session system sends", function()
+  it("appends its own entry kind carrying the payload, and no user entry", function()
+    local session, client, store = started()
+    session:send_system({ label = "3 files changed", text = "--- a/x\n+++ b/x\n" })
+    pump()
+
+    local entry = store.state.entries[1]
+    assert.equal("tutor", entry.kind)
+    assert.equal("3 files changed", entry.text)
+    assert.equal("--- a/x\n+++ b/x\n", entry.payload)
+    assert.equal("--- a/x\n+++ b/x\n", client.calls.blocks[1][1].text)
+  end)
+
+  it("stays out of the prompt recall history", function()
+    local session, _, store = started()
+    session:submit("a real prompt")
+    pump()
+    session:send_system({ label = "edits", text = "diff" })
+    pump()
+    assert.same({ "a real prompt" }, store.state.history)
+  end)
+
+  it("interrupts the turn in flight when asked to", function()
+    local session, client = started()
+    session:submit("go")
+    pump()
+    session:send_system({ label = "edits", text = "diff", interrupt = true })
+    pump()
+    assert.equal(1, client.calls.cancel_turns)
+
+    client:end_turn()
+    pump()
+    assert.equal("diff", client.calls.blocks[2][1].text)
+  end)
+
+  it("queues behind the turn in flight when not asked to interrupt", function()
+    local session, client = started()
+    session:submit("go")
+    pump()
+    session:send_system({ label = "edits", text = "diff" })
+    pump()
+    assert.equal(0, client.calls.cancel_turns)
+    assert.equal(1, #client.calls.prompts)
+
+    client:end_turn()
+    pump()
+    assert.equal("diff", client.calls.blocks[2][1].text)
+  end)
+
+  -- A user steer and a tutor flush racing for the same dying turn both land,
+  -- each rendered as what it is.
+  it("rides the same queue as a user steer without displacing it", function()
+    local session, client, store = started()
+    session:submit("go")
+    pump()
+    session:steer("hold on")
+    session:send_system({ label = "edits", text = "diff", interrupt = true })
+    pump()
+    client:end_turn()
+    pump()
+
+    local blocks = client.calls.blocks[2]
+    assert.equal(2, #blocks)
+    assert.equal("hold on", blocks[1].text)
+    assert.equal("diff", blocks[2].text)
+    assert.equal("user", store.state.entries[2].kind)
+    assert.equal("tutor", store.state.entries[3].kind)
+  end)
+
+  it("does not consume pending attachments, which belong to the user's message", function()
+    local session, _, store = started()
+    store:add_attachment({
+      name = "a.png",
+      path = "/tmp/a.png",
+      uri = "file:///tmp/a.png",
+      mime = "image/png",
+      size = 7,
+    })
+    session:send_system({ label = "edits", text = "diff" })
+    pump()
+    assert.equal(1, #store.state.attachments)
+  end)
+end)

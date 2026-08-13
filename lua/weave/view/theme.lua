@@ -203,6 +203,23 @@ vim.api.nvim_set_hl(0, M.PROMPT_BORDER_HL.unsandboxed_auto, { fg = "#f7768e", de
 M.CODE_FEEDBACK_HL = "WeaveCodeFeedback"
 vim.api.nvim_set_hl(0, M.CODE_FEEDBACK_HL, { fg = "#1a1b26", bg = "#e0af68", default = true })
 
+--- Agent-side annotations (weave.annotations): the OTHER direction of the same
+--- idea, so a distinct group. Teal rather than amber, because a user comment
+--- awaiting send and a note the agent left are different things to see in the
+--- same file.
+M.ANNOTATION_HL = "WeaveAnnotation"
+vim.api.nvim_set_hl(0, M.ANNOTATION_HL, { fg = "#1a1b26", bg = "#7dcfff", default = true })
+
+--- The annotation's message, rendered as virtual lines beside the code.
+M.ANNOTATION_TEXT_HL = "WeaveAnnotationText"
+vim.api.nvim_set_hl(0, M.ANNOTATION_TEXT_HL, { fg = "#7dcfff", italic = true, default = true })
+
+--- Tutor-mode transcript entries: weave talking to the agent on the user's
+--- behalf (edit batches, mode announcements). Deliberately quiet — these are
+--- bookkeeping the user can peek at, not messages they wrote.
+M.TUTOR_MSG_HL = "WeaveTutorMessage"
+vim.api.nvim_set_hl(0, M.TUTOR_MSG_HL, { link = "@comment", default = true })
+
 -- Busy-water indicator. The height ramp is four groups (WeaveWater1..4, dim →
 -- bright by fill height) plus a label group; UNLIKE the other groups these are
 -- ANIMATED — view/water.lua rewrites their fg every frame while the sim runs,

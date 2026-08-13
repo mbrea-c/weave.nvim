@@ -216,20 +216,27 @@ function M.setup(opts)
       M.sessions()
     elseif sub == "attach" then
       M.attach(rest ~= "" and rest or nil)
+    elseif sub == "tutor" then
+      M.tutor(rest ~= "" and rest or nil)
     else
       M.toggle()
     end
   end, {
-    desc = "Toggle the weave panel (:Weave sessions | :Weave attach <file>)",
+    desc = "Toggle the weave panel (:Weave sessions | :Weave attach <file> | :Weave tutor [on|off])",
     nargs = "*",
     complete = function(arg_lead, line)
       -- after `attach`, complete FILES; the subcommands otherwise
       if line:match("^%s*Weave%s+attach%s") then
         return vim.fn.getcompletion(arg_lead, "file")
       end
+      if line:match("^%s*Weave%s+tutor%s") then
+        return vim.tbl_filter(function(name)
+          return vim.startswith(name, arg_lead)
+        end, { "on", "off" })
+      end
       return vim.tbl_filter(function(name)
         return vim.startswith(name, arg_lead)
-      end, { "sessions", "attach" })
+      end, { "sessions", "attach", "tutor" })
     end,
   })
 end
@@ -271,6 +278,35 @@ function M.attach(path)
   end
   session:get_store():add_attachment(attachment)
   Logger.notify(("attached %s — it rides the next prompt"):format(attachment.name), vim.log.levels.INFO)
+end
+
+--- Turn tutor mode on/off for the session selected in this tab, or toggle it
+--- with no argument. In tutor mode the agent is sent the USER's edits as they
+--- happen and is asked to teach rather than to do — see weave.tutor.
+---
+--- The impatient path is `require("weave.tutor").flush_now()`, which sends
+--- whatever is pending without waiting out the debounce; it is deliberately
+--- not bound here, because it is a global binding over every buffer and that
+--- is the user's call to make.
+--- @param arg? "on"|"off" nil toggles
+--- @return boolean on
+function M.tutor(arg)
+  local Tutor = require("weave.tutor")
+  local session = M.get_session()
+  if not session then
+    Logger.notify("No weave session to tutor — open the panel first.", vim.log.levels.WARN)
+    return false
+  end
+  local on
+  if arg == "on" then
+    on = Tutor.enable(session)
+  elseif arg == "off" then
+    on = Tutor.disable(session)
+  else
+    on = Tutor.toggle(session)
+  end
+  Logger.notify("tutor mode " .. (on and "ON — the agent now sees your edits" or "off"), vim.log.levels.INFO)
+  return on
 end
 
 --- Whether the current tab has an open panel.

@@ -46,7 +46,8 @@ local SessionStore = require("weave.session_store")
 --- @field _provider_name string
 --- @field _get_instance fun(provider: string, on_ready: fun(client: table)): table|nil
 --- @field _turn_active boolean Whether a prompt turn is currently in flight
---- @field _steer_text? string Prompt to resend once a steered turn ends as cancelled
+--- @field _steer_queue weave.session.Message[] Messages to send once a steered turn ends as cancelled, in arrival order (never a scalar slot: two interruptions can land on one dying turn)
+--- @field _cancelling boolean A cancel is already in flight for the current turn
 --- @field _restoring boolean Whether a session/load history replay is in flight
 --- @field _steered_session? string ACP session id already given the mode-on steering note
 --- @field _config table<string, weave.session.ConfigKind> by category key
@@ -67,7 +68,8 @@ function Session:new(opts)
     _provider_name = opts.provider or Config.provider,
     _get_instance = opts.get_instance or AgentInstance.get_instance,
     _turn_active = false,
-    _steer_text = nil,
+    _steer_queue = {},
+    _cancelling = false,
     _restoring = false,
     _config = {},
     _config_order = {},
@@ -555,12 +557,52 @@ function Session:steer(text)
   if not self:is_ready() then
     return self:submit(text)
   end
-  if not self._turn_active then
-    return self:_send_now(text)
-  end
+  return self:_steer_messages({ { kind = "user", text = text } })
+end
 
-  self._steer_text = text
-  self:_cancel_turn()
+--- Interrupt with a list of messages. The cancel and the resend are separated
+--- by a round trip, so a SECOND interruption can arrive while the first turn is
+--- still dying — the user hitting <C-x> as a tutor-mode flush fires, say. This
+--- is the store's own documented discipline applied to steering: never hold an
+--- in-flight obligation in a scalar slot (see the queue-pattern note in
+--- weave.session_store), because the second one silently overwrites the first.
+--- @private
+--- @param msgs weave.session.Message[]
+function Session:_steer_messages(msgs)
+  if not self._turn_active then
+    return self:_send_messages(msgs)
+  end
+  vim.list_extend(self._steer_queue, msgs)
+  -- Cancel once per turn: this turn is already on its way out, and a second
+  -- cancel_turn for it is noise on the wire. The flag tracks THAT rather than
+  -- an empty queue, so a user steer still interrupts a turn that a
+  -- non-interrupting tutor send is merely waiting behind.
+  if not self._cancelling then
+    self._cancelling = true
+    self:_cancel_turn()
+  end
+end
+
+--- Send something that is NOT the user's words — tutor-mode edit batches, mode
+--- announcements. It reaches the agent as an ordinary prompt block, but in the
+--- transcript it is its own entry kind carrying `label` (the payload is there
+--- to peek at, not to read inline), and it never joins the prompt recall
+--- history: `<Up>` is for prompts the user typed, and a diff blob there is
+--- unusable.
+--- @param opts { text: string, label?: string, interrupt?: boolean }
+function Session:send_system(opts)
+  if not self:is_ready() or type(opts.text) ~= "string" or opts.text == "" then
+    return
+  end
+  local msg = { kind = "tutor", text = opts.text, label = opts.label or "(system message)" }
+  if opts.interrupt then
+    return self:_steer_messages({ msg })
+  end
+  if self._turn_active then
+    self._steer_queue[#self._steer_queue + 1] = msg
+    return
+  end
+  self:_send_messages({ msg })
 end
 
 --- Cancel the in-flight turn with no resend, KEEPING any queued prompts: the
@@ -568,7 +610,8 @@ end
 --- move straight on to it (requests.md). Clear queued prompts individually (the
 --- prompt-box `✕`) to drop them. Resolves pending permissions as cancelled (ACP).
 function Session:cancel()
-  self._steer_text = nil
+  self._steer_queue = {}
+  self._cancelling = false
   if self._turn_active then
     self:_cancel_turn()
   end
@@ -641,12 +684,47 @@ end
 --- @private
 --- @param text string
 function Session:_send_now(text)
-  -- Attachments belong to THIS message: taken (not copied) so the next prompt
-  -- starts clean, and echoed on the user entry so the transcript shows what
-  -- was handed over.
-  local attachments = self._store:take_attachments()
-  self._store:append_entry({ kind = "user", text = text, attachments = attachments })
-  self._store:push_history(text) -- a sent prompt joins the recall history
+  return self:_send_messages({ { kind = "user", text = text } })
+end
+
+--- @class weave.session.Message One prompt block and how the transcript shows it
+--- @field kind "user"|"tutor"
+--- @field text string what the agent receives
+--- @field label? string what the transcript shows for a non-user message
+
+--- Drive one turn from a list of messages. Usually that list is a single user
+--- prompt; it is longer when several interruptions landed on the same dying
+--- turn, and they go out TOGETHER rather than as N sequential turns.
+--- @private
+--- @param msgs weave.session.Message[]
+function Session:_send_messages(msgs)
+  -- Attachments belong to the user's message, so a send with none in it must
+  -- leave them pending for whenever the user does speak.
+  local carries_user = false
+  for _, msg in ipairs(msgs) do
+    carries_user = carries_user or msg.kind ~= "tutor"
+  end
+  -- Taken (not copied) so the next prompt starts clean, and echoed on the user
+  -- entry so the transcript shows what was handed over.
+  local attachments = carries_user and self._store:take_attachments() or {}
+
+  local prompt = {}
+  local attached = false
+  for _, msg in ipairs(msgs) do
+    if msg.kind == "tutor" then
+      self._store:append_entry({ kind = "tutor", text = msg.label, payload = msg.text })
+    else
+      self._store:append_entry({
+        kind = "user",
+        text = msg.text,
+        attachments = not attached and attachments or nil,
+      })
+      self._store:push_history(msg.text) -- a sent prompt joins the recall history
+      attached = true
+    end
+    prompt[#prompt + 1] = { type = "text", text = msg.text }
+  end
+
   self._store:set_status("thinking")
   self._turn_active = true
 
@@ -656,7 +734,6 @@ function Session:_send_now(text)
   -- as a separate content block ahead of the user's text: prepending it to
   -- `text` itself would put words in the user's mouth in the transcript
   -- echo (already appended above) and in the agent's own history.
-  local prompt = { { type = "text", text = text } }
   vim.list_extend(prompt, self:_attachment_blocks(attachments))
   if self:_sandbox_mode() == "on" and self._steered_session ~= session_id then
     self._steered_session = session_id
@@ -690,12 +767,15 @@ function Session:_on_turn_end(err)
     })
   end
 
-  -- A steered prompt takes priority over the queue: the user interrupted to
-  -- send THIS now. Then fall through to draining queued prompts in order.
-  local steer_text = self._steer_text
-  self._steer_text = nil
-  if steer_text then
-    self:_send_now(steer_text)
+  -- Steered messages take priority over the queue: something interrupted to
+  -- send THESE now. They go out as one turn, in arrival order, so a user steer
+  -- and a tutor-mode flush racing for the same dying turn both land. Then fall
+  -- through to draining queued prompts in order.
+  local steered = self._steer_queue
+  self._steer_queue = {}
+  self._cancelling = false
+  if #steered > 0 then
+    self:_send_messages(steered)
     return
   end
 
@@ -708,7 +788,7 @@ end
 --- an edit releases a held queue.
 --- @private
 function Session:_drain_queue()
-  if self._turn_active or self._steer_text or not self:is_ready() then
+  if self._turn_active or #self._steer_queue > 0 or not self:is_ready() then
     return
   end
   local next_prompt = self._store:dequeue_prompt()
@@ -739,7 +819,8 @@ function Session:new_conversation()
   end
   self._session_id = nil
   self._turn_active = false
-  self._steer_text = nil
+  self._steer_queue = {}
+  self._cancelling = false
   self._store:reset()
   self._store:set_status("busy")
 
@@ -777,7 +858,8 @@ function Session:restore(session_id)
   end
   self._session_id = nil
   self._turn_active = false
-  self._steer_text = nil
+  self._steer_queue = {}
+  self._cancelling = false
   self._store:reset()
   self._store:set_status("busy")
   self._restoring = true

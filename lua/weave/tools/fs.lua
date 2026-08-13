@@ -178,16 +178,30 @@ end
 --- @param disk_content string exact bytes for the direct-to-disk path
 --- @return string where
 local function land(target, lines, disk_content)
-  if target.bufnr then
-    splice_buffer(target.bufnr, lines)
-    if file_backed(target.bufnr) then
-      save_buffer(target.bufnr)
-      return ("%s (through the open buffer)"):format(vim.api.nvim_buf_get_name(target.bufnr))
+  local Log = require("weave.revision_log")
+
+  -- Tutor mode watches the USER's edits, and this is the agent. Close the
+  -- user's burst FIRST: nvim_buf_attach reports a change after it has landed,
+  -- so once the splice runs the buffer already holds the agent's text and the
+  -- two are indistinguishable. Anything the user had pending is recorded as
+  -- theirs, and only then does the write become the new baseline.
+  Log.close_burst()
+  return Log.suppress(function()
+    if target.bufnr then
+      splice_buffer(target.bufnr, lines)
+      if file_backed(target.bufnr) then
+        save_buffer(target.bufnr)
+        return ("%s (through the open buffer)"):format(vim.api.nvim_buf_get_name(target.bufnr))
+      end
+      return ("buffer %d (no backing file; live buffer only)"):format(target.bufnr)
     end
-    return ("buffer %d (no backing file; live buffer only)"):format(target.bufnr)
-  end
-  write_disk(target.path, disk_content)
-  return target.path
+    write_disk(target.path, disk_content)
+    -- No buffer event to ride on, so say it explicitly: a tracked buffer for
+    -- this path (unloaded, or loaded and about to autoread) must not report
+    -- the agent's write as the user's next edit.
+    Log.rebaseline_path(target.path)
+    return target.path
+  end)
 end
 
 --- Current text of the target as one string (live buffer state wins). Disk

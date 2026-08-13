@@ -30,6 +30,15 @@
 --- @field ripgrep_path? string Absolute path to `rg` for the glob/grep tools; nil = look on PATH
 --- @field curl_path? string Absolute path to `curl` for the web_fetch tool; nil = look on PATH
 
+--- @class weave.TutorConfig Tutor mode (weave.tutor): the agent watches the USER's edits and gives feedback
+--- @field debounce_ms integer Quiet time after an edit before the batch is sent
+--- @field max_wait_ms integer Hard ceiling from the first unsent edit, so a continuously-typing user still gets sent
+--- @field on_flush "interrupt"|"queue" Whether a debounced batch cancels the turn in flight or waits behind it
+--- @field max_diff_bytes integer Cap on one batch's diff text (truncation is announced, never silent)
+--- @field enabled_prompt string Sent to the agent when tutor mode goes on
+--- @field disabled_prompt string Sent when it goes off
+--- @field edits_prompt string Preamble ahead of each batch of user edits
+
 --- @class weave.PermissionsConfig The client-side permission engine (weave.permissions)
 --- @field preset? string Active preset at startup; unset = "ask", or its unsandboxed_* variant when the sandbox is off
 --- @field presets? weave.permissions.Preset[] Additional presets (the setup source; shadow builtins by name)
@@ -48,6 +57,7 @@
 --- @field tools weave.ToolsConfig
 --- @field permissions weave.PermissionsConfig
 --- @field sandbox weave.SandboxConfig
+--- @field tutor weave.TutorConfig
 --- @field view weave.ViewConfig Default panel geometry (width / sidebar_width / prompt_height)
 --- @field keys table<string, weave.UserConfig.KeymapValue> Key(s) per named action (see weave.keys ACTIONS); `false` disables one
 --- @field tool_renderers weave.view.ToolRenderer[] Per-tool-call rendering overrides (see weave.view.tool_call)
@@ -254,6 +264,48 @@ local ConfigDefault = {
     mode = "on",
     state_paths = {},
     ro_paths = {},
+  },
+
+  -- Tutor mode (weave.tutor): per session, off by default. While it is on,
+  -- weave collects the USER's edits (never the agent's — see
+  -- weave.revision_log) and sends them to the agent as a squashed diff, so it
+  -- can review work as it happens instead of being asked to. The three prompts
+  -- are the whole agent-facing contract and are meant to be rewritten: they
+  -- are what makes the agent behave like a tutor rather than an assistant.
+  tutor = {
+    debounce_ms = 15000,
+    max_wait_ms = 60000,
+    on_flush = "interrupt",
+    max_diff_bytes = 100 * 1024,
+
+    enabled_prompt = table.concat({
+      "[weave] TUTOR MODE IS NOW ON.",
+      "",
+      "From now on you will periodically receive diffs of what the USER is writing,",
+      "unprompted, as they write it. They are not asking you to make changes — they are",
+      "asking you to teach. For each batch:",
+      "",
+      "  - Read what they did and why it might be wrong, fragile, or simply not the",
+      "    clearest way to say it. Say so plainly, and say what you would do instead.",
+      "  - Leave the feedback ON THE CODE with the `annotate` tool (a file, a line",
+      "    range, and your message), not only in chat. That is what the user reads.",
+      "  - Praise is cheap and unhelpful; if a batch is genuinely fine, say nothing or",
+      "    say it in one line. Do not invent problems to have something to say.",
+      "  - Do NOT edit their files. They are practising. Show them, do not do it.",
+      "",
+      "One caveat about the diffs: they are the user's edits as weave observed them, so",
+      "changes made by shell commands YOU ran (a formatter, a codemod) can appear in",
+      "them too. If a hunk looks like your own work, it probably is — say so rather",
+      "than crediting it to the user.",
+    }, "\n"),
+
+    disabled_prompt = table.concat({
+      "[weave] Tutor mode is now OFF. You will stop receiving the user's edits as they",
+      "make them. Go back to answering what you are asked.",
+    }, "\n"),
+
+    edits_prompt = "[weave] The user has been editing. Everything they changed since your last"
+      .. " update, squashed into one diff:",
   },
 }
 
