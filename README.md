@@ -420,7 +420,7 @@ seconds** regardless if you never stop typing, and it **interrupts** the turn in
 flight (the same thing `<C-x>` does). For the impatient, send now:
 
 ```lua
-vim.keymap.set("n", ";;ts", require("weave.tutor").flush_now, { desc = "weave: send my edits now" })
+vim.keymap.set("n", ";;F", require("weave.tutor").flush_now, { desc = "weave: flush my edits now" })
 ```
 
 Sends appear in the transcript as a single quiet line (`⇅ sent 2 files you
