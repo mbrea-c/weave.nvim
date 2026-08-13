@@ -195,6 +195,31 @@ describe("tutor mode", function()
   it("does not collect at all until some session turns it on", function()
     assert.is_false(Log.collecting())
   end)
+
+  -- The sidebar checkbox reads the STORE, so a mode toggled from anywhere —
+  -- :Weave tutor, the Lua API, the box itself — has to land there or the UI
+  -- starts lying about which mode you are in.
+  it("mirrors the mode into the session store for the UI to read", function()
+    local Store = require("weave.session_store")
+    local store = Store:new()
+    local session = fake_session()
+    function session:get_store()
+      return store
+    end
+
+    Tutor.enable(session)
+    assert.is_true(store.state.tutor)
+    Tutor.disable(session)
+    assert.is_false(store.state.tutor)
+  end)
+
+  it("survives a session that has no store at all", function()
+    -- other plugins drive Session-shaped objects; the mirror is a courtesy,
+    -- not a requirement
+    local session = fake_session()
+    assert.is_true(Tutor.enable(session))
+    assert.is_false(Tutor.disable(session))
+  end)
 end)
 
 -- The debounce is "quiet for a while OR waited long enough", which a

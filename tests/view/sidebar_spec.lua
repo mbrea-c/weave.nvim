@@ -74,6 +74,10 @@ describe("view.sidebar", function()
     assert.truthy(text:find("[x] Show edit diffs", 1, true))
     assert.truthy(text:find("[x] Prettify markdown", 1, true))
     assert.truthy(text:find("[x] Follow streaming", 1, true))
+    -- Tutor mode sits with the other toggles because that is where a user
+    -- looks for a switch, even though it is session STATE with side effects
+    -- rather than a view pref (see the section's own note).
+    assert.truthy(text:find("[ ] Tutor mode", 1, true))
     assert.truthy(text:find("Usage", 1, true))
     assert.truthy(text:find("(no usage yet)", 1, true))
     assert.truthy(text:find("Hint", 1, true))
@@ -87,6 +91,35 @@ describe("view.sidebar", function()
     local term_row = locate(handle.bufnr, "Terminal tasks")
     local perm_row = locate(handle.bufnr, "Permissions")
     assert.is_true(term_row < perm_row, "terminal tasks sit above permissions")
+    handle.unmount()
+  end)
+
+  it("checks the tutor box from the store, so every route to the mode agrees", function()
+    -- :Weave tutor, the Lua API and this checkbox are three doors to one
+    -- switch; the box has to read the SAME state they write, or it lies the
+    -- moment the mode is toggled from anywhere else.
+    local store = SessionStore:new()
+    store:set_tutor(true)
+    local handle = mount_sidebar(store)
+    assert.truthy(text_of(handle.bufnr):find("[x] Tutor mode", 1, true))
+    handle.unmount()
+  end)
+
+  it("toggles tutor mode through the handler, not through Prefs", function()
+    local store = SessionStore:new()
+    local toggled = 0
+    local handle = mount.floating(sidebar.PrefsSection, {
+      prefs = Prefs:new(),
+      store = store,
+      on_toggle_tutor = function()
+        toggled = toggled + 1
+      end,
+    }, { width = 34, height = 10 })
+
+    press_on(handle, "Tutor mode")
+    assert.equal(1, toggled)
+    -- ...and it did NOT quietly become a view pref
+    assert.is_nil(Prefs:new().tutor)
     handle.unmount()
   end)
 

@@ -49,6 +49,7 @@ M.ACTIONS = {
   { name = "toggle_diffs", scope = "panel", desc = "toggle edit diffs" },
   { name = "toggle_conceal", scope = "panel", desc = "toggle markdown conceal" },
   { name = "toggle_follow", scope = "panel", desc = "toggle follow streaming" },
+  { name = "toggle_tutor", scope = "panel", desc = "toggle tutor mode" },
   { name = "cycle_permission_mode", scope = "panel", desc = "cycle permission preset" },
   { name = "pick_model", scope = "panel", desc = "pick model" },
   { name = "pick_mode", scope = "panel", desc = "pick mode" },

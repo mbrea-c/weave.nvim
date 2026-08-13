@@ -148,6 +148,7 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | `;;d` | `toggle_diffs` | Toggle edit diffs |
 | `;;c` | `toggle_conceal` | Toggle markdown prettifying (conceal) |
 | `;;f` | `toggle_follow` | Toggle follow-streaming (auto-scroll) |
+| `;;T` | `toggle_tutor` | Toggle [tutor mode](#tutor-mode) for this session |
 | `;;p` | `cycle_permission_mode` | Cycle permission preset |
 | `;;m` / `;;M` | `pick_model` / `pick_mode` | Pick model / pick mode |
 | `;;1` … `;;9` | `permission_prefix` + digit | Answer a permission request with option N |
@@ -388,11 +389,20 @@ the agent reviews **yours**, as you write it. Turn it on for a session and
 weave starts sending it what you change, unprompted, and asks it to teach
 rather than to do.
 
+Three doors onto the same switch — the **Tutor mode** checkbox in the sidebar
+(below *Follow streaming*), `;;T` in the panel, or the command:
+
 ```vim
 :Weave tutor        " toggle for the session selected in this tab
 :Weave tutor on
 :Weave tutor off
 ```
+
+The checkbox sits with the view prefs because that is where you look for a
+switch, but it is not one of them: the four above it are pure display state,
+while this one sends prompts to the agent and interrupts the turn in flight.
+It reads the session store rather than the panel's prefs, so all three doors
+always agree.
 
 It is **per session** — a tutor in one panel and an ordinary assistant in
 another is a normal thing to want. Collection is editor-global and runs

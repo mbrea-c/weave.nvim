@@ -144,6 +144,9 @@ function Session:view_handlers()
     on_restore_picker = function()
       self:show_restore_picker()
     end,
+    on_toggle_tutor = function()
+      require("weave.tutor").toggle(self)
+    end,
   }
 end
 

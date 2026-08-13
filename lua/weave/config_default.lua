@@ -83,6 +83,7 @@ local ConfigDefault = {
     toggle_diffs = ";;d",
     toggle_conceal = ";;c",
     toggle_follow = ";;f",
+    toggle_tutor = ";;T",
     cycle_permission_mode = ";;p",
     pick_model = ";;m",
     pick_mode = ";;M",

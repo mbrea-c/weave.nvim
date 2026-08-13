@@ -201,11 +201,21 @@ function M.UsageSection(ctx, props)
   return { comp = ui.col, props = {}, children = rows }
 end
 
---- The view-pref checkboxes, wired straight to Prefs:toggle.
+--- The view-pref checkboxes, wired straight to Prefs:toggle — plus tutor mode,
+--- which is NOT one.
+---
+--- The four prefs are pure display state, per panel, with no side effects.
+--- Tutor mode is session state that sends prompts to the agent and interrupts
+--- the turn in flight. It sits here anyway, because a switch is what it is and
+--- this is where a user looks for switches — but it is wired to the session
+--- handler rather than to Prefs, and its checked state is read from the STORE,
+--- so the box agrees with `:Weave tutor` and the Lua API instead of tracking a
+--- fourth copy of the truth.
 --- @param ctx table
---- @param props { prefs: weave.view.Prefs }
+--- @param props { prefs: weave.view.Prefs, store?: weave.store.SessionStore, on_toggle_tutor?: fun() }
 function M.PrefsSection(ctx, props)
   local prefs = use_store(ctx, props.prefs)
+  local state = props.store and use_store(ctx, props.store) or nil
   local function pref_checkbox(key, label)
     return {
       comp = ui.checkbox,
@@ -226,6 +236,14 @@ function M.PrefsSection(ctx, props)
       pref_checkbox("show_diffs", "Show edit diffs"),
       pref_checkbox("conceal_markdown", "Prettify markdown"),
       pref_checkbox("follow", "Follow streaming"),
+      {
+        comp = ui.checkbox,
+        props = {
+          label = "Tutor mode",
+          checked = state ~= nil and state.tutor == true,
+          on_toggle = props.on_toggle_tutor or function() end,
+        },
+      },
     },
   }
 end
@@ -527,7 +545,7 @@ function M.PermissionsSection(ctx, props)
 end
 
 --- Pure composition — every section subscribes to its own store slice.
---- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.view.Prefs, on_details?: fun() }
+--- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.view.Prefs, on_details?: fun(), on_toggle_tutor?: fun() }
 function M.Sidebar(_, props)
   return {
     comp = ui.col,
@@ -544,7 +562,10 @@ function M.Sidebar(_, props)
     children = {
       { comp = M.SessionSection, props = { store = props.store, on_details = props.on_details } },
       { comp = M.UsageSection, props = { store = props.store } },
-      { comp = M.PrefsSection, props = { prefs = props.prefs } },
+      {
+        comp = M.PrefsSection,
+        props = { prefs = props.prefs, store = props.store, on_toggle_tutor = props.on_toggle_tutor },
+      },
       { comp = M.HintSection, props = { store = props.store } },
       { comp = M.TasksSection, props = { store = props.store, width = props.sidebar_width } },
       -- terminal tasks sit ABOVE permissions (design-agent-sandbox.md, 0c)

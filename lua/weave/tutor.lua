@@ -107,6 +107,21 @@ local function on_revision()
   end
 end
 
+--- Mirror the mode into the session's store, which is what the sidebar
+--- checkbox reads. Guarded rather than assumed: tutor is driven by a plain
+--- session object here and by a double in the specs.
+--- @param session table
+--- @param on boolean
+local function mirror(session, on)
+  if type(session.get_store) ~= "function" then
+    return
+  end
+  local ok, store = pcall(session.get_store, session)
+  if ok and store and type(store.set_tutor) == "function" then
+    store:set_tutor(on)
+  end
+end
+
 --- @param session table
 --- @param text string
 --- @param label string
@@ -156,6 +171,7 @@ function M.enable(session)
     unsubscribe = Log.subscribe(on_revision)
   end
   states[session] = { cursor = Log.head_id() }
+  mirror(session, true)
   send(session, cfg().enabled_prompt or "", "tutor mode on", true)
   return true
 end
@@ -172,6 +188,7 @@ function M.disable(session)
   end
   disarm(states[session])
   states[session] = nil
+  mirror(session, false)
   send(session, cfg().disabled_prompt or "", "tutor mode off", true)
 
   if M.count() == 0 then
