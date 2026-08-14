@@ -1,3 +1,4 @@
+local Fibrous = require("fibrous")
 local Logger = require("weave.utils.logger")
 local McpIdent = require("weave.acp.mcp_ident")
 local transport_module = require("weave.acp.acp_transport")
@@ -80,6 +81,9 @@ function ACPClient:new(config, on_ready)
     transport = nil,
     state = "disconnected",
     reconnect_count = 0,
+    -- Wire messages waiting for the main loop; see _handle_message.
+    _inbox = {},
+    _draining = false,
   }
 
   local client = setmetatable(instance, self) --[[@as weave.acp.ACPClient]]
@@ -126,9 +130,9 @@ function ACPClient:__with_subscriber(session_id, callback)
     return
   end
 
-  vim.schedule(function()
-    callback(subscriber)
-  end)
+  -- No deferral here: every path into this function already runs on the
+  -- inbox drain, which IS the main loop (see _handle_message).
+  callback(subscriber)
 end
 
 function ACPClient:_setup_transport()
@@ -278,9 +282,79 @@ function ACPClient:__send_result(id, result)
   self.transport:send(data)
 end
 
---- Handles raw JSON-RPC message received from the transport
+--- Queue a decoded wire message for the main loop, and make sure a drain is
+--- coming.
+---
+--- The transport decodes inside a libuv read callback — a FAST event context,
+--- where touching a buffer is illegal — so every message has to cross to the
+--- main loop before it can reach the store. It used to cross ONE AT A TIME
+--- (a vim.schedule per message, down in __with_subscriber), and that is what
+--- made a long restore look like a hang.
+---
+--- Handling a message is not cheap: a store mutation notifies the panel
+--- synchronously, which re-renders and re-commits its whole tree, and a
+--- streamed chunk does that twice (the append, then the tail-window slide).
+--- Measured at ~1.7ms per update against a full 30-entry window. Invisible
+--- while a turn trickles in at reading speed; ruinous on a session/load
+--- replay, where the provider dumps an entire conversation as fast as the
+--- pipe allows: thousands of renders back to back, the main loop never idle,
+--- and no repaint until the user's next keystroke shoves one through — which
+--- reads exactly like the replay having stopped.
+---
+--- So: ONE drain per tick, with every handler inside a single fibrous batch,
+--- where the queued .set calls collapse into one render + commit per root.
+--- Same 500 updates: 852ms → 8.4ms.
+---
+--- Order is FIFO across notifications AND responses, which is what the wire
+--- promised and what the old per-message schedule happened to give us.
 --- @param message weave.acp.ResponseRaw
 function ACPClient:_handle_message(message)
+  local inbox = self._inbox
+  inbox[#inbox + 1] = message
+  if self._draining or #inbox > 1 then
+    return -- a drain is already scheduled (or running) and will take this one
+  end
+  vim.schedule(function()
+    self:_drain_inbox()
+  end)
+end
+
+--- Handle every queued message as one batched dispatch.
+---
+--- Each message is pcall'd on its own: a malformed update from one provider
+--- must not swallow the rest of the queue, which on a restore would be the
+--- remainder of the conversation.
+--- @protected
+function ACPClient:_drain_inbox()
+  local inbox = self._inbox
+  self._inbox = {}
+  self._draining = true
+  local ok, err = pcall(Fibrous.batch, function()
+    for _, message in ipairs(inbox) do
+      local handled, herr = pcall(self._dispatch_message, self, message)
+      if not handled then
+        Logger.notify("ACP message handler error: " .. tostring(herr))
+      end
+    end
+  end)
+  self._draining = false
+  -- Messages that arrived DURING the drain (a handler that pumps the loop)
+  -- queued behind it and need a drain of their own.
+  if self._inbox[1] then
+    vim.schedule(function()
+      self:_drain_inbox()
+    end)
+  end
+  if not ok then
+    Logger.notify("ACP batch error: " .. tostring(err))
+  end
+end
+
+--- Handles one raw JSON-RPC message. Always called from the drain, so the
+--- full editor API is available.
+--- @protected
+--- @param message weave.acp.ResponseRaw
+function ACPClient:_dispatch_message(message)
   -- NOT log agent messages chunk to avoid huge logs file
   if
     not (
