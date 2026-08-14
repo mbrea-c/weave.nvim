@@ -5,6 +5,7 @@
 -- Ported from agentic's reactive/acp_bridge.lua.
 
 local Logger = require("weave.utils.logger")
+local McpIdent = require("weave.acp.mcp_ident")
 local Permissions = require("weave.permissions")
 
 --- @class weave.AcpBridge
@@ -68,28 +69,48 @@ end
 --- Is this request the agent asking to call a tool WEAVE brokers, rather
 --- than to run one of its own builtins?
 ---
---- Providers ask permission for MCP tool calls too, naming the tool in the
---- title (opencode: "clankbox_read", kind "other"; Claude Code:
---- "mcp__clankbox__read"). Those calls are already mediated where it counts
---- — every frame crosses the broker or the MCP proxy, where the real gate
---- sits — so re-deciding them here is at best a double prompt and at worst
---- (a sandboxed preset's acp:* deny) weave blocking the agent from the very
---- tools it just told it to use. Matching on the server name is loose on
---- purpose: a false positive costs a redundant approval of an already-gated
---- call, a false negative breaks the sandbox's only way out.
+--- Providers ask permission for MCP tool calls too. Those calls are already
+--- mediated where it counts — every frame crosses the broker or the MCP
+--- proxy, where the real gate sits — so re-deciding them here is at best a
+--- double prompt and at worst (a sandboxed preset's acp:* deny) weave
+--- blocking the agent from the very tools it just told it to use.
+---
+--- Three channels, because providers name a tool three ways and the answer
+--- must not depend on which one this provider picked:
+---
+---   1. what THIS frame names, through weave.acp.mcp_ident — codex's
+---      { server, tool, arguments } envelope, or the endpoint title
+---   2. what an EARLIER frame named. A provider may announce the call in
+---      full and then ask permission with little more than its id; the
+---      client normalizes every frame into the store, so the merged block is
+---      the one place that has seen all of them
+---   3. the loose substring, for providers that name the server with no shape
+---      to key on (opencode: "clankbox_read")
+---
+--- Loose on purpose: a false positive costs a redundant approval of an
+--- already-gated call, a false negative breaks the sandbox's only way out.
 --- @param tc table toolCall
---- @return boolean
-local function brokered_call(tc)
-  local title = type(tc.title) == "string" and tc.title or nil
-  if not title then
-    return false
+--- @param store weave.store.SessionStore|nil
+--- @return boolean brokered
+--- @return string|nil resource The tool as one canonical `<server>.<tool>`
+---   where the provider named it, else the title the provider used
+local function brokered_call(tc, store)
+  local named = McpIdent.identify(tc)
+  if not named and store and type(tc.toolCallId) == "string" then
+    local block = store.state.tool_calls[tc.toolCallId]
+    named = block and block.mcp or nil
   end
+
+  local title = type(tc.title) == "string" and tc.title or nil
   for _, name in ipairs(brokered_names()) do
-    if title ~= name and title:find(name, 1, true) then
-      return true
+    if named and named.server == name then
+      return true, ("%s.%s"):format(name, named.tool)
+    end
+    if title and title ~= name and title:find(name, 1, true) then
+      return true, title
     end
   end
-  return false
+  return false, nil
 end
 
 --- The engine action for an ACP permission request: the tool-call kind under
@@ -102,11 +123,14 @@ end
 --- rules while separating it from the agent's own tools, which are what the
 --- sandboxed presets exist to turn back.
 --- @param request table The ACP RequestPermission params
+--- @param store weave.store.SessionStore|nil Frames seen so far, for a
+---   permission request that leaves the naming to an earlier one
 --- @return weave.permissions.Action
-local function acp_action(request)
+local function acp_action(request, store)
   local tc = (request and request.toolCall) or {}
-  if brokered_call(tc) then
-    return { tool = "acp:mcp", resource = tc.title }
+  local brokered, resource = brokered_call(tc, store)
+  if brokered then
+    return { tool = "acp:mcp", resource = resource }
   end
   local resource
   local loc = type(tc.locations) == "table" and tc.locations[1] or nil
@@ -279,7 +303,15 @@ function AcpBridge.build_handlers(store, opts)
       -- skips the enqueue + surfacing. An allow with no allow option falls
       -- through to the queue (never guess); a deny with no reject option
       -- answers the cancelled outcome (respond nil).
-      local decision, rule = Permissions.resolve(acp_action(request))
+      local action = acp_action(request, store)
+      local decision, rule = Permissions.resolve(action)
+      -- The one line that makes the next provider quirk debuggable: which
+      -- action a request mapped to is invisible from the transcript, and
+      -- mapping it WRONG is how a provider's tool calls get silently refused.
+      Logger.debug(
+        ("acp_bridge: %s → %s %s"):format(decision, action.tool, action.resource or "(no resource)"),
+        request.toolCall
+      )
       if decision == "deny" then
         -- ACP's permission response carries an optionId and nothing else, so
         -- a rule's `message` cannot reach the agent here (the mode-on

@@ -1,4 +1,5 @@
 local Logger = require("weave.utils.logger")
+local McpIdent = require("weave.acp.mcp_ident")
 local transport_module = require("weave.acp.acp_transport")
 
 --- Known ACP protocol tool call kinds.
@@ -418,36 +419,20 @@ function ACPClient:__build_tool_call_message(update)
   -- envelope carries something the ACP wire format otherwise never does — a
   -- real TOOL NAME — so it is kept beside the arguments rather than dropped.
   if type(update.rawInput) == "table" then
-    local raw = update.rawInput
-    -- Duck-typed tightly, because a tool's own arguments could perfectly well
-    -- include a key called `tool`: a bare `tool` string is not enough, it must
-    -- come with an `arguments` TABLE or a `server` name beside it. Guessing
-    -- wrong here would gut a real call's arguments.
-    local envelope = type(raw.tool) == "string"
-      and raw.tool ~= ""
-      and (type(raw.arguments) == "table" or type(raw.server) == "string")
+    local envelope = McpIdent.envelope(update.rawInput)
     if envelope then
-      message.input = raw.arguments or {}
-      message.mcp = { server = type(raw.server) == "string" and raw.server or nil, tool = raw.tool }
+      message.input = envelope.arguments
+      message.mcp = { server = envelope.server, tool = envelope.tool }
     else
-      message.input = raw
+      message.input = update.rawInput
     end
   end
   -- The other channel a provider names an MCP tool through: the title IS the
-  -- endpoint name, `mcp__<server>__<tool>` (claude) or `mcp.<server>.<tool>`
-  -- (codex). Titles are agent-authored prose in general, so only that exact
-  -- shape counts — "Editing tool_call.lua" is a title, not a name.
-  --
-  -- Non-greedy on the server so a tool with underscores of its own survives:
-  -- `mcp__clankbox__task_start` is clankbox/task_start, not clankbox__task.
-  if not message.mcp and type(update.title) == "string" then
-    local server, tool = update.title:match("^mcp__(.-)__(.+)$")
-    if not server then
-      server, tool = update.title:match("^mcp%.(.-)%.(.+)$")
-    end
-    if server and server ~= "" and tool and tool ~= "" then
-      message.mcp = { server = server, tool = tool }
-    end
+  -- endpoint name (claude, codex). See weave.acp.mcp_ident — the permission
+  -- path reads the same module, and the two MUST agree about what a provider
+  -- just named, or a call weave renders as its own gets denied as the agent's.
+  if not message.mcp then
+    message.mcp = McpIdent.from_title(update.title)
   end
 
   if type(update.rawOutput) == "table" then

@@ -95,6 +95,66 @@ describe("acp_bridge sandboxed acp denial", function()
     assert.equal("once", answered)
   end)
 
+  -- Codex names the tool in an ENVELOPE, not the title. The renderer learned
+  -- that shape; this path had not, so every clankbox call codex made resolved
+  -- as acp:execute, hit the acp:* deny, and came back to the model as "user
+  -- rejected MCP tool call" — weave refusing the agent the only tools it can
+  -- reach. Both sides read weave.acp.mcp_ident now, so they cannot drift.
+  it("lets through a call the provider named in an envelope, not the title", function()
+    local _, handlers = setup()
+    local answered
+    handlers.on_request_permission({
+      toolCall = {
+        toolCallId = "exec-1",
+        kind = "execute",
+        rawInput = { server = "clankbox", tool = "read", arguments = { path = "src/main.rs" } },
+      },
+      options = { { optionId = "once", kind = "allow_once" }, { optionId = "r", kind = "reject_once" } },
+    }, function(option_id)
+      answered = option_id
+    end)
+    assert.equal("once", answered)
+  end)
+
+  -- A provider may announce the call in full and then ask permission with
+  -- little more than its id. The frame in hand names nothing; the one before
+  -- it did, and the store is where every normalized frame has landed.
+  it("remembers what an earlier frame named when the request carries only an id", function()
+    local _, handlers = setup()
+    handlers.on_tool_call({
+      tool_call_id = "exec-2",
+      kind = "execute",
+      mcp = { server = "clankbox", tool = "read" },
+    })
+    local answered
+    handlers.on_request_permission({
+      toolCall = { toolCallId = "exec-2", status = "pending" },
+      options = { { optionId = "once", kind = "allow_once" }, { optionId = "r", kind = "reject_once" } },
+    }, function(option_id)
+      answered = option_id
+    end)
+    assert.equal("once", answered)
+  end)
+
+  -- The let-through is for tools WEAVE brokers, which are gated at the broker.
+  -- A server the agent brought itself is gated nowhere else, so it stays the
+  -- sandboxed preset's business.
+  it("does not let through an MCP server weave does not broker", function()
+    local _, handlers = setup()
+    local answered
+    handlers.on_request_permission({
+      toolCall = {
+        toolCallId = "exec-3",
+        kind = "execute",
+        rawInput = { server = "postgres", tool = "query", arguments = { sql = "select 1" } },
+      },
+      options = { { optionId = "once", kind = "allow_once" }, { optionId = "r", kind = "reject_once" } },
+    }, function(option_id)
+      answered = option_id
+    end)
+    assert.equal("r", answered)
+  end)
+
   it("still denies a builtin tool whose title merely looks tool-ish", function()
     local _, handlers = setup()
     local answered

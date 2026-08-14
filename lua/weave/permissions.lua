@@ -14,7 +14,8 @@
 --   acp:<kind>      an ACP session/request_permission (kind: edit, execute,
 --                   read, delete, ... — mapped in acp_bridge)
 --   acp:mcp         an ACP request to call a tool WEAVE brokers (resource =
---                   the tool name as the provider spells it). Split out from
+--                   `<server>.<tool>` where the provider named the endpoint,
+--                   else the title it used). Split out from
 --                   acp:<kind> because it is the agent asking to use our
 --                   client-side tools, already gated at the broker — the
 --                   opposite of the builtin calls acp:* rules speak to.
