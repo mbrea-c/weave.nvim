@@ -108,6 +108,66 @@ describe("mcp envelope rendering", function()
     assert.equal("w:grep", ToolCall.tool_tag(block))
   end)
 
+  -- A REAL claude-agent-acp block, verbatim off the wire, as a guard: the
+  -- envelope unwrap touches shared code, and claude reports arguments the old
+  -- way. Its `rawInput` has no `tool` key at all, so nothing should unwrap and
+  -- the correlation store stays the route.
+  it("leaves a claude block alone, arguments and all", function()
+    local args = {
+      path = "/home/manuel/src/nvim-infra/weave.nvim/lua/weave/view/tool_call.lua",
+      old_string = "-- on rawInput shape.",
+      new_string = "-- on rawInput shape. One provider already gets there.",
+    }
+    ToolIdent.record("edit", args)
+    local block = build({
+      toolCallId = "toolu_016G9J8BosPQpzF4DVZBFqnu",
+      kind = "other",
+      title = "mcp__clankbox__edit",
+      rawInput = args,
+      _meta = { claudeCode = { toolName = "mcp__clankbox__edit" } },
+    })
+
+    -- the arguments are the point: untouched, exactly as claude sent them, so
+    -- every matcher and the correlation store still see what they expect
+    assert.same(args, block.input)
+    -- the name comes off the endpoint title rather than the envelope, but it
+    -- is the same tool by either route
+    assert.same({ server = "clankbox", tool = "edit" }, block.mcp)
+    assert.equal("w:edit", ToolCall.tool_tag(block))
+    -- the path, shortened against ~ / cwd (which one depends on where the
+    -- suite runs, so assert the shortening rather than one spelling of it)
+    local title = ToolCall.tool_title(block)
+    assert.truthy(title:find("view/tool_call.lua", 1, true))
+    assert.is_true(#title < #args.path)
+  end)
+
+  -- ...and claude DOES name the tool, in the `mcp__<server>__<tool>` endpoint
+  -- convention. Reading it makes the tag independent of the correlation ring
+  -- here too — the ring is bounded, so a long turn can evict the record a tag
+  -- would otherwise rest on, and then a w:edit silently decays to [other].
+  it("reads the tool name claude puts in the endpoint title, with no record", function()
+    local block = build({
+      toolCallId = "t1",
+      kind = "other",
+      title = "mcp__clankbox__edit",
+      rawInput = { path = "/p/x.lua", old_string = "a", new_string = "b" },
+    })
+    assert.equal("w:edit", ToolCall.tool_tag(block))
+    assert.equal("/p/x.lua", ToolCall.tool_title(block))
+  end)
+
+  it("reads the dotted spelling too", function()
+    local block = build({ toolCallId = "t1", title = "mcp.clankbox.grep", rawInput = { pattern = "x" } })
+    assert.equal("w:grep", ToolCall.tool_tag(block))
+  end)
+
+  -- The title is agent-authored prose in general, so only the exact endpoint
+  -- shape counts as a name. Anything else must stay a title.
+  it("does not mistake ordinary prose for a tool name", function()
+    local block = build({ toolCallId = "t1", kind = "edit", title = "Editing tool_call.lua", rawInput = { a = 1 } })
+    assert.equal("edit", ToolCall.tool_tag(block))
+  end)
+
   -- Another server's tools are not weave's to claim, but the envelope still
   -- names them, and `<server>:<tool>` beats a bare kind.
   it("names a foreign MCP tool by its server", function()

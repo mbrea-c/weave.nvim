@@ -433,6 +433,23 @@ function ACPClient:__build_tool_call_message(update)
       message.input = raw
     end
   end
+  -- The other channel a provider names an MCP tool through: the title IS the
+  -- endpoint name, `mcp__<server>__<tool>` (claude) or `mcp.<server>.<tool>`
+  -- (codex). Titles are agent-authored prose in general, so only that exact
+  -- shape counts — "Editing tool_call.lua" is a title, not a name.
+  --
+  -- Non-greedy on the server so a tool with underscores of its own survives:
+  -- `mcp__clankbox__task_start` is clankbox/task_start, not clankbox__task.
+  if not message.mcp and type(update.title) == "string" then
+    local server, tool = update.title:match("^mcp__(.-)__(.+)$")
+    if not server then
+      server, tool = update.title:match("^mcp%.(.-)%.(.+)$")
+    end
+    if server and server ~= "" and tool and tool ~= "" then
+      message.mcp = { server = server, tool = tool }
+    end
+  end
+
   if type(update.rawOutput) == "table" then
     message.output = update.rawOutput
   end
