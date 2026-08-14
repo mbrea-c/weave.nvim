@@ -41,6 +41,13 @@
 -- the block as `meta`; it is the one place a provider could ever put a real
 -- tool name, so a name-based match becomes possible the day one does.
 --
+-- One provider already gets there by another route: codex reports MCP calls
+-- as an envelope, so `block.mcp` holds `{ server, tool }` when the provider
+-- sent one (weave.acp.acp_client unwraps it at the boundary). `block.input`
+-- is the tool's own ARGUMENTS either way, so a matcher written against
+-- argument shape keeps working everywhere — but where `block.mcp` exists it
+-- is the better key, and M.weave_tool prefers it.
+--
 -- ── Precedence ─────────────────────────────────────────────────────────────
 --
 -- Matchers run in priority order, HIGHEST FIRST; ties break on most-recently
@@ -203,7 +210,7 @@ end
 --- @param tc table ToolCallBlock
 --- @return string title
 function M.tool_title(tc)
-  local weave_tool = ToolIdent.lookup(tc.input)
+  local weave_tool = M.weave_tool(tc)
   if weave_tool then
     local title = M.weave_title(weave_tool, tc.input)
     if title then
@@ -219,17 +226,46 @@ function M.tool_title(tc)
   return "tool call " .. tc.tool_call_id
 end
 
+--- The weave tool behind a block, from whichever source the provider gave us.
+---
+--- Two sources, and the good one is rare: a provider that reports MCP calls as
+--- an envelope (weave.acp.acp_client) NAMES the tool, which the ACP wire
+--- format otherwise never does. That beats the correlation store outright —
+--- weave.tool_ident is a bounded ring, so a busy turn can evict the record a
+--- tag would otherwise rest on. Everyone else still goes through the store.
+---
+--- A name from an envelope is only claimed as OURS when it is a tool weave
+--- actually registers, on weave's own server. Another server's `grep` is not
+--- weave's grep, and tagging it `w:` would be a lie about where the call went.
+--- @param tc table ToolCallBlock
+--- @return string|nil
+function M.weave_tool(tc)
+  local mcp = tc.mcp
+  if mcp and type(mcp.tool) == "string" then
+    local ok, Tools = pcall(require, "weave.tools")
+    if ok and mcp.server == "clankbox" and Tools.OWNS[mcp.tool] then
+      return mcp.tool
+    end
+    return nil
+  end
+  return ToolIdent.lookup(tc.input)
+end
+
 --- The bracketed tag in a header. A call that went through weave's OWN
---- clankbox tool suite is tagged `w:<tool>` (identified by its arguments via
---- weave.tool_ident — the block itself carries no tool name), so it reads
---- apart from the agent's builtin `<kind>` tools at a glance. Everything else
---- keeps the ACP kind.
+--- clankbox tool suite is tagged `w:<tool>` so it reads apart from the agent's
+--- builtin `<kind>` tools at a glance; another MCP server's tool is tagged
+--- `<server>:<tool>` when the provider named it, which is still far more use
+--- than the coarse ACP kind. Everything else keeps the kind.
 --- @param tc table ToolCallBlock
 --- @return string
 function M.tool_tag(tc)
-  local weave_tool = ToolIdent.lookup(tc.input)
+  local weave_tool = M.weave_tool(tc)
   if weave_tool then
     return "w:" .. weave_tool
+  end
+  local mcp = tc.mcp
+  if mcp and type(mcp.tool) == "string" then
+    return one_line(mcp.server and (mcp.server .. ":" .. mcp.tool) or mcp.tool)
   end
   return one_line(tc.kind or "tool")
 end

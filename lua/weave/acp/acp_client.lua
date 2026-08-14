@@ -404,8 +404,34 @@ function ACPClient:__build_tool_call_message(update)
   -- `content`. The kind-specific parsing below (diffs, body) still runs; this
   -- just preserves what would otherwise be dropped. The UI decides what to
   -- render. vim.NIL (JSON null) is not a table, so it's skipped.
+  -- Providers disagree about what rawInput holds for an MCP call. Most report
+  -- the agent's call VERBATIM — the tool's own arguments and nothing else —
+  -- which is what everything downstream assumes: renderers duck-type on
+  -- argument shape, and weave.tool_ident correlates a block back to the weave
+  -- tool that made it by hashing those arguments. Codex sends an ENVELOPE
+  -- instead, { server, tool, arguments }, so every argument-shaped match
+  -- missed and weave's own calls rendered as generic rows titled
+  -- "mcp.clankbox.grep".
+  --
+  -- Unwrapping it here, at the provider boundary, is what keeps that
+  -- disagreement from leaking into the UI: downstream sees one shape. And the
+  -- envelope carries something the ACP wire format otherwise never does — a
+  -- real TOOL NAME — so it is kept beside the arguments rather than dropped.
   if type(update.rawInput) == "table" then
-    message.input = update.rawInput
+    local raw = update.rawInput
+    -- Duck-typed tightly, because a tool's own arguments could perfectly well
+    -- include a key called `tool`: a bare `tool` string is not enough, it must
+    -- come with an `arguments` TABLE or a `server` name beside it. Guessing
+    -- wrong here would gut a real call's arguments.
+    local envelope = type(raw.tool) == "string"
+      and raw.tool ~= ""
+      and (type(raw.arguments) == "table" or type(raw.server) == "string")
+    if envelope then
+      message.input = raw.arguments or {}
+      message.mcp = { server = type(raw.server) == "string" and raw.server or nil, tool = raw.tool }
+    else
+      message.input = raw
+    end
   end
   if type(update.rawOutput) == "table" then
     message.output = update.rawOutput
