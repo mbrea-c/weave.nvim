@@ -126,11 +126,23 @@ end
 --- @param text string
 --- @param label string
 --- @param interrupt boolean
-local function send(session, text, label, interrupt)
+--- @param hooks { on_sent?: fun(), on_dropped?: fun() }|nil
+--- @return boolean accepted
+local function send(session, text, label, interrupt, hooks)
   if type(session.send_system) ~= "function" then
-    return
+    return false
   end
-  session:send_system({ text = text, label = label, interrupt = interrupt })
+  hooks = hooks or {}
+  local accepted = session:send_system({
+    text = text,
+    label = label,
+    interrupt = interrupt,
+    on_sent = hooks.on_sent,
+    on_dropped = hooks.on_dropped,
+  })
+  -- Older doubles (and anything else driving a Session-shaped object) return
+  -- nothing; treat only an explicit false as a refusal.
+  return accepted ~= false
 end
 
 --- @param session table|nil
@@ -252,15 +264,15 @@ function M.flush(session, opts)
     return false
   end
   disarm(state)
-  state.first_pending_at = nil
 
   local head = Log.head_id()
   local rev = Log.squash_since(state.cursor)
-  -- Step over the window either way. A window the user edited and then
-  -- reverted has nothing to say, but leaving the cursor behind it means
-  -- re-squashing the same dead revisions on every flush, forever.
-  state.cursor = head
   if not rev then
+    -- Step over a window that netted no change: it has nothing to say, but
+    -- leaving the cursor behind it means re-squashing the same dead revisions
+    -- on every flush, forever.
+    state.cursor = head
+    state.first_pending_at = nil
     return false
   end
 
@@ -269,6 +281,8 @@ function M.flush(session, opts)
   local root = ok and Permissions.project_root() or nil
   local diff = Revision.render(rev, { root = root, max_bytes = conf.max_diff_bytes })
   if not diff then
+    state.cursor = head
+    state.first_pending_at = nil
     return false
   end
 
@@ -276,7 +290,36 @@ function M.flush(session, opts)
   if interrupt == nil then
     interrupt = (conf.on_flush or "interrupt") == "interrupt"
   end
-  send(session, (conf.edits_prompt or "") .. "\n\n" .. diff, label_for(rev), interrupt)
+
+  -- The cursor advances only when the diff actually reaches the wire. A send
+  -- can be ACCEPTED and still die: parked behind an active turn, it is wiped
+  -- by cancel//new/restore — precisely the moments the user is editing over
+  -- the agent's shoulder, which made those edits vanish from tutoring. On a
+  -- drop (or an outright refusal from a not-ready session) the window stays
+  -- unsent and a retry is armed; the next flush re-squashes it together with
+  -- whatever came after. Better twice than never — sends are state sync, and
+  -- squash makes a resend cheap.
+  local retry = function()
+    local st = states[session]
+    if st then
+      st.first_pending_at = st.first_pending_at or M._now()
+      arm(session, st)
+    end
+  end
+  local accepted = send(session, (conf.edits_prompt or "") .. "\n\n" .. diff, label_for(rev), interrupt, {
+    on_sent = function()
+      local st = states[session]
+      if st and head > st.cursor then
+        st.cursor = head
+      end
+    end,
+    on_dropped = retry,
+  })
+  if not accepted then
+    retry()
+    return false
+  end
+  state.first_pending_at = nil
   return true
 end
 

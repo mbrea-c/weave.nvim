@@ -873,6 +873,91 @@ describe("session system sends", function()
     assert.equal("tutor", store.state.entries[3].kind)
   end)
 
+  -- The delivery contract tutor mode's revision cursor rides on: ACCEPTED is
+  -- not DELIVERED. on_sent fires when the message actually reaches the wire,
+  -- on_dropped when a queue wipe kills it first, and a not-ready session
+  -- refuses outright with a false return.
+  it("reports acceptance and fires on_sent immediately on an idle session", function()
+    local session = started()
+    local sent = 0
+    local accepted = session:send_system({
+      label = "edits",
+      text = "diff",
+      on_sent = function()
+        sent = sent + 1
+      end,
+    })
+    pump()
+    assert.is_true(accepted)
+    assert.equal(1, sent)
+  end)
+
+  it("fires on_sent only once a parked message goes out with the next turn", function()
+    local session, client = started()
+    session:submit("go")
+    pump()
+    local sent = 0
+    local accepted = session:send_system({
+      label = "edits",
+      text = "diff",
+      on_sent = function()
+        sent = sent + 1
+      end,
+    })
+    pump()
+    assert.is_true(accepted)
+    assert.equal(0, sent) -- parked behind the active turn
+
+    client:end_turn()
+    pump()
+    assert.equal(1, sent)
+  end)
+
+  it("fires on_dropped, never on_sent, when cancel wipes the parked message", function()
+    local session, client = started()
+    session:submit("go")
+    pump()
+    local sent, dropped = 0, 0
+    session:send_system({
+      label = "edits",
+      text = "diff",
+      on_sent = function()
+        sent = sent + 1
+      end,
+      on_dropped = function()
+        dropped = dropped + 1
+      end,
+    })
+    pump()
+    session:cancel()
+    pump()
+    client:end_turn()
+    pump()
+
+    assert.equal(0, sent)
+    assert.equal(1, dropped)
+    assert.equal(1, #client.calls.prompts) -- the diff never reached the wire
+  end)
+
+  it("refuses outright when the session is not ready", function()
+    local session = Session:new({
+      provider = "test-agent",
+      get_instance = function()
+        return nil
+      end,
+    })
+    local dropped = 0
+    local accepted = session:send_system({
+      label = "edits",
+      text = "diff",
+      on_dropped = function()
+        dropped = dropped + 1
+      end,
+    })
+    assert.is_false(accepted)
+    assert.equal(0, dropped) -- a refusal is the return value, not a drop event
+  end)
+
   it("does not consume pending attachments, which belong to the user's message", function()
     local session, _, store = started()
     store:add_attachment({

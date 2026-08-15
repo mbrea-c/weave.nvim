@@ -11,6 +11,8 @@ local Permissions = require("weave.permissions")
 local Tutor = require("weave.tutor")
 
 --- @return table session double recording what tutor sent it
+--- An IDLE real session dispatches immediately (see session_spec's delivery
+--- contract): accepted, on_sent fired before send_system returns.
 local function fake_session()
   local session = { sent = {} }
   function session:is_ready()
@@ -18,6 +20,38 @@ local function fake_session()
   end
   function session:send_system(opts)
     self.sent[#self.sent + 1] = opts
+    if opts.on_sent then
+      opts.on_sent()
+    end
+    return true
+  end
+  return session
+end
+
+--- A session mid-turn: accepts sends but PARKS them (the steer queue). The
+--- spec decides each message's fate afterwards — deliver() fires its on_sent
+--- (the turn ended and the queue drained), wipe() its on_dropped (cancel /
+--- /new / restore emptied the queue under it).
+local function busy_session()
+  local session = { sent = {} }
+  function session:is_ready()
+    return true
+  end
+  function session:send_system(opts)
+    self.sent[#self.sent + 1] = opts
+    return true
+  end
+  function session:deliver(i)
+    local opts = self.sent[i or #self.sent]
+    if opts and opts.on_sent then
+      opts.on_sent()
+    end
+  end
+  function session:wipe(i)
+    local opts = self.sent[i or #self.sent]
+    if opts and opts.on_dropped then
+      opts.on_dropped()
+    end
   end
   return session
 end
@@ -190,6 +224,66 @@ describe("tutor mode", function()
     edit(bufnr, { "two" })
     Tutor.flush_now(session)
     assert.is_true(session.sent[2].interrupt)
+  end)
+
+  -- The lost-edits bug: flush used to advance the cursor when it HANDED the
+  -- diff to the session, but a send parked behind an active turn dies with
+  -- cancel//new/restore, and one refused by a not-ready session never went
+  -- anywhere — precisely the moments the user is editing over the agent's
+  -- shoulder. The cursor now moves only on actual dispatch (on_sent).
+  it("holds its cursor until the send actually dispatches", function()
+    local session = busy_session()
+    Tutor.enable(session)
+    local bufnr = open("a.lua", { "one" })
+    edit(bufnr, { "two" })
+    Tutor.flush_now(session)
+
+    assert.equal(0, Tutor._cursor(session)) -- parked, not delivered
+    session:deliver()
+    assert.equal(Log.head_id(), Tutor._cursor(session))
+  end)
+
+  it("resends the whole window when a queued send is wiped with its dying turn", function()
+    local session = busy_session()
+    Tutor.enable(session)
+    local bufnr = open("a.lua", { "one" })
+    edit(bufnr, { "two" })
+    Tutor.flush_now(session)
+    session:wipe() -- cancel / /new emptied the steer queue under the diff
+
+    edit(bufnr, { "three" })
+    Tutor.flush_now(session)
+    local resent = session.sent[#session.sent]
+    -- the wiped edits ride again, squashed with what came after
+    assert.truthy(resent.text:find("\n-one", 1, true))
+    assert.truthy(resent.text:find("\n+three", 1, true))
+
+    session:deliver()
+    Tutor.flush_now(session)
+    assert.equal(3, #session.sent) -- announcement + two flushes, nothing more
+  end)
+
+  it("retries instead of skipping when the session refuses the send", function()
+    local session = fake_session()
+    Tutor.enable(session)
+    local bufnr = open("a.lua", { "one" })
+    edit(bufnr, { "two" })
+
+    local ready = false
+    local dispatch = session.send_system
+    function session:send_system(opts)
+      if not ready then
+        return false -- what a not-ready real session reports
+      end
+      return dispatch(self, opts)
+    end
+
+    assert.is_false(Tutor.flush_now(session))
+    assert.equal(0, Tutor._cursor(session)) -- window still pending
+    ready = true
+    assert.is_true(Tutor.flush_now(session))
+    assert.truthy(session.sent[#session.sent].text:find("\n+two", 1, true))
+    assert.equal(Log.head_id(), Tutor._cursor(session))
   end)
 
   it("does not collect at all until some session turns it on", function()

@@ -592,20 +592,50 @@ end
 --- to peek at, not to read inline), and it never joins the prompt recall
 --- history: `<Up>` is for prompts the user typed, and a diff blob there is
 --- unusable.
---- @param opts { text: string, label?: string, interrupt?: boolean }
+---
+--- ACCEPTED is not DELIVERED: a message parked behind an active turn still
+--- dies if the steer queue is wiped (cancel, /new, restore). `on_sent` fires
+--- when the message actually goes out on the wire; `on_dropped` when a wipe
+--- kills it first. Tutor mode advances its revision cursor only on on_sent —
+--- that is what makes a wiped diff resendable instead of silently lost.
+--- @param opts { text: string, label?: string, interrupt?: boolean, on_sent?: fun(), on_dropped?: fun() }
+--- @return boolean accepted false when the session cannot take it (not ready)
 function Session:send_system(opts)
   if not self:is_ready() or type(opts.text) ~= "string" or opts.text == "" then
-    return
+    return false
   end
-  local msg = { kind = "tutor", text = opts.text, label = opts.label or "(system message)" }
+  local msg = {
+    kind = "tutor",
+    text = opts.text,
+    label = opts.label or "(system message)",
+    on_sent = opts.on_sent,
+    on_dropped = opts.on_dropped,
+  }
   if opts.interrupt then
-    return self:_steer_messages({ msg })
+    self:_steer_messages({ msg })
+    return true
   end
   if self._turn_active then
     self._steer_queue[#self._steer_queue + 1] = msg
-    return
+    return true
   end
   self:_send_messages({ msg })
+  return true
+end
+
+--- Wipe the steer queue, telling the owners that care. A queued message is an
+--- ACCEPTED send that never made the wire; firing its on_dropped here is what
+--- lets tutor mode re-arm and resend the edits it carried instead of losing
+--- them (its cursor only advances on on_sent).
+--- @private
+function Session:_drop_steered()
+  local dropped = self._steer_queue
+  self._steer_queue = {}
+  for _, msg in ipairs(dropped) do
+    if msg.on_dropped then
+      pcall(msg.on_dropped)
+    end
+  end
 end
 
 --- Cancel the in-flight turn with no resend, KEEPING any queued prompts: the
@@ -613,7 +643,7 @@ end
 --- move straight on to it (requests.md). Clear queued prompts individually (the
 --- prompt-box `✕`) to drop them. Resolves pending permissions as cancelled (ACP).
 function Session:cancel()
-  self._steer_queue = {}
+  self:_drop_steered()
   self._cancelling = false
   if self._turn_active then
     self:_cancel_turn()
@@ -752,6 +782,14 @@ function Session:_send_messages(msgs)
       self:_on_turn_end(err)
     end)
   end)
+
+  -- The prompt is on the wire: fire the delivery signal for owners that track
+  -- it (tutor mode's revision cursor rides on this).
+  for _, msg in ipairs(msgs) do
+    if msg.on_sent then
+      pcall(msg.on_sent)
+    end
+  end
 end
 
 --- Turn-end handler: clears the active flag, reports errors, rotates the
@@ -822,7 +860,7 @@ function Session:new_conversation()
   end
   self._session_id = nil
   self._turn_active = false
-  self._steer_queue = {}
+  self:_drop_steered()
   self._cancelling = false
   self._store:reset()
   self._store:set_status("busy")
@@ -861,7 +899,7 @@ function Session:restore(session_id)
   end
   self._session_id = nil
   self._turn_active = false
-  self._steer_queue = {}
+  self:_drop_steered()
   self._cancelling = false
   self._store:reset()
   self._store:set_status("busy")
