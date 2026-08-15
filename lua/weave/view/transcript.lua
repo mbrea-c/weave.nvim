@@ -58,6 +58,47 @@ end
 -- specs reach for the title through here.
 M.tool_title = ToolCall.tool_title
 
+-- ── Streaming prettify ───────────────────────────────────────────────────────
+-- While the tail agent entry streams, a timer advances a SAFE PARSE BOUNDARY
+-- through its text every STREAM_PARSE_MS: everything before the boundary
+-- renders as parsed markdown, the remainder raw. Tokens still appear the
+-- moment they arrive (the raw tail re-renders per chunk, no parse), and every
+-- tick another stretch of a long response takes shape — instead of the whole
+-- thing staying raw until the turn ends.
+
+--- How often the streaming parse boundary advances (ms).
+M.STREAM_PARSE_MS = 7000
+
+--- The stable mount key of the streaming tail entry. The store REPLACES the
+--- tail entry table on every chunk, so keying on the entry would remount the
+--- component per chunk and throw away the parsed prefix's AST cache.
+local STREAM_TAIL_KEY = "weave-stream-tail"
+
+--- Byte index of the last safe parse boundary in `text`: the final "\n\n"
+--- whose prefix leaves no code fence open (cutting inside a fence would render
+--- its tail as prose). 0 when there is none. The prefix to parse is
+--- `text:sub(1, cut - 1)`, the raw tail `text:sub(cut + 2)`.
+--- @param text string
+--- @return integer
+function M.stream_cut(text)
+  local best, fences, from = 0, 0, 1
+  local len = #text
+  while from <= len do
+    local nl = text:find("\n", from, true)
+    if text:sub(from, from + 2) == "```" then
+      fences = fences + 1
+    end
+    if nl == from and from > 1 and fences % 2 == 0 then
+      best = from - 1 -- the empty line: from-1 is the FIRST \n of the "\n\n"
+    end
+    if not nl then
+      break
+    end
+    from = nl + 1
+  end
+  return best
+end
+
 -- ── Entry components ─────────────────────────────────────────────────────────
 -- Each takes reference-stable props (the entry/block object out of the store,
 -- plus scalars), so `memo = true` mounting skips them whenever their slice of
@@ -171,15 +212,34 @@ end
 --- text without parsing. The conceal_markdown pref ("Prettify markdown") maps
 --- onto that same raw path: off = show the source, on = render it. Both inputs
 --- are scalars, so the memo bailout invalidates exactly when they flip.
---- @param props { entry: weave.store.ChatEntry, live: boolean, conceal: boolean }
+---
+--- A streaming entry with prettify on additionally takes `cut`, the Transcript
+--- debounce's safe boundary (M.stream_cut): the prefix before it renders
+--- parsed — its text only changes on a tick, so ui.markdown's AST cache holds
+--- between chunks — and the tail after it raw, so tokens still appear
+--- instantly. gap = 1 matches the doc renderer's block spacing, keeping the
+--- raw tail one blank row under the last parsed block like the "\n\n" it
+--- replaced.
+--- @param props { entry: weave.store.ChatEntry, live: boolean, conceal: boolean, cut?: integer }
 function M.AgentEntry(_, props)
+  local entry = props.entry
+  if props.live and props.conceal and (props.cut or 0) > 0 then
+    local children = {
+      { comp = ui.markdown, props = { text = entry.text:sub(1, props.cut - 1) } },
+    }
+    local tail = entry.text:sub(props.cut + 2)
+    if tail ~= "" then
+      children[#children + 1] = { comp = ui.paragraph, props = { text = tail } }
+    end
+    return { comp = ui.col, props = { gap = 1, on_key = peek_keys(entry) }, children = children }
+  end
   return {
     comp = ui.markdown,
     props = {
-      text = props.entry.text,
+      text = entry.text,
       -- streaming OR "prettify off" both render the raw source (no parse)
       live = props.live or not props.conceal,
-      on_key = peek_keys(props.entry),
+      on_key = peek_keys(entry),
     },
   }
 end
@@ -265,6 +325,53 @@ function M.Transcript(ctx, props)
   local state = use_store(ctx, store)
   local prefs = use_store(ctx, props.prefs)
 
+  -- Streaming prettify debounce: while the tail agent entry streams (and
+  -- "Prettify markdown" is on), a repeating timer re-derives the safe parse
+  -- boundary from the CURRENT text and bumps `stream_tick` when it moved —
+  -- that re-render is the only time the parsed prefix changes, so the parse
+  -- runs once per tick, never per chunk. The ref carries {index, cut} for the
+  -- render below; the effect re-keys on the tail's index, so a new streaming
+  -- entry resets the boundary and the turn's end stops the timer.
+  local stream = ctx.use_ref()
+  local stream_tick = ctx.use_state(0)
+  stream_tick.get() -- the bump is what re-renders us when the boundary moves
+  local tail_i = #state.entries
+  local streaming_tail = state.status == "generating"
+    and tail_i > 0
+    and state.entries[tail_i].kind == "agent"
+    and prefs.conceal_markdown == true
+  ctx.use_effect(function()
+    stream.index = streaming_tail and tail_i or nil
+    stream.cut = 0
+    if not streaming_tail then
+      return
+    end
+    local timer = vim.uv.new_timer()
+    timer:start(
+      M.STREAM_PARSE_MS,
+      M.STREAM_PARSE_MS,
+      vim.schedule_wrap(function()
+        local s = store.state
+        local entry = stream.index and s.entries[stream.index]
+        if s.status ~= "generating" or not entry or entry.kind ~= "agent" then
+          return -- settling re-runs the effect; it will stop this timer
+        end
+        local cut = M.stream_cut(entry.text)
+        if cut ~= stream.cut then
+          stream.cut = cut
+          stream_tick.set(stream_tick.get() + 1)
+        end
+      end)
+    )
+    return function()
+      -- nil-ing the index bails any tick already scheduled behind this
+      -- cleanup (it would otherwise set state on a settled or unmounted tree)
+      stream.index = nil
+      timer:stop()
+      timer:close()
+    end
+  end, { streaming_tail and tail_i or false })
+
   -- A pending permission targets one tool call; that call renders as
   -- "awaiting_permission" regardless of its raw status.
   local awaiting_id = state.permission
@@ -328,16 +435,22 @@ function M.Transcript(ctx, props)
         children[#children + 1] = { comp = M.ThoughtEntry, key = entry, memo = true, props = { entry = entry } }
       end
     elseif entry.kind == "agent" then
+      -- Only the timeline TAIL can still be streaming: an entry settles
+      -- for good the moment anything follows it or the turn goes idle.
+      local live = i == #state.entries and state.status == "generating"
       children[#children + 1] = {
         comp = M.AgentEntry,
-        key = entry,
+        -- The streaming tail keys on a SENTINEL: the store replaces the tail
+        -- entry table on every chunk, and an entry key would remount the
+        -- component (and drop the parsed prefix's AST cache) per chunk. It
+        -- re-keys onto the settled entry once the turn ends.
+        key = live and STREAM_TAIL_KEY or entry,
         memo = true,
         props = {
           entry = entry,
-          -- Only the timeline TAIL can still be streaming: an entry settles
-          -- for good the moment anything follows it or the turn goes idle.
-          live = i == #state.entries and state.status == "generating",
+          live = live,
           conceal = prefs.conceal_markdown == true,
+          cut = (live and stream.index == i) and stream.cut or nil,
         },
       }
     end

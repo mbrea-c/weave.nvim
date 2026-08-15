@@ -206,6 +206,40 @@ describe("view.transcript entries", function()
     handle.unmount()
   end)
 
+  -- The streaming prettify debounce: every STREAM_PARSE_MS the transcript
+  -- advances a safe boundary through the streaming tail — the prefix renders
+  -- parsed, the tail after it raw — so a long response takes shape while it
+  -- flows instead of staying raw until the turn ends.
+  it("streaming: the parsed prefix advances on the debounce tick, the tail stays raw", function()
+    local old_ms = transcript.STREAM_PARSE_MS
+    transcript.STREAM_PARSE_MS = 40
+    local store = SessionStore:new()
+    local handle = mount_transcript(store)
+    store:set_status("generating")
+    store:append_streaming_text("agent", "some **bold** intro\n\nstreaming **tail**")
+
+    -- before the first tick everything renders raw
+    locate(handle.bufnr, "some **bold** intro")
+    assert.equal(0, #marks_with(handle.bufnr, "@markup.strong"))
+
+    -- a tick advances the boundary to the last "\n\n": prefix parsed +
+    -- concealed, tail still raw
+    local ticked = vim.wait(2000, function()
+      return #marks_with(handle.bufnr, "@markup.strong") > 0
+    end, 10)
+    assert.is_true(ticked, "the debounce tick never advanced the boundary")
+    locate(handle.bufnr, "some bold intro")
+    locate(handle.bufnr, "streaming **tail**")
+
+    -- turn end settles the whole entry as before
+    store:set_status("idle")
+    locate(handle.bufnr, "streaming tail")
+    assert.equal(2, #marks_with(handle.bufnr, "@markup.strong"))
+
+    transcript.STREAM_PARSE_MS = old_ms
+    handle.unmount()
+  end)
+
   it("toggling conceal_markdown re-renders settled prose, live", function()
     local store = SessionStore:new()
     store:append_entry({ kind = "agent", text = "some **bold** here" })
@@ -229,6 +263,33 @@ describe("view.transcript entries", function()
     -- queued prompts stack in the prompt block (view/prompt.lua), not here
     assert.same({ "busy" }, trimmed(handle.bufnr))
     handle.unmount()
+  end)
+end)
+
+describe("view.transcript stream_cut", function()
+  it("returns 0 with no paragraph boundary", function()
+    assert.equal(0, transcript.stream_cut("just one paragraph"))
+    assert.equal(0, transcript.stream_cut(""))
+  end)
+
+  it("finds the last blank-line boundary", function()
+    local text = "one\n\ntwo\n\nthree"
+    local cut = transcript.stream_cut(text)
+    assert.equal("one\n\ntwo", text:sub(1, cut - 1))
+    assert.equal("three", text:sub(cut + 2))
+  end)
+
+  it("never cuts inside an open code fence", function()
+    local text = "intro\n\n```lua\nlocal x = 1\n\nlocal y = 2"
+    local cut = transcript.stream_cut(text)
+    assert.equal("intro", text:sub(1, cut - 1))
+  end)
+
+  it("cuts after a closed fence", function()
+    local text = "```lua\nx\n```\n\ntail"
+    local cut = transcript.stream_cut(text)
+    assert.equal("```lua\nx\n```", text:sub(1, cut - 1))
+    assert.equal("tail", text:sub(cut + 2))
   end)
 end)
 
