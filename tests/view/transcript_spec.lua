@@ -124,7 +124,30 @@ describe("view.transcript entries", function()
     assert.truthy(ls[1]:match("^╭─") and ls[1]:match("╮$"), "top border, got: " .. ls[1])
     assert.truthy(ls[2]:find("│ ❯ run the tests", 1, true), "framed message, got: " .. ls[2])
     assert.truthy(ls[3]:match("^╰─") and ls[3]:match("╯$"), "bottom border, got: " .. ls[3])
-    assert.is_true(#marks_with(handle.bufnr, Theme.USER_BUBBLE_BORDER_HL) > 0, "border tint")
+
+    -- fibrous composes fg runs over the fill (hlmix): the border and the ❯
+    -- marker must both keep the bubble bg UNDER their own fg — a bare
+    -- fg-only group here would punch a window-bg hole in the bubble
+    local bubble_bg = vim.api.nvim_get_hl(0, { name = Theme.USER_BUBBLE_HL, link = false }).bg
+    local border_fg = vim.api.nvim_get_hl(0, { name = Theme.USER_BUBBLE_BORDER_HL, link = false }).fg
+    local function mark_resolving(want)
+      for _, m in ipairs(vim.api.nvim_buf_get_extmarks(handle.bufnr, -1, 0, -1, { details = true })) do
+        local r = vim.api.nvim_get_hl(0, { name = m[4].hl_group, link = false })
+        local ok = true
+        for k, v in pairs(want) do
+          if r[k] ~= v then
+            ok = false
+            break
+          end
+        end
+        if ok then
+          return m
+        end
+      end
+      return nil
+    end
+    assert.is_not_nil(mark_resolving({ bg = bubble_bg, fg = border_fg }), "border lost the bubble bg")
+    assert.is_not_nil(mark_resolving({ bg = bubble_bg, italic = true }), "the ❯ marker lost the bubble bg")
     handle.unmount()
   end)
 
@@ -153,7 +176,16 @@ describe("view.transcript entries", function()
     store:append_entry({ kind = "user", text = "please **fix** this" })
     local handle = mount_transcript(store)
     locate(handle.bufnr, "❯ please fix this")
-    assert.equal(1, #marks_with(handle.bufnr, "@markup.strong"))
+    -- inside the bubble the strong span paints as a COMPOSED group (fibrous
+    -- hlmix: @markup.strong's attrs over the bubble bg), so resolve attrs
+    -- instead of matching the group name
+    local strong
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(handle.bufnr, -1, 0, -1, { details = true })) do
+      if vim.api.nvim_get_hl(0, { name = m[4].hl_group, link = false }).bold then
+        strong = m
+      end
+    end
+    assert.is_not_nil(strong, "no bold span for **fix**")
     handle.unmount()
   end)
 
