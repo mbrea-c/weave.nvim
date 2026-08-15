@@ -67,10 +67,10 @@ M.tool_title = ToolCall.tool_title
 --- pref as agent prose. `conceal` off keeps the ORIGINAL raw path — our own
 --- tinted paragraph, not ui.markdown's raw mode — so the pref-off rendering is
 --- unchanged, and parsed blocks take the standard @markup styling with only
---- the ❯ marker tinted. The flip lives HERE, at the row level, not on
---- ui.markdown's `live` prop: a component swapping its inner root under a row
---- leaves the replaced node's cells unpainted (fibrous repaint gap — a
---- toggle's joined "a b" line kept its tail when the raw "a" was shorter).
+--- the ❯ marker tinted. The flip lives HERE, at the row level, rather than on
+--- ui.markdown's `live` prop: it says what it means (weave picks raw vs
+--- formatted), and it once dodged a since-fixed fibrous repaint gap (a
+--- component swapping its inner root under a row left stale cells).
 --- @param props { entry: weave.store.ChatEntry, conceal: boolean }
 function M.UserEntry(_, props)
   local body
@@ -97,7 +97,21 @@ function M.UserEntry(_, props)
       props = { text = "  📎 " .. att.name, style = { text_hl = "@comment" } },
     }
   end
-  return { comp = ui.col, props = { on_key = peek_keys(props.entry) }, children = children }
+  -- The bubble: user-tinted rounded border over a bg one step off Normal's,
+  -- so the user's own words are findable at a glance while scrolling.
+  return {
+    comp = ui.col,
+    props = {
+      on_key = peek_keys(props.entry),
+      style = {
+        hl = Theme.USER_BUBBLE_HL,
+        border = "rounded",
+        border_hl = Theme.USER_BUBBLE_BORDER_HL,
+        padding = { x = 1 },
+      },
+    },
+    children = children,
+  }
 end
 
 --- Tutor-mode sends: weave talking to the agent on the user's behalf. One

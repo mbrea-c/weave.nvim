@@ -103,14 +103,28 @@ describe("view.transcript entries", function()
     store:append_streaming_text("agent", "on it")
 
     local handle = mount_transcript(store)
-    assert.same({
-      "❯ run the tests",
-      "",
-      "[thinking]",
-      "  hmm",
-      "",
-      "on it",
-    }, trimmed(handle.bufnr))
+    local user_row = locate(handle.bufnr, "❯ run the tests")
+    local thought_row = locate(handle.bufnr, "[thinking]")
+    local agent_row = locate(handle.bufnr, "on it")
+    assert.is_true(user_row < thought_row, "user before thought")
+    assert.is_true(thought_row < agent_row, "thought before agent")
+    handle.unmount()
+  end)
+
+  -- Each user message sits in its own bubble: user-tinted rounded border over
+  -- a background one step off Normal's, so the user's words are findable at a
+  -- glance while scrolling.
+  it("wraps a user prompt in the tinted bubble", function()
+    local store = SessionStore:new()
+    store:append_entry({ kind = "user", text = "run the tests" })
+    local handle = mount_transcript(store)
+    local ls = trimmed(handle.bufnr)
+    -- prefix/suffix matches, not `─+`: a Lua pattern quantifier applies to the
+    -- multibyte glyph's LAST byte only, so `─+` cannot span a border run
+    assert.truthy(ls[1]:match("^╭─") and ls[1]:match("╮$"), "top border, got: " .. ls[1])
+    assert.truthy(ls[2]:find("│ ❯ run the tests", 1, true), "framed message, got: " .. ls[2])
+    assert.truthy(ls[3]:match("^╰─") and ls[3]:match("╯$"), "bottom border, got: " .. ls[3])
+    assert.is_true(#marks_with(handle.bufnr, Theme.USER_BUBBLE_BORDER_HL) > 0, "border tint")
     handle.unmount()
   end)
 
@@ -123,10 +137,14 @@ describe("view.transcript entries", function()
     store:append_entry({ kind = "user", text = "first\nsecond" })
     local prefs = Prefs:new()
     local handle = mount_transcript(store, nil, prefs)
-    assert.same({ "❯ first second" }, trimmed(handle.bufnr))
+    locate(handle.bufnr, "❯ first second") -- one joined paragraph
 
     prefs:toggle("conceal_markdown")
-    assert.same({ "❯ first", "  second" }, trimmed(handle.bufnr))
+    local text = table.concat(trimmed(handle.bufnr), "\n")
+    assert.falsy(text:find("first second", 1, true), "joined line must not survive the toggle")
+    local first_row = locate(handle.bufnr, "❯ first")
+    local second_row = locate(handle.bufnr, "second")
+    assert.equal(first_row + 1, second_row, "raw keeps the source lines")
     handle.unmount()
   end)
 
@@ -134,7 +152,7 @@ describe("view.transcript entries", function()
     local store = SessionStore:new()
     store:append_entry({ kind = "user", text = "please **fix** this" })
     local handle = mount_transcript(store)
-    assert.equal("❯ please fix this", trimmed(handle.bufnr)[1])
+    locate(handle.bufnr, "❯ please fix this")
     assert.equal(1, #marks_with(handle.bufnr, "@markup.strong"))
     handle.unmount()
   end)
@@ -177,12 +195,13 @@ describe("view.transcript entries", function()
     -- A streaming tail renders plain — no parse per tick, markers visible.
     store:set_status("generating")
     store:append_streaming_text("agent", "streaming **loud**")
-    assert.equal("streaming **loud**", trimmed(handle.bufnr)[5])
+    local tail_row = locate(handle.bufnr, "streaming")
+    assert.equal("streaming **loud**", trimmed(handle.bufnr)[tail_row])
     assert.equal(1, #marks_with(handle.bufnr, "@markup.strong"))
 
     -- Turn end settles it: parsed and concealed like any other entry.
     store:set_status("idle")
-    assert.equal("streaming loud", trimmed(handle.bufnr)[5])
+    assert.equal("streaming loud", trimmed(handle.bufnr)[tail_row])
     assert.equal(2, #marks_with(handle.bufnr, "@markup.strong"))
     handle.unmount()
   end)
@@ -242,8 +261,11 @@ describe("view.transcript tail window", function()
 
     assert.truthy(text:find("▸ 5 older messages", 1, true), "expander missing")
     assert.equal(K, count_prompts(handle.bufnr))
-    assert.falsy(text:find("❯ e1\n", 1, true) or text:match("❯ e1$"), "collapsed entry leaked")
-    assert.falsy(text:find("❯ e5\n", 1, true), "collapsed entry leaked")
+    -- "❯ e1 " with the trailing space: inside the bubble every message is
+    -- followed by fill up to the border, so this matches a leaked e1 without
+    -- also matching e10..e19
+    assert.falsy(text:find("❯ e1 ", 1, true), "collapsed entry leaked")
+    assert.falsy(text:find("❯ e5 ", 1, true), "collapsed entry leaked")
     assert.truthy(text:find("❯ e6", 1, true), "first windowed entry missing")
     assert.truthy(text:find("❯ e35", 1, true), "newest entry missing")
     handle.unmount()
@@ -520,10 +542,15 @@ describe("view.transcript prefs", function()
     local handle = mount_transcript(store, nil, prefs)
 
     prefs:toggle("show_thoughts")
-    assert.same({ "❯ q", "", "a" }, trimmed(handle.bufnr))
+    local text = table.concat(trimmed(handle.bufnr), "\n")
+    assert.falsy(text:find("[thinking]", 1, true))
+    assert.falsy(text:find("hmm", 1, true))
+    locate(handle.bufnr, "❯ q")
 
     prefs:toggle("show_thoughts")
-    assert.same({ "❯ q", "", "[thinking]", "  hmm", "", "a" }, trimmed(handle.bufnr))
+    text = table.concat(trimmed(handle.bufnr), "\n")
+    assert.truthy(text:find("[thinking]", 1, true))
+    assert.truthy(text:find("hmm", 1, true))
     handle.unmount()
   end)
 

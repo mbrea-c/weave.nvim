@@ -106,6 +106,36 @@ vim.api.nvim_set_hl(0, M.THINKING_TAG_HL, { link = "@comment", default = true })
 M.USER_MSG_HL = "WeaveUserMessage"
 vim.api.nvim_set_hl(0, M.USER_MSG_HL, { fg = "#7aa2f7", italic = true, default = true })
 
+-- User prompt bubble: the transcript surrounds each user message with a
+-- user-tinted rounded border over a background one step off Normal's —
+-- enough to lift the message from the page, not enough to read as a block.
+-- The bg is DERIVED: Normal bg blended 10% toward Normal fg, which is
+-- "slightly lighter" on a dark theme and slightly darker on a light one
+-- (blending toward white would clip there). Re-derived on ColorScheme so it
+-- tracks the active theme; default = true keeps a user override authoritative.
+-- On a theme with no resolvable Normal bg/fg (transparent terminals) the
+-- group stays undefined and the bubble is just its border.
+M.USER_BUBBLE_HL = "WeaveUserBubble"
+M.USER_BUBBLE_BORDER_HL = "WeaveUserBubbleBorder"
+local function define_user_bubble_hl()
+  local normal = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+  if normal.bg and normal.fg then
+    local mixed = 0
+    for _, shift in ipairs({ 16, 8, 0 }) do
+      local b = bit.band(bit.rshift(normal.bg, shift), 0xff)
+      local f = bit.band(bit.rshift(normal.fg, shift), 0xff)
+      mixed = bit.bor(mixed, bit.lshift(math.floor(b + (f - b) * 0.1 + 0.5), shift))
+    end
+    vim.api.nvim_set_hl(0, M.USER_BUBBLE_HL, { bg = mixed, default = true })
+  end
+  vim.api.nvim_set_hl(0, M.USER_BUBBLE_BORDER_HL, { fg = "#7aa2f7", default = true })
+end
+define_user_bubble_hl()
+vim.api.nvim_create_autocmd("ColorScheme", {
+  group = vim.api.nvim_create_augroup("WeaveUserBubbleHl", { clear = true }),
+  callback = define_user_bubble_hl,
+})
+
 --- Plan-task glyphs, one per status. The sidebar's task list uses these (NOT
 --- STATUS_ICON, which is the tool-call vocabulary): pending stays a plain
 --- outline, in-progress fills it, done/failed are check/cross. ACP's plan
