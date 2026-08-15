@@ -63,15 +63,29 @@ M.tool_title = ToolCall.tool_title
 -- plus scalars), so `memo = true` mounting skips them whenever their slice of
 -- state didn't change.
 
---- @param props { entry: weave.store.ChatEntry }
+--- The prompt body renders as markdown, gated by the same "Prettify markdown"
+--- pref as agent prose. `conceal` off keeps the ORIGINAL raw path — our own
+--- tinted paragraph, not ui.markdown's raw mode — so the pref-off rendering is
+--- unchanged, and parsed blocks take the standard @markup styling with only
+--- the ❯ marker tinted. The flip lives HERE, at the row level, not on
+--- ui.markdown's `live` prop: a component swapping its inner root under a row
+--- leaves the replaced node's cells unpainted (fibrous repaint gap — a
+--- toggle's joined "a b" line kept its tail when the raw "a" was shorter).
+--- @param props { entry: weave.store.ChatEntry, conceal: boolean }
 function M.UserEntry(_, props)
+  local body
+  if props.conceal then
+    body = { comp = ui.markdown, props = { text = props.entry.text } }
+  else
+    body = { comp = ui.paragraph, props = { text = props.entry.text, style = { text_hl = Theme.USER_MSG_HL } } }
+  end
   local children = {
     {
       comp = ui.row,
       props = {},
       children = {
         { comp = ui.label, props = { text = "❯ ", style = { text_hl = Theme.USER_MSG_HL } } },
-        { comp = ui.paragraph, props = { text = props.entry.text, style = { text_hl = Theme.USER_MSG_HL } } },
+        body,
       },
     },
   }
@@ -287,7 +301,12 @@ function M.Transcript(ctx, props)
         }
       end
     elseif entry.kind == "user" then
-      children[#children + 1] = { comp = M.UserEntry, key = entry, memo = true, props = { entry = entry } }
+      children[#children + 1] = {
+        comp = M.UserEntry,
+        key = entry,
+        memo = true,
+        props = { entry = entry, conceal = prefs.conceal_markdown == true },
+      }
     elseif entry.kind == "tutor" then
       children[#children + 1] = { comp = M.TutorEntry, key = entry, memo = true, props = { entry = entry } }
     elseif entry.kind == "thought" then

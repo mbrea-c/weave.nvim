@@ -114,11 +114,28 @@ describe("view.transcript entries", function()
     handle.unmount()
   end)
 
-  it("indents continuation lines of a multi-line user prompt", function()
+  -- User prompts render as markdown under the same "Prettify markdown" pref
+  -- as agent prose: prettified, a single newline is a soft break (one wrapping
+  -- paragraph); with the pref off the raw source shows, continuation lines
+  -- indented under the marker as before.
+  it("user markdown: prettify joins soft breaks, raw keeps the lines", function()
     local store = SessionStore:new()
     store:append_entry({ kind = "user", text = "first\nsecond" })
-    local handle = mount_transcript(store)
+    local prefs = Prefs:new()
+    local handle = mount_transcript(store, nil, prefs)
+    assert.same({ "❯ first second" }, trimmed(handle.bufnr))
+
+    prefs:toggle("conceal_markdown")
     assert.same({ "❯ first", "  second" }, trimmed(handle.bufnr))
+    handle.unmount()
+  end)
+
+  it("user markdown: settled formatting highlights + conceals like agent prose", function()
+    local store = SessionStore:new()
+    store:append_entry({ kind = "user", text = "please **fix** this" })
+    local handle = mount_transcript(store)
+    assert.equal("❯ please fix this", trimmed(handle.bufnr)[1])
+    assert.equal(1, #marks_with(handle.bufnr, "@markup.strong"))
     handle.unmount()
   end)
 

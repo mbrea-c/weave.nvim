@@ -40,7 +40,7 @@ local function mount_prompt(store, callbacks)
     store = store,
     on_submit = callbacks.on_submit or function() end,
     on_steer = callbacks.on_steer or function() end,
-  }, { width = 40, height = 5 })
+  }, { width = 40, height = 14 })
 end
 
 describe("view.prompt", function()
@@ -116,6 +116,37 @@ describe("view.prompt", function()
     -- empty steer is a no-op
     press("<C-x>")
     assert.same({ "do this instead" }, steered)
+    handle.unmount()
+  end)
+
+  it("grows with the typed lines (3..8 content rows) and shrinks back on submit", function()
+    local store = SessionStore:new()
+    local handle = mount_prompt(store)
+    local sub = subwin_of(handle)
+    -- resting: the 3-row minimum (the subwin float covers the content box)
+    assert.equal(3, vim.api.nvim_win_get_height(sub))
+
+    vim.api.nvim_set_current_win(sub)
+    press("ione<CR>two<CR>three<CR>four<Esc>")
+    -- on_change lands on a scheduled tick, so wait for the resize
+    vim.wait(2000, function()
+      return vim.api.nvim_win_get_height(sub) == 4
+    end, 10)
+    assert.equal(4, vim.api.nvim_win_get_height(sub))
+
+    -- past the cap the box stops at 8 rows and scrolls inside
+    press("Go" .. ("more<CR>"):rep(7) .. "last<Esc>")
+    vim.wait(2000, function()
+      return vim.api.nvim_win_get_height(sub) == 8
+    end, 10)
+    assert.equal(8, vim.api.nvim_win_get_height(sub))
+
+    -- submitting clears the box, which drops it back to the minimum
+    press("<CR>")
+    vim.wait(2000, function()
+      return vim.api.nvim_win_get_height(sub) == 3
+    end, 10)
+    assert.equal(3, vim.api.nvim_win_get_height(sub))
     handle.unmount()
   end)
 

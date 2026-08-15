@@ -218,6 +218,35 @@ describe("feedback comment editor", function()
     error("no text_input in the editor")
   end)
 
+  it("gives the input buffer the markdown filetype", function()
+    for _, node in ipairs(flatten(View.Editor(fake_ctx(), { id = comment.id }))) do
+      if node.comp == ui.text_input then
+        local buf = vim.api.nvim_create_buf(false, true)
+        node.props.on_create(buf)
+        assert.equal("markdown", vim.bo[buf].filetype)
+        return
+      end
+    end
+    error("no text_input in the editor")
+  end)
+
+  -- The box follows the body between 3 and 8 content rows (border excluded);
+  -- the height prop is border-box, so the assertions carry the +2.
+  it("sizes the input to the body, clamped to 3..8 content rows", function()
+    local function input_height(body)
+      Store.update(comment.id, body)
+      for _, node in ipairs(flatten(View.Editor(fake_ctx(), { id = comment.id }))) do
+        if node.comp == ui.text_input then
+          return node.props.height
+        end
+      end
+      error("no text_input in the editor")
+    end
+    assert.equal(5, input_height("one line"))
+    assert.equal(7, input_height("1\n2\n3\n4\n5"))
+    assert.equal(10, input_height(("x\n"):rep(20)))
+  end)
+
   it("saves the typed body and closes", function()
     local ctx = fake_ctx()
     local closed = false

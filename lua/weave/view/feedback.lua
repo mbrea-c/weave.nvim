@@ -11,6 +11,7 @@
 -- putting a window on the screen.
 
 local ui = require("fibrous.inline.components")
+local Autosize = require("weave.view.autosize")
 local Store = require("weave.feedback_store")
 local TerminalTasks = require("weave.view.terminal_tasks")
 
@@ -275,8 +276,14 @@ function M.Editor(ctx, props)
     comp = ui.text_input,
     props = {
       value = comment.body,
-      height = 5,
+      -- Sized to the text (each on_change re-renders through `text`, so the
+      -- box follows every added/removed line while typing).
+      height = Autosize.height(text.get()),
       clear_on_submit = false,
+      on_create = function(bufnr)
+        -- comments are markdown, like the prompt box
+        vim.bo[bufnr].filetype = "markdown"
+      end,
       on_change = function(txt)
         text.set(txt)
       end,

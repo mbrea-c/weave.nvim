@@ -24,6 +24,7 @@
 -- reconciliation reuses its fiber, and the subwindow float keyed on that fiber).
 
 local ui = require("fibrous.inline.components")
+local Autosize = require("weave.view.autosize")
 local Keys = require("weave.keys")
 local Theme = require("weave.view.theme")
 local Water = require("weave.view.water")
@@ -203,8 +204,9 @@ end
 
 --- @param ctx table
 --- @param props { store: weave.store.SessionStore, on_submit: fun(text: string), on_steer: fun(text: string), height?: integer, on_create?: fun(bufnr: integer) }
----   `height` sizes the input box (the block itself grows with queued rows so
----   the transcript above shrinks); `on_create` receives the input buffer after
+---   `height` sizes the RESTING input box (the box grows with its content up
+---   to Autosize.MAX_ROWS rows, and the block with queued rows, so the
+---   transcript above shrinks); `on_create` receives the input buffer after
 ---   the prompt's own wiring, so the shell can add panel keymaps to it.
 function M.Prompt(ctx, props)
   local state = use_store(ctx, props.store)
@@ -220,6 +222,12 @@ function M.Prompt(ctx, props)
   -- off it (and a drained/removed entry falls gracefully back to compose).
   local nav = ctx.use_state({ kind = "compose" })
   local seed = ctx.use_state(0) -- bump to force a box re-seed without a position change
+  -- The box follows its content between Autosize.MIN/MAX_ROWS content rows;
+  -- config's prompt_height keeps setting the RESTING size (its content rows
+  -- are the floor). State rather than a render-time derivation: compose
+  -- typing only touches refs, so this bump is the re-render at a line change.
+  local min_rows = (props.height or 6) - 3
+  local box_h = ctx.use_state(Autosize.height("", min_rows))
   local st = ctx.use_ref() -- live values the once-wired keymap handlers read at fire time
 
   local n = nav.get()
@@ -242,6 +250,8 @@ function M.Prompt(ctx, props)
   st.nav = nav
   st.seed = seed
   st.target = target
+  st.min_rows = min_rows
+  st.box_h = box_h
   st.draft = st.draft or ""
 
   -- What the box shows at `t`: the saved draft at compose, the queued text (by
@@ -268,6 +278,13 @@ function M.Prompt(ctx, props)
     -- (a turn ending mid-edit must not send text out from under the user) and
     -- releases when the box moves off (requests.md).
     st.store:set_editing_queued(st.target.kind == "queued" and st.target.id or nil)
+    -- Resize to the seeded text NOW — on_lines will report it through
+    -- on_change too, but only on a later tick (recalling a tall queued prompt
+    -- shouldn't show one frame of the old height).
+    local h = Autosize.height(text_for(st.target), st.min_rows)
+    if st.box_h.get() ~= h then
+      st.box_h.set(h)
+    end
   end, { sig })
 
   -- The recall column as IDENTITIES, nearest-first: last queued .. first queued,
@@ -365,6 +382,10 @@ function M.Prompt(ctx, props)
       elseif st.target.kind == "compose" then
         st.draft = txt
       end
+      local h = Autosize.height(txt, st.min_rows)
+      if st.box_h.get() ~= h then
+        st.box_h.set(h)
+      end
     end
   end
 
@@ -390,7 +411,7 @@ function M.Prompt(ctx, props)
     key = BOX_KEY,
     props = {
       value = "",
-      height = math.max((props.height or 5) - 1, 3),
+      height = box_h.get(),
       clear_on_submit = false, -- do_submit owns clearing / re-seeding
       on_change = function(txt)
         st.on_change(txt)

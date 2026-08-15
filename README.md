@@ -495,7 +495,7 @@ overrides it for that panel.
 | --- | --- | --- | --- |
 | `width` | `integer` | `100` | Total docked panel width (columns) |
 | `sidebar_width` | `integer` | `30` | Sidebar column width (clamped to at most half the panel) |
-| `prompt_height` | `integer` | `5` | Prompt input height (rows) |
+| `prompt_height` | `integer` | `6` | Resting prompt height (rows, incl. the status row); the box auto-grows with its content, up to 8 text rows |
 
 `tutor` configures [tutor mode](#tutor-mode). The three prompts are the entire
 agent-facing contract — the defaults ask for annotations over chat, press for
