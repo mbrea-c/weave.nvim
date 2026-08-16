@@ -11,13 +11,13 @@
 -- renders/list-manages what lives here.
 
 local Config = require("weave.config")
-local Prefs = require("weave.view.prefs")
 local Session = require("weave.session")
+local Settings = require("weave.settings")
 
 --- @class weave.registry.Entry
 --- @field key integer Stable handle (monotonic, never reused)
 --- @field session weave.Session
---- @field prefs weave.view.Prefs
+--- @field prefs weave.settings.Store The entry's VIEW-scoped settings (display toggles), living exactly as long as the entry
 --- @field provider string Provider key the session was created with
 
 local M = {}
@@ -41,10 +41,14 @@ function M.add(opts)
   local entry = {
     key = next_key,
     session = Session:new({ provider = opts.provider, get_instance = opts.get_instance }),
-    prefs = Prefs:new(),
+    prefs = Settings.new_view(),
     provider = opts.provider or Config.provider,
   }
   entries[#entries + 1] = entry
+  -- Drive edit sync (auto-send/gate) from this session's settings store, and
+  -- keep its agent brief announced across conversations.
+  require("weave.edit_sync").watch(entry.session)
+  require("weave.briefs").watch(entry.session)
   entry.session:start(opts.restore and { restore = opts.restore } or nil)
   return entry
 end

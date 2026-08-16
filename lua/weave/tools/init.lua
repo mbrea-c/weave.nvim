@@ -24,6 +24,7 @@ M.OWNS = {
   task_status = true,
   task_wait = true,
   task_kill = true,
+  check_user_edits = true,
   request_access = true,
   web_fetch = true,
   annotate = true,
@@ -54,9 +55,17 @@ end
 function M.register_into(server)
   local Gate = require("weave.tools.gate")
   local fs = require("weave.tools.fs")
+  -- The mutating tools additionally sit behind the EDIT gate (weave.tools.
+  -- user_edits): with the edit_gate setting on, they refuse while the user
+  -- has edits the conversation has not seen. Guard inside, permissions
+  -- outside — a permission deny should not leak the gate's refusal text.
+  local UserEdits = require("weave.tools.user_edits")
   server.register_tool("read", Gate.wrap("read", fs.read, { resource = fs_resource, kind = "read" }))
-  server.register_tool("write", Gate.wrap("write", fs.write, { resource = fs_resource, kind = "edit" }))
-  server.register_tool("edit", Gate.wrap("edit", fs.edit, { resource = fs_resource, kind = "edit" }))
+  server.register_tool(
+    "write",
+    Gate.wrap("write", UserEdits.guard(fs.write), { resource = fs_resource, kind = "edit" })
+  )
+  server.register_tool("edit", Gate.wrap("edit", UserEdits.guard(fs.edit), { resource = fs_resource, kind = "edit" }))
   -- Discovery. The gate's resource is the search ROOT, not the files matched:
   -- gating per result would mean one prompt per file, so a deny rule on
   -- `*/secrets/*` blocks a search rooted inside it but not a cwd-rooted
@@ -72,7 +81,13 @@ function M.register_into(server)
   local command = function(args)
     return type(args.command) == "string" and args.command or nil
   end
-  server.register_tool("task_start", Gate.wrap("task_start", tasks.start, { resource = command, kind = "execute" }))
+  server.register_tool(
+    "task_start",
+    Gate.wrap("task_start", UserEdits.guard(tasks.start), { resource = command, kind = "execute" })
+  )
+  -- The gate's other half: how the agent gets back in sync (and a tool any
+  -- agent may call defensively — cheap when clean).
+  server.register_tool("check_user_edits", Gate.wrap("check_user_edits", UserEdits.check, { kind = "read" }))
   server.register_tool("task_status", Gate.wrap("task_status", tasks.status, { kind = "execute" }))
   server.register_tool("task_wait", Gate.wrap("task_wait", tasks.wait, { kind = "execute" }))
   server.register_tool("task_kill", Gate.wrap("task_kill", tasks.kill, { kind = "execute" }))

@@ -45,7 +45,6 @@
 --- @field hint string Rotating UI hint shown in the sidebar (rotated each turn)
 --- @field commands table[] Slash-command completion items (always includes /new)
 --- @field usage weave.store.Usage|nil Session usage (context tokens + cost) from usage_update; nil until first reported
---- @field tutor boolean Whether this conversation is in tutor mode (weave.tutor owns the behaviour; this is the mirror the UI reads, so the checkbox, `:Weave tutor` and the Lua API cannot disagree)
 
 --- @class weave.store.SessionMeta
 --- @field provider? string Provider display name (e.g. "Kiro ACP")
@@ -218,7 +217,6 @@ function SessionStore:new()
       hint = random_hint(),
       commands = to_completion_items({}),
       usage = nil,
-      tutor = false,
       -- index of the oldest entry the transcript currently renders (tail window)
       window_start = 1,
     },
@@ -289,21 +287,6 @@ function SessionStore:reveal_older()
   end
   self:_commit(function(draft)
     draft.window_start = target
-  end)
-end
-
---- Mirror tutor mode into the snapshot. weave.tutor owns the behaviour (the
---- cursor, the debounce, the prompts); this is only what the UI reads, so the
---- sidebar checkbox, `:Weave tutor` and the Lua API are three doors onto one
---- switch rather than three states that can drift apart.
---- @param on boolean
-function SessionStore:set_tutor(on)
-  on = on == true
-  if self.state.tutor == on then
-    return
-  end
-  self:_commit(function(draft)
-    draft.tutor = on
   end)
 end
 

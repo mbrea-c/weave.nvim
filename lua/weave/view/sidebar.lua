@@ -6,10 +6,12 @@
 -- Each section is a SELF-CONTAINED component: it owns its header, its rows
 -- and its use_store subscription, so it renders (and updates) standalone —
 -- Sidebar is pure composition. Section headers are Title labels (fibrous has
--- no border labels); the pref checkboxes are ui.checkbox.
+-- no border labels); the settings rows come from the registry-shaped
+-- controls shared with weave.view.settings_window.
 
 local ui = require("fibrous.inline.components")
 local SessionStore = require("weave.session_store")
+local Settings = require("weave.settings")
 local Feedback = require("weave.view.feedback")
 local TerminalTasks = require("weave.view.terminal_tasks")
 local Theme = require("weave.view.theme")
@@ -201,51 +203,48 @@ function M.UsageSection(ctx, props)
   return { comp = ui.col, props = {}, children = rows }
 end
 
---- The view-pref checkboxes, wired straight to Prefs:toggle — plus tutor mode,
---- which is NOT one.
----
---- The four prefs are pure display state, per panel, with no side effects.
---- Tutor mode is session state that sends prompts to the agent and interrupts
---- the turn in flight. It sits here anyway, because a switch is what it is and
---- this is where a user looks for switches — but it is wired to the session
---- handler rather than to Prefs, and its checked state is read from the STORE,
---- so the box agrees with `:Weave tutor` and the Lua API instead of tracking a
---- fourth copy of the truth.
+--- The settings section: a Settings header that opens the full window
+--- (weave.view.settings_window), then the setup-configured subset of
+--- settings inline (Config.settings.sidebar). Which settings deserve a
+--- permanent row is the user's call at setup; everything else lives one
+--- activation away. Each row is the registry-shaped control from the
+--- settings window, wired to the store its scope names — view settings to
+--- this panel's store, session settings to this conversation's, globals to
+--- the editor's.
 --- @param ctx table
---- @param props { prefs: weave.view.Prefs, store?: weave.store.SessionStore, on_toggle_tutor?: fun() }
-function M.PrefsSection(ctx, props)
-  local prefs = use_store(ctx, props.prefs)
-  local state = props.store and use_store(ctx, props.store) or nil
-  local function pref_checkbox(key, label)
-    return {
-      comp = ui.checkbox,
-      props = {
-        label = label,
-        checked = prefs[key],
-        on_toggle = function()
-          props.prefs:toggle(key)
-        end,
-      },
-    }
+--- @param props { prefs: weave.settings.Store, session_settings?: weave.settings.Store }
+function M.SettingsSection(ctx, props)
+  local SettingsWindow = require("weave.view.settings_window")
+  local stores = {
+    view = props.prefs,
+    session = props.session_settings,
+    global = Settings.global(),
+  }
+  local snapshots = {}
+  for scope, store in pairs(stores) do
+    snapshots[scope] = use_store(ctx, store)
   end
-  return {
-    comp = ui.col,
-    props = {},
-    children = {
-      pref_checkbox("show_thoughts", "Show thinking"),
-      pref_checkbox("show_diffs", "Show edit diffs"),
-      pref_checkbox("conceal_markdown", "Prettify markdown"),
-      pref_checkbox("follow", "Follow streaming"),
-      {
-        comp = ui.checkbox,
-        props = {
-          label = "Tutor mode",
-          checked = state ~= nil and state.tutor == true,
-          on_toggle = props.on_toggle_tutor or function() end,
-        },
+
+  local children = {
+    {
+      comp = ui.button,
+      props = {
+        label = "Settings",
+        theme = false,
+        style = { text_hl = "Title", _hover = { hl = "FibrousHover" } },
+        on_press = function()
+          SettingsWindow.open({ view = stores.view, session = stores.session })
+        end,
       },
     },
   }
+  for _, spec in ipairs(Settings.sidebar_specs()) do
+    local store = stores[spec.scope]
+    if store then
+      children[#children + 1] = SettingsWindow.setting_row(spec, store, snapshots[spec.scope])
+    end
+  end
+  return { comp = ui.col, props = {}, children = children }
 end
 
 --- The rotating hint line.
@@ -545,7 +544,7 @@ function M.PermissionsSection(ctx, props)
 end
 
 --- Pure composition — every section subscribes to its own store slice.
---- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.view.Prefs, on_details?: fun(), on_toggle_tutor?: fun() }
+--- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.settings.Store, session_settings?: weave.settings.Store, on_details?: fun() }
 function M.Sidebar(_, props)
   return {
     comp = ui.col,
@@ -563,8 +562,8 @@ function M.Sidebar(_, props)
       { comp = M.SessionSection, props = { store = props.store, on_details = props.on_details } },
       { comp = M.UsageSection, props = { store = props.store } },
       {
-        comp = M.PrefsSection,
-        props = { prefs = props.prefs, store = props.store, on_toggle_tutor = props.on_toggle_tutor },
+        comp = M.SettingsSection,
+        props = { prefs = props.prefs, session_settings = props.session_settings },
       },
       { comp = M.HintSection, props = { store = props.store } },
       { comp = M.TasksSection, props = { store = props.store, width = props.sidebar_width } },

@@ -8,6 +8,7 @@ local mount = require("fibrous.inline.mount")
 local Permissions = require("weave.permissions")
 local SessionStore = require("weave.session_store")
 local Prefs = require("weave.view.prefs")
+local Settings = require("weave.settings")
 local sidebar = require("weave.view.sidebar")
 local Theme = require("weave.view.theme")
 
@@ -54,12 +55,13 @@ end
 
 local SIDEBAR_WIDTH = 30
 
-local function mount_sidebar(store, prefs)
-  return mount.floating(
-    sidebar.Sidebar,
-    { store = store, prefs = prefs or Prefs:new(), sidebar_width = SIDEBAR_WIDTH },
-    { width = 34, height = 40 }
-  )
+local function mount_sidebar(store, prefs, session_settings)
+  return mount.floating(sidebar.Sidebar, {
+    store = store,
+    prefs = prefs or Prefs:new(),
+    session_settings = session_settings or Settings.for_session({}),
+    sidebar_width = SIDEBAR_WIDTH,
+  }, { width = 34, height = 40 })
 end
 
 describe("view.sidebar", function()
@@ -70,14 +72,13 @@ describe("view.sidebar", function()
 
     assert.truthy(text:find("Session", 1, true))
     assert.truthy(text:find("(connecting…)", 1, true))
+    assert.truthy(text:find("Settings", 1, true))
     assert.truthy(text:find("[x] Show thinking", 1, true))
     assert.truthy(text:find("[x] Show edit diffs", 1, true))
     assert.truthy(text:find("[x] Prettify markdown", 1, true))
     assert.truthy(text:find("[x] Follow streaming", 1, true))
-    -- Tutor mode sits with the other toggles because that is where a user
-    -- looks for a switch, even though it is session STATE with side effects
-    -- rather than a view pref (see the section's own note).
-    assert.truthy(text:find("[ ] Tutor mode", 1, true))
+    -- the setup-configured session-scoped row (Config.settings.sidebar)
+    assert.truthy(text:find("[ ] Auto-send edits", 1, true))
     assert.truthy(text:find("Usage", 1, true))
     assert.truthy(text:find("(no usage yet)", 1, true))
     assert.truthy(text:find("Hint", 1, true))
@@ -94,32 +95,49 @@ describe("view.sidebar", function()
     handle.unmount()
   end)
 
-  it("checks the tutor box from the store, so every route to the mode agrees", function()
-    -- :Weave tutor, the Lua API and this checkbox are three doors to one
-    -- switch; the box has to read the SAME state they write, or it lies the
-    -- moment the mode is toggled from anywhere else.
-    local store = SessionStore:new()
-    store:set_tutor(true)
-    local handle = mount_sidebar(store)
-    assert.truthy(text_of(handle.bufnr):find("[x] Tutor mode", 1, true))
+  it("checks a session-scoped row from the session's settings store", function()
+    -- the sidebar checkbox, the settings window and presets are all doors
+    -- onto the same store; the box has to read the state they write
+    local session_settings = Settings.for_session({})
+    session_settings:set("auto_send_edits", true)
+    local handle = mount_sidebar(SessionStore:new(), nil, session_settings)
+    assert.truthy(text_of(handle.bufnr):find("[x] Auto-send edits", 1, true))
     handle.unmount()
   end)
 
-  it("toggles tutor mode through the handler, not through Prefs", function()
-    local store = SessionStore:new()
-    local toggled = 0
-    local handle = mount.floating(sidebar.PrefsSection, {
-      prefs = Prefs:new(),
-      store = store,
-      on_toggle_tutor = function()
-        toggled = toggled + 1
-      end,
+  it("toggles a session-scoped row into the settings store, not into Prefs", function()
+    local prefs = Prefs:new()
+    local session_settings = Settings.for_session({})
+    local handle = mount.floating(sidebar.SettingsSection, {
+      prefs = prefs,
+      session_settings = session_settings,
     }, { width = 34, height = 10 })
 
-    press_on(handle, "Tutor mode")
-    assert.equal(1, toggled)
+    press_on(handle, "Auto-send edits")
+    assert.is_true(session_settings:get("auto_send_edits"))
     -- ...and it did NOT quietly become a view pref
-    assert.is_nil(Prefs:new().tutor)
+    assert.is_nil(prefs.state.auto_send_edits)
+    handle.unmount()
+  end)
+
+  it("opens the full settings window from the Settings header", function()
+    local window = require("weave.view.settings_window")
+    local opened
+    local saved_open = window.open
+    window.open = function(opts)
+      opened = opts
+    end
+    local prefs = Prefs:new()
+    local session_settings = Settings.for_session({})
+    local handle = mount.floating(sidebar.SettingsSection, {
+      prefs = prefs,
+      session_settings = session_settings,
+    }, { width = 34, height = 10 })
+
+    press_on(handle, "Settings")
+    window.open = saved_open
+    assert.equal(prefs, opened.view)
+    assert.equal(session_settings, opened.session)
     handle.unmount()
   end)
 

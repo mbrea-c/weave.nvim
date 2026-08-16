@@ -87,8 +87,8 @@ local function Panel(_, props)
           sidebar_width = props.sidebar_width,
           store = props.store,
           prefs = props.prefs,
+          session_settings = props.session_settings,
           on_details = props.on_session_details,
-          on_toggle_tutor = props.on_toggle_tutor,
         },
       },
     },
@@ -108,7 +108,7 @@ end
 --- @field is_open fun(): boolean
 
 --- Open the panel.
---- @param opts { store: weave.store.SessionStore, prefs: weave.view.Prefs, on_submit?: fun(text: string), on_steer?: fun(text: string), on_cancel?: fun(), on_permission?: fun(index: integer), on_cycle_permission_mode?: fun(), on_pick_model?: fun(), on_pick_mode?: fun(), on_restore_picker?: fun(), on_sessions?: fun(), on_session_details?: fun(), on_toggle_tutor?: fun(), width?: integer, sidebar_width?: integer, prompt_height?: integer }
+--- @param opts { store: weave.store.SessionStore, prefs: weave.settings.Store, session_settings?: weave.settings.Store, on_submit?: fun(text: string), on_steer?: fun(text: string), on_cancel?: fun(), on_permission?: fun(index: integer), on_cycle_permission_mode?: fun(), on_pick_model?: fun(), on_pick_mode?: fun(), on_restore_picker?: fun(), on_sessions?: fun(), on_session_details?: fun(), width?: integer, sidebar_width?: integer, prompt_height?: integer }
 --- @return weave.view.PanelHandle handle
 function M.open(opts)
   local store = opts.store
@@ -146,7 +146,7 @@ function M.open(opts)
     on_submit = on_submit,
     on_steer = on_steer,
     on_session_details = opts.on_session_details,
-    on_toggle_tutor = opts.on_toggle_tutor,
+    session_settings = opts.session_settings,
     on_transcript_create = function(bufnr, winid)
       transcript.bufnr, transcript.winid = bufnr, winid
     end,
@@ -268,9 +268,9 @@ function M.open(opts)
     Keys.map(bufnr, "toggle_follow", function()
       prefs:toggle("follow")
     end)
-    if opts.on_toggle_tutor then
-      Keys.map(bufnr, "toggle_tutor", opts.on_toggle_tutor)
-    end
+    Keys.map(bufnr, "open_settings", function()
+      require("weave.view.settings_window").open({ view = prefs, session = opts.session_settings })
+    end)
     Keys.map(bufnr, "cycle_permission_mode", on_cycle)
     Keys.map(bufnr, "pick_model", on_pick_model)
     Keys.map(bufnr, "pick_mode", on_pick_mode)

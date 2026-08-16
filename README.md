@@ -148,7 +148,7 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | `;;d` | `toggle_diffs` | Toggle edit diffs |
 | `;;c` | `toggle_conceal` | Toggle markdown prettifying (conceal) |
 | `;;f` | `toggle_follow` | Toggle follow-streaming (auto-scroll) |
-| `;;T` | `toggle_tutor` | Toggle [tutor mode](#tutor-mode) for this session |
+| `;;S` | `open_settings` | Open the [settings window](#settings) |
 | `;;p` | `cycle_permission_mode` | Cycle permission preset |
 | `;;m` / `;;M` | `pick_model` / `pick_mode` | Pick model / pick mode |
 | `;;1` … `;;9` | `permission_prefix` + digit | Answer a permission request with option N |
@@ -382,32 +382,59 @@ Registering an existing name replaces it rather than stacking. A sink that
 returns an error or throws is reported and **the draft is kept**, so a failed
 send never loses hand-written comments.
 
+### Settings
+
+Runtime switches live in one declarative registry (`weave.settings`), each
+with exactly **one scope** — there is no global→session→view override chain,
+just three homes:
+
+| Setting | Scope | Type | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| `show_thoughts` | view | boolean | `true` | Render thinking blocks (`;;t`) |
+| `show_diffs` | view | boolean | `true` | Render edit diffs (`;;d`) |
+| `conceal_markdown` | view | boolean | `true` | Prettify markdown (`;;c`) |
+| `follow` | view | boolean | `true` | Follow streaming (`;;f`) |
+| `track_edits` | global | boolean | `false` | Collect the USER's edits into the revision log (one log per editor, hence global) |
+| `auto_send_edits` | session | boolean | `false` | Send this conversation debounced squashed diffs of your edits |
+| `debounce_ms` | session | integer | `7000` | Quiet time before a batch goes out |
+| `edit_gate` | session | boolean | `false` | Refuse the agent's `write`/`edit`/`task_start` while you have edits it has not seen (it calls `check_user_edits` to catch up) |
+| `brief` | session | enum | `"normal"` | The agent's standing instruction profile (see [briefs](#tutor-mode)) |
+
+*View* settings are per panel, *session* settings per conversation, *global*
+per editor. The sidebar renders the subset named in `settings.sidebar`
+(setup-configurable); the **Settings** header above them — or `;;S` — opens
+the full window: every setting grouped by scope, controls shaped by type
+(checkbox / `vim.ui.input` / `vim.ui.select`), and the **preset** buttons.
+
+A preset is a button, not a state: it sets exactly the keys it names and
+leaves the rest untouched. Hand-editing a setting afterwards puts you in no
+preset at all, and nothing pretends otherwise. Two ship by default — `tutor`
+and `normal` — and `settings.presets` adds your own.
+
+Flipping `auto_send_edits` or `edit_gate` on while `track_edits` is off turns
+tracking on too, out loud — a toggle that silently does nothing would be
+worse.
+
 ### Tutor mode
 
-The same idea pointed the other way: instead of you reviewing the agent's code,
-the agent reviews **yours**, as you write it. Turn it on for a session and
-weave starts sending it what you change, unprompted, and asks it to teach
-rather than to do.
+The same idea as inline feedback pointed the other way: instead of you
+reviewing the agent's code, the agent reviews **yours**, as you write it.
+Tutor mode is a **preset**: the `[tutor]` button in the settings window sets
+`track_edits`, `auto_send_edits` and `brief = "tutor"` in one press; the
+`[normal]` preset is the way back. The pieces are ordinary settings, so a
+tutor that never interrupts (`auto_send_edits` off, `edit_gate` on, agent
+pulls with `check_user_edits`) is just a different combination.
 
-Three doors onto the same switch — the **Tutor mode** checkbox in the sidebar
-(below *Follow streaming*), `;;T` in the panel, or the command:
+The **brief** is what makes the agent a tutor rather than an assistant: a
+standing instruction profile, sent when the setting changes — and re-announced
+to every fresh conversation (`/new`, restore), so the mode survives them.
+Briefs are setup-configurable (`settings.briefs`): add a profile, and it
+appears in the `brief` enum next to the shipped `normal` and `tutor`.
 
-```vim
-:Weave tutor        " toggle for the session selected in this tab
-:Weave tutor on
-:Weave tutor off
-```
-
-The checkbox sits with the view prefs because that is where you look for a
-switch, but it is not one of them: the four above it are pure display state,
-while this one sends prompts to the agent and interrupts the turn in flight.
-It reads the session store rather than the panel's prefs, so all three doors
-always agree.
-
-It is **per session** — a tutor in one panel and an ordinary assistant in
-another is a normal thing to want. Collection is editor-global and runs
-whenever *any* session has it on; each session tracks what it has already sent,
-so two of them never eat each other's window.
+Auto-send is **per session** — a tutor in one panel and an ordinary assistant
+in another is a normal thing to want. Collection is editor-global; each
+session tracks what it has already **seen** (one cursor shared by auto-send
+and the edit gate), so two of them never eat each other's window.
 
 What the agent receives is one **squashed diff** of everything you changed
 since its last update — not a replay of every keystroke. A line you typed and
@@ -415,12 +442,15 @@ retyped five times arrives as whatever it finally says, and a change you made
 and then undid does not arrive at all. File creations and deletions are in
 there too.
 
-By default a batch goes out after **7 seconds of quiet**, or after **60
-seconds** regardless if you never stop typing, and it **interrupts** the turn in
-flight (the same thing `<C-x>` does). For the impatient, send now:
+By default a batch goes out after **7 seconds of quiet** (`debounce_ms`), or
+after **60 seconds** regardless if you never stop typing, and it
+**interrupts** the turn in flight (the same thing `<C-x>` does). The cursor
+only advances when a diff actually reaches the wire: a send that dies parked
+behind a cancelled turn is re-squashed into the next one instead of being
+lost. For the impatient, send now:
 
 ```lua
-vim.keymap.set("n", ";;F", require("weave.tutor").flush_now, { desc = "weave: flush my edits now" })
+vim.keymap.set("n", ";;F", require("weave.edit_sync").flush_now, { desc = "weave: flush my edits now" })
 ```
 
 Sends appear in the transcript as a single quiet line (`⇅ sent 2 files you
@@ -464,8 +494,8 @@ tool. Both directions of feedback are documented together under [Inline code
 feedback](#inline-code-feedback); they share the anchoring layer but not their
 namespaces, so `;;x` never dismisses one of your own comments.
 
-Everything about the mode is configurable — see `tutor` under
-[Configuration](#configuration). The three prompts especially: they are the
+Everything about the mode is configurable — see `edits` and `settings` under
+[Configuration](#configuration). The brief prompts especially: they are the
 whole agent-facing contract, and rewriting them is how you get the tutor you
 actually want.
 
@@ -483,7 +513,8 @@ actually want.
 | `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit, glob/grep, task lifecycle, web_fetch) via clankbox; `clankbox_path`, `ripgrep_path` and `curl_path` override binary/checkout auto-detection |
 | `permissions` | `table` | `{ presets = {} }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
 | `sandbox` | `table` | `{ mode = "on" }` | Agent process confinement (bubblewrap on Linux, Seatbelt on macOS — see [Sandbox](#sandbox)) |
-| `tutor` | `table` | see below | [Tutor mode](#tutor-mode): timing, and the three prompts that make the agent a tutor |
+| `edits` | `table` | see below | Edit-batch delivery mechanics ([tutor mode](#tutor-mode)); the on/off switches are runtime [settings](#settings) |
+| `settings` | `table` | see below | The runtime-settings surface: sidebar subset, default overrides, agent briefs, presets |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
 | `view` | `table` | see below | Default panel geometry |
 | `keys` | `table` | see [Keybinds](#keybinds) | Key(s) per named action |
@@ -497,22 +528,29 @@ overrides it for that panel.
 | `sidebar_width` | `integer` | `30` | Sidebar column width (clamped to at most half the panel) |
 | `prompt_height` | `integer` | `6` | Resting prompt height (rows, incl. the status row); the box auto-grows with its content, up to 8 text rows |
 
-`tutor` configures [tutor mode](#tutor-mode). The three prompts are the entire
-agent-facing contract — the defaults ask for annotations over chat, press for
-**brevity** (you are mid-flow, and every annotation pushes your code down the
-screen), discourage empty praise, and forbid it from doing the work for you.
-But a tutor for learning Rust and a tutor for reviewing a colleague's style
-want different words. The rest is timing.
+`edits` configures how edit batches reach the agent (whether they do at all is
+the `track_edits`/`auto_send_edits` runtime [settings](#settings)):
 
-| `tutor` field | Type | Default | Meaning |
+| `edits` field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `debounce_ms` | `integer` | `7000` | Quiet time after an edit before the batch goes out |
-| `max_wait_ms` | `integer` | `60000` | Ceiling from the first unsent edit, so continuous typing still gets sent |
+| `max_wait_ms` | `integer` | `60000` | Ceiling from the first unsent edit, so continuous typing still gets sent (the quiet window itself is the `debounce_ms` setting) |
 | `on_flush` | `string` | `"interrupt"` | `"interrupt"` cancels the turn in flight (like `<C-x>`); `"queue"` waits behind it. `flush_now()` always interrupts |
 | `max_diff_bytes` | `integer` | `102400` | Cap on one batch's diff; truncation is announced, never silent |
-| `enabled_prompt` | `string` | see source | Sent when tutor mode goes on — what makes the agent a tutor |
-| `disabled_prompt` | `string` | see source | Sent when it goes off |
 | `edits_prompt` | `string` | see source | Preamble ahead of each batch of edits |
+
+`settings` configures the runtime-settings surface. The shipped `tutor` brief
+prompt is the entire agent-facing contract — it asks for annotations over
+chat, presses for **brevity** (you are mid-flow, and every annotation pushes
+your code down the screen), discourages empty praise, and forbids doing the
+work for you. But a tutor for learning Rust and a tutor for reviewing a
+colleague's style want different words.
+
+| `settings` field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `sidebar` | `string[]` | the four view toggles + `auto_send_edits` | Which settings get a permanent sidebar row; everything else lives behind the Settings header |
+| `defaults` | `table` | `{}` | Per-key overrides of the builtin setting defaults (e.g. `{ debounce_ms = 3000 }`) |
+| `briefs` | `table` | `normal`, `tutor` | The `brief` enum's options: `name = { prompt = "..." }`. Non-default briefs are re-announced to every fresh conversation |
+| `presets` | `list` | `tutor`, `normal` | Settings-window buttons: `{ name = "...", settings = { key = value } }`; each sets ONLY the keys it names |
 
 ```lua
 require("weave").setup({
@@ -1022,7 +1060,6 @@ weave.get_session()    -- the current tab's selected Session (or nil)
 weave.stop()           -- close every session (and all their panels)
 
 weave.attach(path)     -- attach a file to the next prompt (asks if omitted)
-weave.tutor(arg)       -- tutor mode for this tab's session: "on"/"off"/nil to toggle
 
 weave.dismiss_annotation()   -- drop the agent's annotation under the cursor
 weave.dismiss_annotations()  -- drop them all ({ buffer = true } for this file only)
@@ -1108,16 +1145,22 @@ and returns the comment (or `nil, err`). `comment_line` / `comment_selection` /
 float — useful in tests. `send` accepts `{ sink? }`, defaulting to `"weave"`.
 See [Inline code feedback](#inline-code-feedback) above for the full picture.
 
-### Tutor mode and annotations
+### Settings, edit sync and annotations
 
 ```lua
-local tutor = require("weave.tutor")
+local settings = require("weave.settings")
 
-tutor.enable(session)     -- session defaults to this tab's selected one
-tutor.disable(session)
-tutor.toggle(session)
-tutor.is_on(session)      -- boolean
-tutor.flush_now(session)  -- send pending edits NOW, interrupting
+settings.global()                  -- the editor-global store
+settings.for_session(session)      -- a session's store (created on first ask)
+-- a store: :get(key), :set(key, value), :toggle(key), :subscribe(fn)
+settings.for_session(s):set("auto_send_edits", true)
+settings.apply_preset(preset, { session = ..., view = ..., global = ... })
+
+local sync = require("weave.edit_sync")
+sync.flush_now(session)   -- send pending edits NOW, interrupting
+sync.pending(session)     -- does this conversation have unseen edits?
+
+require("weave.view.settings_window").open()  -- the full settings window
 ```
 
 ```lua
@@ -1145,7 +1188,6 @@ mode](#tutor-mode) for the whole picture.
 | `:Weave` | Toggle the panel |
 | `:Weave sessions` | Open the session modal |
 | `:Weave attach <file>` | Attach a file to the next prompt |
-| `:Weave tutor [on\|off]` | Tutor mode for this tab's session (no argument toggles) |
 
 ---
 
@@ -1184,18 +1226,25 @@ mode](#tutor-mode) for the whole picture.
                              is what makes squashing a burst exact
       revision_log.lua     collection: bursts, per-session cursors, and the
                              attribution that keeps the agent's writes out
-      tutor.lua            the mode itself: per-session, debounced sends
+      settings.lua         the runtime-settings registry + scoped stores
+                             (view/session/global) + presets
+      edit_sync.lua        user edits reaching a conversation: auto-send
+                             debounce, the shared seen-cursor, gate questions
+      briefs.lua           agent briefs: announce on change, re-announce to
+                             every fresh conversation
       init.lua             setup() + :Weave, panels per tabpage
     lua/weave/tools/     the MCP tool suite hosted by clankbox: fs (read/
                            write/edit, buffer-aware), search (glob/grep over
                            ripgrep, buffer-aware), tasks (task lifecycle),
                            annotate (feedback on the user's code),
-                           gate (the permission wrap over every def)
+                           gate (the permission wrap over every def),
+                           user_edits (the edit gate + check_user_edits)
     lua/weave/view/      fibrous components: transcript, sidebar, prompt,
                            panel (one docked pane, one mount; the transcript
                            is a fibrous ui.container), session_modal,
                            session_details (metadata + config dropdowns),
                            permissions_window (preset config + Lua editing),
+                           settings_window (every runtime setting + presets),
                            terminal_tasks (running tasks, live task views),
                            feedback (code feedback section + comment editor),
                            tool_call (tool-call rendering + the override

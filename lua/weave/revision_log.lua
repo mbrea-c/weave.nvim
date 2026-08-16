@@ -298,7 +298,7 @@ function M.close_burst()
   return rev
 end
 
---- Hear about each appended revision. Tutor mode uses this to arm its
+--- Hear about each appended revision. Edit sync uses this to arm its
 --- debounce; the log itself never decides when anything is sent.
 --- @param fn fun(rev: weave.revision.Revision)
 --- @return fun() unsubscribe

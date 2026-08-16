@@ -30,14 +30,20 @@
 --- @field ripgrep_path? string Absolute path to `rg` for the glob/grep tools; nil = look on PATH
 --- @field curl_path? string Absolute path to `curl` for the web_fetch tool; nil = look on PATH
 
---- @class weave.TutorConfig Tutor mode (weave.tutor): the agent watches the USER's edits and gives feedback
---- @field debounce_ms integer Quiet time after an edit before the batch is sent
+--- @class weave.EditsConfig Edit delivery mechanics (weave.edit_sync) — the runtime switches live in weave.settings
 --- @field max_wait_ms integer Hard ceiling from the first unsent edit, so a continuously-typing user still gets sent
 --- @field on_flush "interrupt"|"queue" Whether a debounced batch cancels the turn in flight or waits behind it
 --- @field max_diff_bytes integer Cap on one batch's diff text (truncation is announced, never silent)
---- @field enabled_prompt string Sent to the agent when tutor mode goes on
---- @field disabled_prompt string Sent when it goes off
 --- @field edits_prompt string Preamble ahead of each batch of user edits
+
+--- @class weave.BriefConfig One agent brief: a standing instruction profile for a conversation
+--- @field prompt string Sent when a session switches to this brief; non-default briefs are re-announced to every fresh conversation (/new, restore)
+
+--- @class weave.SettingsConfig The runtime-settings surface (weave.settings)
+--- @field sidebar string[] Setting keys the sidebar renders directly; everything else lives behind its Settings header
+--- @field defaults table<string, any> Per-key overrides of the builtin setting defaults
+--- @field briefs table<string, weave.BriefConfig> The `brief` enum's options; add your own profiles here
+--- @field presets weave.settings.Preset[] Buttons in the settings window; each sets ONLY the keys it names
 
 --- @class weave.PermissionsConfig The client-side permission engine (weave.permissions)
 --- @field preset? string Active preset at startup; unset = "ask", or its unsandboxed_* variant when the sandbox is off
@@ -57,7 +63,8 @@
 --- @field tools weave.ToolsConfig
 --- @field permissions weave.PermissionsConfig
 --- @field sandbox weave.SandboxConfig
---- @field tutor weave.TutorConfig
+--- @field edits weave.EditsConfig
+--- @field settings weave.SettingsConfig
 --- @field view weave.ViewConfig Default panel geometry (width / sidebar_width / prompt_height)
 --- @field keys table<string, weave.UserConfig.KeymapValue> Key(s) per named action (see weave.keys ACTIONS); `false` disables one
 --- @field tool_renderers weave.view.ToolRenderer[] Per-tool-call rendering overrides (see weave.view.tool_call)
@@ -83,7 +90,7 @@ local ConfigDefault = {
     toggle_diffs = ";;d",
     toggle_conceal = ";;c",
     toggle_follow = ";;f",
-    toggle_tutor = ";;T",
+    open_settings = ";;S",
     cycle_permission_mode = ";;p",
     pick_model = ";;m",
     pick_mode = ";;M",
@@ -267,57 +274,80 @@ local ConfigDefault = {
     ro_paths = {},
   },
 
-  -- Tutor mode (weave.tutor): per session, off by default. While it is on,
-  -- weave collects the USER's edits (never the agent's — see
-  -- weave.revision_log) and sends them to the agent as a squashed diff, so it
-  -- can review work as it happens instead of being asked to. The three prompts
-  -- are the whole agent-facing contract and are meant to be rewritten: they
-  -- are what makes the agent behave like a tutor rather than an assistant.
-  tutor = {
-    debounce_ms = 7000,
+  -- How edit batches reach the agent (weave.edit_sync). Whether they are
+  -- collected and sent at all is runtime state, not config — see the
+  -- track_edits / auto_send_edits / debounce_ms settings in weave.settings.
+  edits = {
     max_wait_ms = 60000,
     on_flush = "interrupt",
     max_diff_bytes = 100 * 1024,
-
-    enabled_prompt = table.concat({
-      "[weave] TUTOR MODE IS NOW ON.",
-      "",
-      "From now on you will periodically receive diffs of what the USER is writing,",
-      "unprompted, as they write it. They are not asking you to make changes — they are",
-      "asking you to teach. For each batch:",
-      "",
-      "  - Read what they did and why it might be wrong, fragile, or simply not the",
-      "    clearest way to say it. Say so plainly, and say what you would do instead.",
-      "  - Leave the feedback ON THE CODE with the `annotate` tool (a file, a line",
-      "    range, and your message), not only in chat. That is what the user reads.",
-      "  - Praise is cheap and unhelpful; if a batch is genuinely fine, say nothing or",
-      "    say it in one line. Do not invent problems to have something to say.",
-      "  - Do NOT edit their files. They are practising. Show them, do not do it.",
-      "",
-      "Be BRIEF, and be specific. The user is mid-flow with their hands on the",
-      "keyboard — they did not stop to ask you a question, and every annotation you",
-      "leave pushes their code down the screen to make room for itself. A paragraph",
-      "where a sentence would do is something they have to read, dismiss, and then",
-      "recover their place from. One or two sentences per point: name the exact thing,",
-      "say what you would do instead, stop. Do not restate what the code does, do not",
-      "explain the concept from first principles, and do not pad a thin observation",
-      "into a lecture — say less, or say nothing. If a point genuinely needs the long",
-      "version, leave the short annotation and offer the detail in chat for them to",
-      "ask for; do not deliver it unasked. Three sharp notes beat ten diligent ones.",
-      "",
-      "One caveat about the diffs: they are the user's edits as weave observed them, so",
-      "changes made by shell commands YOU ran (a formatter, a codemod) can appear in",
-      "them too. If a hunk looks like your own work, it probably is — say so rather",
-      "than crediting it to the user.",
-    }, "\n"),
-
-    disabled_prompt = table.concat({
-      "[weave] Tutor mode is now OFF. You will stop receiving the user's edits as they",
-      "make them. Go back to answering what you are asked.",
-    }, "\n"),
-
     edits_prompt = "[weave] The user has been editing. Everything they changed since your last"
       .. " update, squashed into one diff:",
+  },
+
+  -- The runtime-settings surface (weave.settings): which settings get a
+  -- permanent sidebar checkbox, per-key default overrides, the agent briefs
+  -- (the `brief` setting's options — standing instruction profiles, sent on
+  -- switch and re-announced to fresh conversations), and the presets (window
+  -- buttons; each sets only the keys it names). The brief prompts are the
+  -- whole agent-facing contract and are meant to be rewritten: they are what
+  -- makes the agent behave like a tutor rather than an assistant.
+  settings = {
+    sidebar = { "show_thoughts", "show_diffs", "conceal_markdown", "follow", "auto_send_edits" },
+    defaults = {},
+
+    presets = {
+      {
+        name = "tutor",
+        settings = { track_edits = true, auto_send_edits = true, brief = "tutor" },
+      },
+      {
+        name = "normal",
+        settings = { auto_send_edits = false, edit_gate = false, brief = "normal" },
+      },
+    },
+
+    briefs = {
+      normal = {
+        prompt = table.concat({
+          "[weave] Tutor mode is now OFF. You will stop receiving the user's edits as they",
+          "make them. Go back to answering what you are asked.",
+        }, "\n"),
+      },
+      tutor = {
+        prompt = table.concat({
+          "[weave] TUTOR MODE IS NOW ON.",
+          "",
+          "From now on you will periodically receive diffs of what the USER is writing,",
+          "unprompted, as they write it. They are not asking you to make changes — they are",
+          "asking you to teach. For each batch:",
+          "",
+          "  - Read what they did and why it might be wrong, fragile, or simply not the",
+          "    clearest way to say it. Say so plainly, and say what you would do instead.",
+          "  - Leave the feedback ON THE CODE with the `annotate` tool (a file, a line",
+          "    range, and your message), not only in chat. That is what the user reads.",
+          "  - Praise is cheap and unhelpful; if a batch is genuinely fine, say nothing or",
+          "    say it in one line. Do not invent problems to have something to say.",
+          "  - Do NOT edit their files. They are practising. Show them, do not do it.",
+          "",
+          "Be BRIEF, and be specific. The user is mid-flow with their hands on the",
+          "keyboard — they did not stop to ask you a question, and every annotation you",
+          "leave pushes their code down the screen to make room for itself. A paragraph",
+          "where a sentence would do is something they have to read, dismiss, and then",
+          "recover their place from. One or two sentences per point: name the exact thing,",
+          "say what you would do instead, stop. Do not restate what the code does, do not",
+          "explain the concept from first principles, and do not pad a thin observation",
+          "into a lecture — say less, or say nothing. If a point genuinely needs the long",
+          "version, leave the short annotation and offer the detail in chat for them to",
+          "ask for; do not deliver it unasked. Three sharp notes beat ten diligent ones.",
+          "",
+          "One caveat about the diffs: they are the user's edits as weave observed them, so",
+          "changes made by shell commands YOU ran (a formatter, a codemod) can appear in",
+          "them too. If a hunk looks like your own work, it probably is — say so rather",
+          "than crediting it to the user.",
+        }, "\n"),
+      },
+    },
   },
 }
 

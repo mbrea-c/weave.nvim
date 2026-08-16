@@ -144,9 +144,6 @@ function Session:view_handlers()
     on_restore_picker = function()
       self:show_restore_picker()
     end,
-    on_toggle_tutor = function()
-      require("weave.tutor").toggle(self)
-    end,
   }
 end
 
@@ -220,8 +217,21 @@ function Session:_on_client_ready(client, restore)
       Logger.debug("session ready " .. response.sessionId)
       self:_capture_config(response)
       self:_publish_meta()
+      self:_conversation_ready()
     end)
   end, self:_resolve_mcp_servers())
+end
+
+--- A conversation just became ready — first start, /new, or restore. The
+--- briefs layer re-establishes what THIS conversation should be told (a
+--- non-default agent brief is words in a conversation, and this one has
+--- heard none of them). Soft: bare Session-shaped doubles in specs need no
+--- briefs machinery behind them.
+--- @private
+function Session:_conversation_ready()
+  pcall(function()
+    require("weave.briefs").on_conversation_ready(self)
+  end)
 end
 
 --- Surface session metadata in the sidebar: provider display name from
@@ -596,7 +606,7 @@ end
 --- ACCEPTED is not DELIVERED: a message parked behind an active turn still
 --- dies if the steer queue is wiped (cancel, /new, restore). `on_sent` fires
 --- when the message actually goes out on the wire; `on_dropped` when a wipe
---- kills it first. Tutor mode advances its revision cursor only on on_sent —
+--- kills it first. Edit sync advances its revision cursor only on on_sent —
 --- that is what makes a wiped diff resendable instead of silently lost.
 --- @param opts { text: string, label?: string, interrupt?: boolean, on_sent?: fun(), on_dropped?: fun() }
 --- @return boolean accepted false when the session cannot take it (not ready)
@@ -878,6 +888,7 @@ function Session:new_conversation()
       self._session_id = response.sessionId
       self:_capture_config(response)
       self._store:set_meta({ session_id = response.sessionId })
+      self:_conversation_ready()
     end)
   end, self:_resolve_mcp_servers())
 end
@@ -929,6 +940,7 @@ function Session:restore(session_id)
         self._session_id = session_id
         self:_capture_config(result or {})
         self:_publish_meta()
+        self:_conversation_ready()
       end)
     end
   )
