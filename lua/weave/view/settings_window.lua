@@ -103,11 +103,13 @@ local function setting_row(spec, store, state)
       },
     }
   else
-    -- enum: strict select — typing filters, blur without a match reverts
+    -- enum: strict select — typing filters, blur without a match reverts.
+    -- Width is border-box: the longest option plus the field's [▾ and ]
+    -- edge cells.
     local options = Settings.enum_options(spec.key)
     local width = 10
     for _, o in ipairs(options) do
-      width = math.max(width, #o + 2)
+      width = math.max(width, #o + 3)
     end
     control = {
       comp = ui.dropdown,
