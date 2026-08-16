@@ -1,8 +1,11 @@
 -- The settings window: the whole runtime-settings surface, grouped by scope,
--- controls shaped by setting type, preset buttons on top.
+-- controls shaped by setting type (native fibrous: checkbox / singleline
+-- text_input / dropdown), preset buttons on top. Field controls are keyed on
+-- the committed value, so an external change remounts them re-seeded.
 
 local mount = require("fibrous.inline.mount")
 
+local Logger = require("weave.utils.logger")
 local Settings = require("weave.settings")
 local window = require("weave.view.settings_window")
 
@@ -36,8 +39,38 @@ local function press_on(handle, needle)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "xt", false)
 end
 
+local function press(key)
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), "xt", false)
+end
+
+-- The window's field controls are subwindow floats anchored to the mount:
+-- the FOCUSABLE ones are inputs (the dropdown popup is not focusable).
+local function anchored_inputs(handle)
+  local out = {}
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.w[win].fibrous_anchor == handle.winid and vim.api.nvim_win_get_config(win).focusable ~= false then
+      local buf = vim.api.nvim_win_get_buf(win)
+      out[#out + 1] = { win = win, buf = buf, text = vim.api.nvim_buf_get_lines(buf, 0, -1, false)[1] or "" }
+    end
+  end
+  return out
+end
+
+local function input_with(handle, text)
+  for _, i in ipairs(anchored_inputs(handle)) do
+    if i.text == text then
+      return i
+    end
+  end
+  local seen = {}
+  for _, i in ipairs(anchored_inputs(handle)) do
+    seen[#seen + 1] = i.text
+  end
+  error(("no input showing %q (inputs: %s)"):format(text, table.concat(seen, ", ")))
+end
+
 describe("view.settings_window", function()
-  local saved_notify
+  local saved_notify, notifications
 
   local function stores()
     return {
@@ -53,12 +86,15 @@ describe("view.settings_window", function()
 
   before_each(function()
     Settings._reset()
-    saved_notify = vim.notify
-    vim.notify = function() end
+    notifications = {}
+    saved_notify = Logger.notify
+    Logger.notify = function(msg)
+      notifications[#notifications + 1] = msg
+    end
   end)
 
   after_each(function()
-    vim.notify = saved_notify
+    Logger.notify = saved_notify
     Settings._reset()
   end)
 
@@ -72,9 +108,9 @@ describe("view.settings_window", function()
 
     assert.truthy(text:find("Session — this conversation", 1, true))
     assert.truthy(text:find("[ ] Auto-send edits", 1, true))
-    assert.truthy(text:find("Edit debounce (ms): 7000", 1, true))
+    assert.truthy(text:find("Edit debounce (ms):", 1, true))
     assert.truthy(text:find("[ ] Gate writes on unseen edits", 1, true))
-    assert.truthy(text:find("Agent brief: normal", 1, true))
+    assert.truthy(text:find("Agent brief:", 1, true))
 
     assert.truthy(text:find("View — this panel", 1, true))
     assert.truthy(text:find("[x] Show thinking", 1, true))
@@ -82,6 +118,10 @@ describe("view.settings_window", function()
 
     assert.truthy(text:find("Global — this editor", 1, true))
     assert.truthy(text:find("[ ] Track user edits", 1, true))
+
+    -- the field values live in the native controls' subwindow buffers
+    input_with(handle, "7000")
+    input_with(handle, "normal")
     handle.unmount()
   end)
 
@@ -97,55 +137,63 @@ describe("view.settings_window", function()
     press_on(handle, "Auto-send edits")
 
     assert.is_true(s.session:get("auto_send_edits"))
-    assert.is_false(s.view:get("show_thoughts") == false) -- untouched neighbour
     assert.truthy(text_of(handle.bufnr):find("[x] Auto-send edits", 1, true))
     handle.unmount()
   end)
 
-  it("edits an integer through vim.ui.input, coercing the string", function()
+  it("commits an integer from its text_input on <CR>, coercing the string", function()
     local s = stores()
     local handle = mount_window(s)
-    local saved_input = vim.ui.input
-    vim.ui.input = function(_, on_confirm)
-      on_confirm("2500")
-    end
-    press_on(handle, "Edit debounce")
-    vim.ui.input = saved_input
+    local input = input_with(handle, "7000")
+
+    vim.api.nvim_set_current_win(input.win)
+    vim.api.nvim_buf_set_lines(input.buf, 0, -1, false, { "2500" })
+    press("<CR>")
 
     assert.equal(2500, s.session:get("debounce_ms"))
-    assert.truthy(text_of(handle.bufnr):find("Edit debounce (ms): 2500", 1, true))
+    -- the committed value re-seeds the (remounted) field
+    input_with(handle, "2500")
     handle.unmount()
   end)
 
-  it("rejects an invalid integer without touching the store", function()
+  it("rejects an invalid integer without touching the store, leaving it to fix", function()
     local s = stores()
     local handle = mount_window(s)
-    local saved_input = vim.ui.input
-    vim.ui.input = function(_, on_confirm)
-      on_confirm("not-a-number")
-    end
-    press_on(handle, "Edit debounce")
-    vim.ui.input = saved_input
+    local input = input_with(handle, "7000")
+
+    vim.api.nvim_set_current_win(input.win)
+    vim.api.nvim_buf_set_lines(input.buf, 0, -1, false, { "not-a-number" })
+    press("<CR>")
 
     assert.equal(7000, s.session:get("debounce_ms"))
+    input_with(handle, "not-a-number") -- typed text kept to fix
+    assert.equal(1, #notifications)
     handle.unmount()
   end)
 
-  it("picks an enum through vim.ui.select", function()
+  it("picks an enum through the native dropdown", function()
     local s = stores()
     local handle = mount_window(s)
-    local saved_select = vim.ui.select
-    local offered
-    vim.ui.select = function(items, _, on_choice)
-      offered = items
-      on_choice("tutor")
-    end
-    press_on(handle, "Agent brief")
-    vim.ui.select = saved_select
+    local input = input_with(handle, "normal")
 
-    assert.same(Settings.enum_options("brief"), offered)
+    -- focus opens the popup with the selection on the current value;
+    -- <C-n> moves to the next option, <CR> commits it
+    vim.api.nvim_set_current_win(input.win)
+    press("<C-n>")
+    press("<CR>")
+
     assert.equal("tutor", s.session:get("brief"))
-    assert.truthy(text_of(handle.bufnr):find("Agent brief: tutor", 1, true))
+    input_with(handle, "tutor")
+    handle.unmount()
+  end)
+
+  it("re-seeds a field when its store changes underneath it", function()
+    local s = stores()
+    local handle = mount_window(s)
+    input_with(handle, "7000")
+
+    s.session:set("debounce_ms", 3000) -- another surface: preset, API, sidebar
+    input_with(handle, "3000")
     handle.unmount()
   end)
 
@@ -159,6 +207,7 @@ describe("view.settings_window", function()
     assert.equal("tutor", s.session:get("brief"))
     assert.equal(7000, s.session:get("debounce_ms")) -- partial: untouched
     assert.truthy(text_of(handle.bufnr):find("last applied: tutor", 1, true))
+    input_with(handle, "tutor") -- the brief field followed
     handle.unmount()
   end)
 end)

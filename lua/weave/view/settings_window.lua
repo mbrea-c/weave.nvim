@@ -3,12 +3,18 @@
 -- Settings header (or the open_settings chord); the sidebar itself shows
 -- only the setup-configured subset — this window is the whole surface.
 --
--- Controls follow the setting's TYPE, straight from the registry: booleans
--- are checkboxes, integers open vim.ui.input, enums open vim.ui.select. A
--- preset button applies its partial {key = value} map to the right stores
--- (weave.settings.apply_preset) — the announcement to the agent is not this
--- window's business: weave.briefs follows the session store and speaks when
--- the `brief` value actually changes.
+-- Controls follow the setting's TYPE, straight from the registry, and they
+-- are fibrous natives: booleans are ui.checkbox, integers a singleline
+-- ui.text_input, enums a ui.dropdown (strict select). The two field
+-- controls are KEYED on the committed value: an external change — a preset
+-- button, another surface — remounts them re-seeded, which is how an
+-- uncontrolled subwindow buffer tracks the store without ever being
+-- rewritten under the user's cursor (while they type, the value has not
+-- changed, so the key has not either). A preset button applies its partial
+-- {key = value} map to the right stores (weave.settings.apply_preset) —
+-- the announcement to the agent is not this window's business: weave.briefs
+-- follows the session store and speaks when the `brief` value actually
+-- changes.
 
 local ui = require("fibrous.inline.components")
 local Logger = require("weave.utils.logger")
@@ -66,30 +72,61 @@ local function setting_row(spec, store, state)
     }
   end
   local value = tostring(state[spec.key])
+  local control
   if spec.type == "integer" then
-    return bare_button(("%s: %s"):format(spec.label, value), function()
-      vim.ui.input({ prompt = spec.label .. ": ", default = value }, function(input)
-        if input == nil or input == "" then
-          return
-        end
-        local v, err = Settings.coerce(spec, input)
-        if v == nil then
-          Logger.notify("weave: " .. (err or "invalid value"), vim.log.levels.WARN)
-          return
-        end
-        store:set(spec.key, v)
-      end)
-    end)
-  end
-  -- enum
-  return bare_button(("%s: %s"):format(spec.label, value), function()
-    local options = Settings.enum_options(spec.key)
-    vim.ui.select(options, { prompt = spec.label .. ":" }, function(choice)
-      if choice then
-        store:set(spec.key, choice)
+    -- Commit on normal-mode <CR> or on leaving the field; per-keystroke
+    -- on_change is deliberately unused — a half-typed number is not a value.
+    -- An invalid commit warns and leaves the typed text in place to fix; the
+    -- store is never touched, so the key (and the seeded value) stand still.
+    local function commit(v)
+      v = vim.trim(v or "")
+      if v == "" or v == value then
+        return
       end
-    end)
-  end)
+      local n, err = Settings.coerce(spec, v)
+      if n == nil then
+        Logger.notify("weave: " .. (err or "invalid value"), vim.log.levels.WARN)
+        return
+      end
+      store:set(spec.key, n)
+    end
+    control = {
+      comp = ui.text_input,
+      key = spec.key .. "=" .. value,
+      props = {
+        value = value,
+        singleline = true,
+        width = 8,
+        height = 1,
+        on_submit = commit,
+        on_blur = commit,
+      },
+    }
+  else
+    -- enum: strict select — typing filters, blur without a match reverts
+    local options = Settings.enum_options(spec.key)
+    local width = 10
+    for _, o in ipairs(options) do
+      width = math.max(width, #o + 2)
+    end
+    control = {
+      comp = ui.dropdown,
+      key = spec.key .. "=" .. value,
+      props = {
+        options = options,
+        value = value,
+        width = width,
+        on_select = function(v)
+          store:set(spec.key, v)
+        end,
+      },
+    }
+  end
+  return {
+    comp = ui.row,
+    props = { gap = 1 },
+    children = { { comp = ui.label, props = { text = spec.label .. ":" } }, control },
+  }
 end
 -- Shared with the sidebar's inline settings rows, so both surfaces render a
 -- setting the same way.
