@@ -156,13 +156,24 @@ describe("tools.fs", function()
   end)
 
   -- The announced schema has to describe what resolve() actually enforces:
-  -- exactly one of path/buffer, and `buffer` really is number-or-string.
+  -- exactly one of path/buffer, and `buffer` really is number-or-string. The
+  -- one-target rule is stated in PROSE, never as anyOf — providers that cannot
+  -- translate the combinator drop the tool outright.
   describe("inputSchema honesty", function()
-    it("advertises the path/buffer requirement instead of leaving it implicit", function()
+    it("states the path/buffer requirement in prose, not in a combinator", function()
       for _, name in ipairs({ "read", "write", "edit" }) do
-        local props = Fs[name].inputSchema.properties
+        local def = Fs[name]
+        local props = def.inputSchema.properties
         assert.truthy(props.path, name .. " must advertise path")
-        assert.truthy(Fs[name].inputSchema.anyOf, name .. " must state that a target is required")
+        assert.truthy(props.buffer, name .. " must advertise buffer")
+        assert.is_nil(def.inputSchema.anyOf, name .. " must not announce anyOf")
+        assert.truthy(def.description:find("exactly one target", 1, true), name .. " must say so in its description")
+        for _, key in ipairs({ "path", "buffer" }) do
+          assert.truthy(
+            props[key].description:find("exactly one target", 1, true),
+            name .. "." .. key .. " must say so in its own description"
+          )
+        end
       end
     end)
 

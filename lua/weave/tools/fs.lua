@@ -227,24 +227,29 @@ local function content_lines(content)
   return lines
 end
 
+-- Every fs tool takes exactly one target, path or buffer. `required` cannot
+-- say "one of these two" and the obvious encoding — anyOf — is worse than the
+-- problem it solves: several ACP providers do not implement the JSON Schema
+-- combinators, and rather than ignoring an anyOf they cannot translate they
+-- drop the whole tool, so read/write/edit silently vanish for that agent. The
+-- constraint therefore lives in prose, where every model reads it and no
+-- validator can choke on it; resolve() is what actually enforces it, and its
+-- error names both arguments.
+local TARGET_RULE = "Give exactly one target: `path` or `buffer`."
+
 -- Both tools address a target the same way; keep the schema in one place.
 local TARGET_PROPS = {
-  path = { type = "string", description = "File path (absolute or relative to cwd)" },
+  path = { type = "string", description = "File path (absolute or relative to cwd). " .. TARGET_RULE },
   buffer = {
     type = { "integer", "string" },
-    description = "Neovim buffer id (number) or buffer name/suffix (string); reaches buffers with no backing file",
+    description = "Neovim buffer id (number) or buffer name/suffix (string); reaches buffers with no backing file. "
+      .. TARGET_RULE,
   },
 }
 
---- Every fs tool takes exactly one target. `required` cannot say "one of
---- these two", so the pair goes in `anyOf`: without it the announced schema
---- lets a caller omit both and only find out from resolve() at run time.
---- Lenient clients ignore anyOf and still see the properties.
-local TARGET_ANY_OF = { { required = { "path" } }, { required = { "buffer" } } }
-
 local function schema(extra_props, required)
   local props = vim.tbl_extend("force", {}, TARGET_PROPS, extra_props or {})
-  return { type = "object", properties = props, required = required, anyOf = TARGET_ANY_OF }
+  return { type = "object", properties = props, required = required }
 end
 
 ---------------------------------------------------------------------------
@@ -257,6 +262,7 @@ M.read = {
     "Prefer this over shell reads: when the file is open in the editor it serves the LIVE",
     "buffer state (unsaved edits included), and `buffer` reaches buffers with no backing file.",
     "Large files: page with `offset` (1-based first line) and `limit`.",
+    TARGET_RULE,
   }, " "),
   inputSchema = schema({
     offset = { type = "integer", description = "1-based first line to read (default 1)" },
@@ -315,6 +321,7 @@ M.write = {
     "When the file is open in the editor the write routes THROUGH the buffer (then saves),",
     "so the editor stays in sync; `buffer` writes buffers with no backing file.",
     "Creates missing files and parent directories. For partial changes prefer `edit`.",
+    TARGET_RULE,
   }, " "),
   inputSchema = schema({
     content = { type = "string", description = "The complete new content" },
@@ -374,6 +381,7 @@ M.edit = {
     "Replace an exact string in a file or Neovim buffer (like a surgical partial write).",
     "Operates on the LIVE buffer state when the file is open, then saves.",
     "`old_string` must match exactly and be unique unless `replace_all` is set.",
+    TARGET_RULE,
   }, " "),
   inputSchema = schema({
     old_string = { type = "string", description = "Exact text to replace (must be unique unless replace_all)" },

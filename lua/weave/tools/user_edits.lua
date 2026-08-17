@@ -76,7 +76,10 @@ M.check = {
     "or whenever you want to be sure you are reasoning about the code as it is NOW.",
     "Returns 'no pending user edits' when you are already in sync.",
   }, " "),
-  inputSchema = { type = "object", properties = {} },
+  -- empty_dict, not {}: this tool takes no arguments, and a bare empty Lua
+  -- table encodes as `[]`, which is not a valid JSON Schema `properties` —
+  -- strict clients reject the tool (or the whole tools/list) over it.
+  inputSchema = { type = "object", properties = vim.empty_dict() },
   handler = function()
     local session = M._session()
     if not session then

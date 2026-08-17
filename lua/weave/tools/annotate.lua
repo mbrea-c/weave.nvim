@@ -144,7 +144,11 @@ M.annotate_update = {
     properties = {
       id = { type = "integer", description = "The annotation id (from annotate or annotate_list)" },
       message = { type = "string", description = "The new message" },
-      position = { type = "string", enum = { "above", "below" } },
+      position = {
+        type = "string",
+        enum = { "above", "below" },
+        description = "Render the message above or below the span (unchanged when omitted)",
+      },
     },
     required = { "id" },
   },
