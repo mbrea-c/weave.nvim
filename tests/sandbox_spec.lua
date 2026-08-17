@@ -173,6 +173,40 @@ describe("sandbox wrap", function()
     assert.truthy(find_seq(args, { "--ro-bind-try", "/home/u/link", "/home/u/link" }))
   end)
 
+  it("mounts the $HOME and project tmpfs on their RESOLVED paths", function()
+    -- The tmpfs mountpoints must exist inside the read-only root: a $HOME
+    -- behind a symlink (/home/u -> /export/home/u) or on an autofs map that
+    -- is not mounted yet gives bwrap "Can't mount tmpfs on /newroot/home/u:
+    -- No such file or directory". Resolving host-side follows the symlink to
+    -- the real directory — and the stat it does triggers the automount while
+    -- the daemon can still see it.
+    Sandbox._realpath = function(path)
+      return (path:gsub("^/home/u", "/export/home/u"))
+    end
+    local _, args = Sandbox.wrap("gemini", {}, opts({ state_paths = { "~/.st" } }))
+    assert.truthy(find_seq(args, { "--tmpfs", "/export/home/u" }))
+    assert.truthy(find_seq(args, { "--tmpfs", "/export/home/u/proj", "--remount-ro", "/export/home/u/proj" }))
+    assert.is_nil(find_seq(args, { "--tmpfs", "/home/u" }))
+    assert.is_nil(find_seq(args, { "--remount-ro", "/home/u/proj" }))
+    -- a grant expanded against the literal home still lands inside the
+    -- resolved-home tmpfs, via the realpath branch
+    assert.truthy(find_seq(args, { "--bind-try", "/home/u/.st", "/export/home/u/.st" }))
+  end)
+
+  it("keeps the literal $HOME when realpath fails, and resolves it for tools too", function()
+    Sandbox._realpath = function()
+      return nil
+    end
+    local _, args = Sandbox.wrap("gemini", {}, opts())
+    assert.truthy(find_seq(args, { "--tmpfs", "/home/u" }))
+
+    Sandbox._realpath = function(path)
+      return (path:gsub("^/home/u", "/export/home/u"))
+    end
+    local _, targs = Sandbox.wrap_tool("sh", { "-c", "x" }, { binds = {}, network = false, home = "/home/u" })
+    assert.truthy(find_seq(targs, { "--tmpfs", "/export/home/u" }))
+  end)
+
   it("rejects an unknown mode loudly", function()
     assert.has_error(function()
       Sandbox.wrap("gemini", {}, opts({ mode = "chroot" }))

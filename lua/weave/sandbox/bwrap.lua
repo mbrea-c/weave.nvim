@@ -24,6 +24,27 @@ function M.available()
   return vim.fn.has("linux") == 1 and vim.fn.executable("bwrap") == 1
 end
 
+--- $HOME and the project become tmpfs MOUNTPOINTS, and a mountpoint must
+--- exist, as a real directory, inside the read-only root we bind — bwrap
+--- cannot mkdir it there. Corporate home layouts break that in two ways:
+--- $HOME behind a symlink (/home/u -> /export/home/u) leaves the literal
+--- path unresolvable in the new namespace, and $HOME on an autofs map may
+--- simply not be mounted yet — the automount trigger cannot fire inside the
+--- private namespace, so bwrap sees nothing and mount(2) fails with the
+--- baffling "Can't mount tmpfs on /newroot/home/u: No such file or
+--- directory". Resolving host-side fixes both at once: realpath follows the
+--- symlinks to the real directory, and because it stats every component it
+--- fires the automount NOW, while the daemon can still see it, so the
+--- concrete mount is present when bwrap recursively binds /. On an ordinary
+--- box this is the identity. nil (the path truly does not exist) falls back
+--- to the literal path — bwrap's own error is the best report we have then.
+--- @param path string
+--- @param fs { realpath: fun(path: string): string|nil }
+--- @return string
+local function mountable(path, fs)
+  return fs.realpath(path) or path
+end
+
 --- The shared confinement floor for every sandboxed process, agent or tool:
 --- everything readable except /tmp, /dev, /proc and $HOME, which are
 --- private; own pid/ipc/uts namespaces; dies with nvim.
@@ -62,7 +83,11 @@ end
 ---    login), so this must never be an error.
 ---  * the DESTINATION resolves through realpath outside the tmpfs areas
 ---    (bwrap refuses to bind over a symlink; nix is full of them), and stays
----    literal inside them, where bwrap can create it freely.
+---    literal inside them, where bwrap can create it freely. `home` here is
+---    the RESOLVED home (see mountable): on a symlinked-home box a grant
+---    expanded against the literal home misses the prefix check and takes
+---    the realpath branch instead — which lands it inside the home tmpfs at
+---    the same place, so both roads agree.
 --- @param argv string[]
 --- @param home string
 --- @param fs { exists: fun(path: string): boolean, realpath: fun(path: string): string|nil }
@@ -101,14 +126,16 @@ end
 --- @return string[] args
 function M.wrap_agent(command, args, hull, fs)
   fs = fs or require("weave.sandbox.fs")
+  local home = mountable(hull.home, fs)
+  local cwd = mountable(hull.cwd, fs)
 
   -- Mounts apply in order, later ones on top: the ro root first, then the
   -- private /tmp /dev /proc and the $HOME tmpfs, then the project mount and
   -- the explicit grants punched through them.
-  local argv = base_argv(hull.home)
-  vim.list_extend(argv, { "--tmpfs", hull.cwd, "--remount-ro", hull.cwd })
+  local argv = base_argv(home)
+  vim.list_extend(argv, { "--tmpfs", cwd, "--remount-ro", cwd })
 
-  local mount = mounter(argv, hull.home, fs)
+  local mount = mounter(argv, home, fs)
   for _, grant in ipairs(hull.grants or {}) do
     mount(grant.mode == "ro" and "--ro-bind-try" or "--bind-try", grant.path)
   end
@@ -130,15 +157,16 @@ end
 --- @return string[] args
 function M.wrap_tool(command, args, hull, fs)
   fs = fs or require("weave.sandbox.fs")
+  local home = mountable(hull.home, fs)
 
-  local argv = base_argv(hull.home)
+  local argv = base_argv(home)
   -- Tools do not need the model API, so the network is deniable here in a
   -- way it never was for the agent process.
   if not hull.network then
     argv[#argv + 1] = "--unshare-net"
   end
 
-  local mount = mounter(argv, hull.home, fs)
+  local mount = mounter(argv, home, fs)
   for _, b in ipairs(hull.binds or {}) do
     mount(b.mode == "ro" and "--ro-bind" or "--bind", b.path)
   end
