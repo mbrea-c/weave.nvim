@@ -711,6 +711,26 @@ function ACPClient:_authenticate(method_id)
   end)
 end
 
+--- Everything a failed request left behind, as one report. Adapters answer
+--- with a stock JSON-RPC message ("Internal error") and hide the actual
+--- cause in the error's `data` slot and/or on their stderr — a report built
+--- from `err.message` alone says nothing a user can act on (a sandboxed
+--- corporate box refusing session/new was undiagnosable until the data and
+--- stderr came along).
+--- @param err weave.acp.ACPError
+--- @return string
+function ACPClient:_describe_error(err)
+  local parts = { err.message or vim.inspect(err) }
+  if err.data ~= nil and err.data ~= vim.NIL then
+    parts[#parts + 1] = type(err.data) == "string" and err.data or vim.inspect(err.data)
+  end
+  local tail = self.transport and self.transport.stderr_tail and self.transport:stderr_tail() or {}
+  if #tail > 0 then
+    parts[#parts + 1] = "agent stderr:\n  " .. table.concat(tail, "\n  ")
+  end
+  return table.concat(parts, "\n")
+end
+
 --- @param handlers weave.acp.ClientHandlers
 --- @param callback fun(result: weave.acp.SessionCreationResponse|nil, err: weave.acp.ACPError|nil)
 --- @param mcp_servers? weave.acp.McpServer[] MCP servers for the agent to spawn (session/new mcpServers). Defaults to none.
@@ -726,11 +746,10 @@ function ACPClient:create_session(handlers, callback, mcp_servers)
     mcpServers = mcp_servers or {},
   }, function(result, err)
     if err then
-      Logger.notify(
-        "Failed to create session: " .. (err.message or vim.inspect(err)),
-        vim.log.levels.ERROR,
-        { title = "🐞 Session creation error" }
-      )
+      err.detail = self:_describe_error(err)
+      Logger.notify("Failed to create session: " .. err.detail, vim.log.levels.ERROR, {
+        title = "🐞 Session creation error",
+      })
 
       callback(nil, err)
       return

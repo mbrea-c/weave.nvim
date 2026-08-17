@@ -208,7 +208,7 @@ function Session:_on_client_ready(client, restore)
       if err or not response then
         self._store:append_entry({
           kind = "agent",
-          text = "⚠️ Session creation failed: " .. (err and err.message or "unknown"),
+          text = "⚠️ Session creation failed: " .. (err and (err.detail or err.message) or "unknown"),
         })
         return
       end

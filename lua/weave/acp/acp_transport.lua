@@ -115,6 +115,23 @@ function M.create_stdio_transport(config, callbacks)
     pid = nil,
   }
 
+  --- The most recent stderr lines from the agent process. The exit handler
+  --- already reports stderr when the process DIES; this serves failures where
+  --- it stays up — a session/new answered with a bare "Internal error" — for
+  --- which whatever the adapter actually printed is the only real diagnostic,
+  --- and it is otherwise buried in the debug log.
+  --- @param n? number max lines (default 8)
+  --- @return string[]
+  function transport:stderr_tail(n)
+    local buffer = self._stderr_buffer or {}
+    n = n or 8
+    local tail = {}
+    for i = math.max(1, #buffer - n + 1), #buffer do
+      tail[#tail + 1] = buffer[i]
+    end
+    return tail
+  end
+
   --- @param data string
   function transport:send(data)
     if self.stdin and not self.stdin:is_closing() then
@@ -136,8 +153,10 @@ function M.create_stdio_transport(config, callbacks)
       error("Failed to create pipes for ACP agent")
     end
 
-    -- Capture stderr for better error reporting
+    -- Capture stderr for better error reporting (stderr_tail reads it while
+    -- the process is still alive; the exit handler on death).
     local stderr_buffer = {}
+    self._stderr_buffer = stderr_buffer
     local args = vim.deepcopy(config.args or {})
     local final_env = M.build_env(config)
 

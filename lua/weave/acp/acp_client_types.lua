@@ -301,6 +301,7 @@
 --- @field code number
 --- @field message string
 --- @field data? any
+--- @field detail? string full report (message + data + agent stderr), see ACPClient:_describe_error
 
 --- @alias weave.acp.ClientHandlers.on_session_update fun(update: weave.acp.SessionUpdateMessage): nil
 --- @alias weave.acp.ClientHandlers.on_request_permission fun(request: weave.acp.RequestPermission, callback: fun(option_id: string | nil)): nil
