@@ -31,18 +31,21 @@ describe("permissions engine", function()
     Permissions._reset()
   end)
 
-  it("ships four shapes per sandbox mode, sandboxed first", function()
+  it("ships four shapes per sandbox mode, sandboxed first, plus yolo", function()
     local names = {}
     for _, p in ipairs(Permissions.presets()) do
       names[#names + 1] = p.name
     end
     -- the sandboxed four hold the PLAIN names: the sandbox is the default, so
-    -- a half-remembered name lands on the confined preset, not the open one
+    -- a half-remembered name lands on the confined preset, not the open one.
+    -- `yolo` is sandbox-on only — with the sandbox off, unsandboxed_auto is
+    -- already everything yolo could offer.
     assert.same({
       "ask",
       "read_only",
       "edit",
       "auto",
+      "yolo",
       "unsandboxed_ask",
       "unsandboxed_read_only",
       "unsandboxed_edit",
@@ -93,7 +96,7 @@ describe("permissions engine", function()
   -- mode will normally run under.
   it("allows annotating under every builtin, read_only included", function()
     Permissions.set_project_root("/home/me/proj")
-    for _, name in ipairs({ "ask", "read_only", "edit", "auto" }) do
+    for _, name in ipairs({ "ask", "read_only", "edit", "auto", "yolo" }) do
       Permissions.set_mode("on")
       Permissions.set_active(name)
       assert.equal("allow", Permissions.resolve({ tool = "weave:annotate", resource = "/home/me/proj/a.lua" }), name)
@@ -170,6 +173,7 @@ describe("permissions engine", function()
       "read_only",
       "edit",
       "auto",
+      "yolo",
       "unsandboxed_ask",
       "unsandboxed_read_only",
       "unsandboxed_edit",
@@ -202,6 +206,7 @@ describe("permissions engine", function()
       "read_only",
       "edit",
       "auto",
+      "yolo",
       "unsandboxed_ask",
       "unsandboxed_read_only",
       "unsandboxed_edit",
@@ -232,15 +237,17 @@ describe("permissions engine", function()
     local unsub = Permissions.subscribe(function()
       fired = fired + 1
     end)
-    -- the four sandboxed shapes, in shipped order, starting from `ask`
+    -- the sandboxed shapes, in shipped order, starting from `ask` — yolo last,
+    -- so the cycle passes through every scoped preset before the open one
     assert.equal("read_only", Permissions.cycle().name)
     assert.equal("edit", Permissions.cycle().name)
     assert.equal("auto", Permissions.cycle().name)
+    assert.equal("yolo", Permissions.cycle().name)
     assert.equal("ask", Permissions.cycle().name)
-    assert.equal(4, fired)
+    assert.equal(5, fired)
     unsub()
     Permissions.cycle()
-    assert.equal(4, fired)
+    assert.equal(5, fired)
   end)
 
   it("save_preset validates loudly", function()
@@ -260,8 +267,8 @@ describe("permissions engine", function()
 
   it("set_active rejects unknown presets loudly", function()
     assert.has_error(function()
-      Permissions.set_active("yolo")
-    end, "yolo")
+      Permissions.set_active("nonesuch")
+    end, "nonesuch")
     assert.equal("ask", Permissions.active().name)
   end)
 end)
@@ -332,9 +339,12 @@ describe("permissions sandboxed builtins", function()
     Permissions._reset()
   end)
 
-  local SANDBOXED = { "ask", "read_only", "edit", "auto" }
+  local SANDBOXED = { "ask", "read_only", "edit", "auto", "yolo" }
+  -- The four that treat the workspace as the world. `yolo` scopes nothing, so
+  -- every assertion about scoping is about these and not about it.
+  local SCOPED = { "ask", "read_only", "edit", "auto" }
 
-  it("ships the four sandboxed shapes ahead of the unsandboxed ones", function()
+  it("ships the sandboxed shapes ahead of the unsandboxed ones", function()
     local names = {}
     for _, p in ipairs(Permissions.available("on")) do
       names[#names + 1] = p.name
@@ -352,8 +362,8 @@ describe("permissions sandboxed builtins", function()
     assert.equal("deny", Permissions.resolve({ tool = "acp:edit" }))
   end)
 
-  it("every sandboxed preset denies outside the workspace, pointing at request_access", function()
-    for _, preset in ipairs(SANDBOXED) do
+  it("every scoped sandboxed preset denies outside the workspace, pointing at request_access", function()
+    for _, preset in ipairs(SCOPED) do
       Permissions.set_active(preset)
       local decision, rule = Permissions.resolve({ tool = "weave:read", resource = "/etc/passwd" })
       assert.equal("deny", decision, preset .. " reads outside the workspace")
@@ -437,9 +447,67 @@ describe("permissions sandboxed builtins", function()
     assert.equal("deny", Permissions.resolve({ tool = "acp:execute" }))
     -- grants are the user's call in every preset
     assert.equal("ask", Permissions.resolve({ tool = "weave:request_access" }))
-    -- and tools weave does not own still ask: exec_lua runs in the
-    -- UNsandboxed editor, so allowing it would dissolve the confinement
-    assert.equal("ask", Permissions.resolve({ tool = "mcp:exec_lua" }))
+    -- ...but the workspace boundary still holds: auto is about prompting, not
+    -- about reach
+    assert.equal("deny", Permissions.resolve({ tool = "weave:write", resource = "/etc/hosts" }))
+  end)
+
+  -- "auto" is the user saying do not ask me, and a foreign MCP call is a tool
+  -- call like any other. These used to ask while `unsandboxed_auto` allowed
+  -- exactly the same calls, which made the sandboxed shape the odd one out —
+  -- and made every proxied third-party server prompt per call.
+  it("auto runs foreign MCP tools unprompted; the scoped three still ask", function()
+    Permissions.set_active("auto")
+    assert.equal("allow", Permissions.resolve({ tool = "mcp:exec_lua" }))
+    assert.equal("allow", Permissions.resolve({ tool = "mcp:some_server_tool" }))
+    for _, preset in ipairs({ "ask", "read_only", "edit" }) do
+      Permissions.set_active(preset)
+      assert.equal("ask", Permissions.resolve({ tool = "mcp:exec_lua" }), preset)
+    end
+  end)
+
+  describe("yolo", function()
+    before_each(function()
+      Permissions.set_active("yolo")
+    end)
+
+    it("asks nothing and scopes nothing", function()
+      assert.equal("allow", Permissions.resolve({ tool = "weave:write", resource = "/etc/hosts" }))
+      assert.equal("allow", Permissions.resolve({ tool = "weave:task_start", resource = "rm -rf /" }))
+      assert.equal("allow", Permissions.resolve({ tool = "weave:web_fetch", resource = "https://x/" }))
+      assert.equal("allow", Permissions.resolve({ tool = "mcp:exec_lua" }))
+      assert.equal("allow", Permissions.resolve({ tool = "perijove:run_cell" }))
+    end)
+
+    -- The one thing a preset cannot hand back: mode on confines the AGENT
+    -- process invariantly, so its builtin tools still meet the empty project
+    -- stand-in. Allowing them would trade a redirection the agent acts on for
+    -- a confident wrong answer read off an empty directory.
+    it("still turns the agent's OWN tools back at the sandbox wall", function()
+      local decision, rule = Permissions.resolve({ tool = "acp:read", resource = "/home/me/proj/a.lua" })
+      assert.equal("deny", decision)
+      assert.truthy(rule.message:find("weave", 1, true))
+      -- ...while the tools weave brokers stay reachable, as everywhere else
+      assert.equal("allow", Permissions.resolve({ tool = "acp:mcp", resource = "clankbox_read" }))
+    end)
+
+    it("hands its tools the whole filesystem, writable, with the network", function()
+      local hull = Permissions.tool_sandbox(Permissions.get("yolo"))
+      assert.is_true(hull.network)
+      assert.same({ path = "/", mode = "rw" }, hull.binds[1])
+      -- $HOME is a tmpfs in the floor, so the writable root alone does not
+      -- bring it back — only a bind over it does
+      assert.same({ path = vim.uv.os_homedir(), mode = "rw" }, hull.binds[2])
+    end)
+
+    it("is sandbox-on only, and is not what the sandbox turning off falls back to", function()
+      assert.equal("on", Permissions.get("yolo").for_mode)
+      -- there is no `unsandboxed_yolo`: going to mode off falls back to the
+      -- first preset that mode allows rather than silently handing over an
+      -- allow-everything preset with no sandbox under it at all
+      Permissions.set_mode("off")
+      assert.equal("unsandboxed_ask", Permissions.active().name)
+    end)
   end)
 end)
 
@@ -483,7 +551,7 @@ describe("permissions sandbox mode", function()
       "unsandboxed_edit",
       "unsandboxed_auto",
     }, names("off"))
-    assert.same({ "ask", "read_only", "edit", "auto" }, names("on"))
+    assert.same({ "ask", "read_only", "edit", "auto", "yolo" }, names("on"))
   end)
 
   it("an untagged preset is available under both modes", function()
@@ -515,11 +583,11 @@ describe("permissions sandbox mode", function()
   it("cycle() stays inside the presets the mode allows", function()
     Permissions.set_mode("on")
     local seen = {}
-    for _ = 1, 4 do
+    for _ = 1, 5 do
       seen[#seen + 1] = Permissions.cycle().name
     end
     table.sort(seen)
-    assert.same({ "ask", "auto", "edit", "read_only" }, seen)
+    assert.same({ "ask", "auto", "edit", "read_only", "yolo" }, seen)
   end)
 
   it("set_mode moves the active preset to its counterpart in the new mode", function()

@@ -383,6 +383,41 @@ describe("tool sandbox wrap", function()
     assert.same({ "--", "sh", "-c", "x" }, { unpack(args, #args - 3) })
   end)
 
+  -- A bind of `/` is not one more grant: it is the mode of the ROOT bind the
+  -- whole floor is layered onto. Emitting it as a grant would re-lay the host
+  -- root over the private /dev, /proc and tmpfs mounts that came after it.
+  it("a `/` rw bind makes the ROOT bind writable rather than mounting / twice", function()
+    local _, args = Sandbox.wrap_tool("sh", { "-c", "x" }, {
+      home = "/home/u",
+      network = true,
+      binds = { { path = "/", mode = "rw" }, { path = "/home/u", mode = "rw" } },
+    })
+    assert.is_not_nil(find_seq(args, { "--bind", "/", "/" }))
+    assert.is_nil(find_seq(args, { "--ro-bind", "/", "/" }))
+    -- exactly once, and the floor still lands on top of it
+    local roots = 0
+    for i = 1, #args - 2 do
+      if args[i + 1] == "/" and args[i + 2] == "/" then
+        roots = roots + 1
+      end
+    end
+    assert.equal(1, roots)
+    assert.is_not_nil(find_seq(args, { "--tmpfs", "/tmp" }))
+    assert.is_not_nil(find_seq(args, { "--tmpfs", "/home/u" }))
+    -- and $HOME comes back over its tmpfs, which the rw root alone cannot do
+    assert.is_not_nil(find_seq(args, { "--bind", "/home/u", "/home/u" }))
+  end)
+
+  it("a `/` RO bind asks for nothing and is dropped", function()
+    local _, args = Sandbox.wrap_tool("sh", { "-c", "x" }, {
+      home = "/home/u",
+      network = false,
+      binds = { { path = "/", mode = "ro" } },
+    })
+    assert.is_not_nil(find_seq(args, { "--ro-bind", "/", "/" }))
+    assert.is_nil(find_seq(args, { "--bind", "/", "/" }))
+  end)
+
   it("wrap_shell is inert while sandboxing is off", function()
     Config.sandbox = { mode = "off" }
     local cmd, args = Sandbox.wrap_shell("echo hi")
@@ -513,6 +548,30 @@ if live_backend then
     end
 
     if live_backend.name == "bwrap" then
+      -- The `yolo` hull, against a real kernel: the two things it changes and
+      -- the one thing it must not. Writes land outside the project, $HOME is
+      -- the real one — and the private /tmp still stands, which is what says
+      -- the writable root went in as the root BIND's mode and did not
+      -- re-cover the floor mounted on top of it.
+      it("yolo hull: the filesystem is writable, home is back, the floor holds", function()
+        local home = vim.uv.os_homedir()
+        local scratch = home .. "/.weave-yolo-spec"
+        local hull = { binds = { { path = "/", mode = "rw" }, { path = home, mode = "rw" } }, network = true }
+        local out = run_tool(
+          hull,
+          ("mkdir -p %s && echo landed > %s/f && touch /tmp/weave-yolo-spec; ls %s"):format(scratch, scratch, home)
+        )
+        local landed = vim.fn.filereadable(scratch .. "/f")
+        local listing = out.stdout
+        vim.fn.delete(scratch, "rf") -- before the asserts, so a failure cleans up too
+
+        assert.equal(0, out.code, out.stderr)
+        assert.equal(1, landed, "a write outside the project reached the host")
+        assert.truthy(listing:find("%S"), "the real $HOME is visible, not the empty tmpfs")
+        -- /tmp is still private: the write inside never reached the host
+        assert.equal(0, vim.fn.filereadable("/tmp/weave-yolo-spec"))
+      end)
+
       it("tool hull: network off means a lonely loopback", function()
         -- /proc is freshly mounted (--proc), so /proc/net/dev reflects the
         -- process's OWN netns — unlike /sys, which rides the host ro bind

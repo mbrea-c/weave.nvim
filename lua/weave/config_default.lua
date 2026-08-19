@@ -246,8 +246,8 @@ local ConfigDefault = {
 
   -- The client-side permission engine (weave.permissions): `preset` picks the
   -- active preset at startup, `presets` adds saved rule configurations beside
-  -- the builtin ask/read_only/edit/auto and their unsandboxed_* counterparts
-  -- (same name = shadow the builtin).
+  -- the builtin ask/read_only/edit/auto, their unsandboxed_* counterparts and
+  -- yolo (sandbox-on only) — same name = shadow the builtin.
   -- Rule shape: { tool = "<glob>", resource = "<glob>"|nil, decision =
   -- "allow"|"deny"|"ask" } — see lua/weave/permissions.lua for the action
   -- vocabulary (acp:<kind>, weave:<tool>, mcp:<tool>, <plugin>:<tool>).

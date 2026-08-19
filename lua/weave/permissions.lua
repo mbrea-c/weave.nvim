@@ -33,7 +33,8 @@
 --
 -- Presets coexist from three sources, later shadowing earlier BY NAME:
 -- builtin (shipped; four shapes — ask/read_only/edit/auto — per sandbox
--- mode), setup (config.permissions.presets), runtime (created or edited in
+-- mode, plus `yolo` for mode on only), setup (config.permissions.presets),
+-- runtime (created or edited in
 -- the config window; in-memory for now — persistence is an open question in
 -- the design doc). ;;p cycles the effective list.
 
@@ -139,7 +140,9 @@ local OUTSIDE_WORKSPACE = "outside the workspace: call request_access to ask the
 local READ_ONLY = "this preset is read-only; switch presets to write or run commands"
 
 -- The builtins: four policy shapes — ask, read-only, edit, auto — shipped
--- twice, once per sandbox mode, in that cycle order.
+-- twice, once per sandbox mode, in that cycle order, plus `yolo`, which
+-- exists only for mode on (with the sandbox off, `unsandboxed_auto` already
+-- allows everything there is to allow).
 --
 -- The SANDBOXED four come first and hold the plain names, because sandbox
 -- mode on is the default. `edit` is the confined shape; `unsandboxed_edit`
@@ -154,7 +157,9 @@ local READ_ONLY = "this preset is read-only; switch presets to write or run comm
 -- (tool_sandboxing_on), so a hull there would document something weave never
 -- builds.
 --
--- Three things are true of all four sandboxed presets:
+-- Three things are true of the four scoped sandboxed presets. Only the first
+-- also holds for `yolo`, which scopes nothing and so needs none of the rules
+-- that scoping implies:
 --
 --   * they open with acp:mcp ALLOW then a blanket acp:* DENY. The agent's own
 --     tools are turned back (they reach only the empty decoy) while the tools
@@ -344,10 +349,15 @@ local BUILTIN = {
       { tool = "weave:web_fetch", decision = "allow" },
       { tool = "weave:*", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
       { tool = "weave:*", decision = "deny", message = OUTSIDE_WORKSPACE },
-      -- Not covered by "all tools": clankbox's exec_lua and friends run in
-      -- the UNSANDBOXED editor, so auto-allowing them would dissolve the
-      -- confinement the rest of this preset is built on.
-      { tool = "mcp:*", decision = "ask" },
+      -- Tools weave does not own — clankbox's exec_lua, another plugin's
+      -- registrations, a proxied third-party server — run unprompted too.
+      -- These used to ask, on the grounds that they execute in the
+      -- UNSANDBOXED editor; but "auto" is the user saying do not ask me, and
+      -- `unsandboxed_auto` has always allowed exactly these calls, so the
+      -- sandboxed shape asking was the odd one out. The three shapes above
+      -- keep the ask, and what actually confines the agent — its own process
+      -- sandbox — is not a preset's to give away.
+      { tool = "mcp:*", decision = "allow" },
       { tool = "*", decision = "allow" },
     },
     -- "Auto" is about how much weave PROMPTS, not about how much the tools
@@ -359,6 +369,44 @@ local BUILTIN = {
       tools = {
         ["weave:web_fetch"] = { binds = {}, network = true },
       },
+    },
+  },
+  {
+    name = "yolo",
+    label = "YOLO",
+    source = "builtin",
+    for_mode = "on",
+    -- The maximal sandboxed preset: nothing is asked and nothing is scoped.
+    -- Every other sandboxed preset treats the workspace as the world and
+    -- makes anything past it a request; this one hands the tools the whole
+    -- filesystem, read-write, with the network, and gets out of the way.
+    --
+    -- What it does NOT do is un-sandbox the AGENT. Mode on confines the agent
+    -- process invariantly — that hull is not a preset's to widen — so its
+    -- builtin tools still meet the empty project stand-in, and the acp:* deny
+    -- above stays exactly as it is in the other four. That deny is not
+    -- strictness here, it is the truth about where those tools point: letting
+    -- them through would trade a redirection the agent acts on for a
+    -- confident wrong answer read off an empty directory.
+    --
+    -- So the honest summary is "your tools can do anything, through weave".
+    -- Everything the agent does still arrives as a tool call in the
+    -- transcript, which is the property worth keeping when the rules are
+    -- gone.
+    rules = {
+      ALLOW_BROKERED,
+      ALLOW_ATTACHMENTS,
+      { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
+      { tool = "*", decision = "allow" },
+    },
+    -- `/` rw is the whole filesystem writable — the backends read it as the
+    -- ROOT bind's mode rather than as one more grant (see sandbox/bwrap.lua),
+    -- so the private /dev, /proc and /tmp still land on top of it. $HOME is
+    -- listed separately because it is a tmpfs in the floor: only a bind back
+    -- over it returns the real one.
+    sandbox = {
+      binds = { { path = "/", mode = "rw" }, { path = "~", mode = "rw" } },
+      network = true,
     },
   },
   -- ── The unsandboxed variants ──────────────────────────────────────────────
@@ -888,9 +936,26 @@ end
 -- preset binding only /data genuinely excludes the project.
 local DEFAULT_BINDS = { { path = PROJECT_TOKEN, mode = "rw" } }
 
+--- A bind path as the backends should receive it: `${project}` and a leading
+--- `~` resolved here, in the policy layer, exactly as the AGENT hull already
+--- resolves its grants (weave.sandbox.wrap). Leaving `~` to the backend meant
+--- only bwrap understood it — its mounter expands one — while the seatbelt
+--- profile emitted a literal "~" subpath that matches nothing, so a hull
+--- written with `~/.cache` silently granted nothing on macOS.
+--- @param path string
+--- @return string
+local function bind_path(path)
+  local home = vim.uv.os_homedir() or vim.env.HOME
+  path = expand(path)
+  if home and home ~= "" then
+    path = (path:gsub("^~", (home:gsub("%%", "%%%%"))))
+  end
+  return path
+end
+
 --- The kernel hull TOOL invocations run under (design-agent-sandbox-v2):
---- binds with `${project}` expanded now, modes defaulted, plus the network
---- flag. Consumed by the task/tool spawn path on EVERY invocation, so an
+--- binds with `${project}` and `~` expanded now, modes defaulted, plus the
+--- network flag. Consumed by the task/tool spawn path on EVERY invocation, so an
 --- active-preset switch or an elevation grant applies to the next spawn with
 --- no restart anywhere.
 ---
@@ -911,13 +976,13 @@ function M.tool_sandbox(preset, tool)
   local override = (tool and section.tools and section.tools[tool]) or {}
   local binds = {}
   for i, b in ipairs(override.binds or section.binds or DEFAULT_BINDS) do
-    binds[i] = { path = expand(b.path), mode = b.mode or "rw" }
+    binds[i] = { path = bind_path(b.path), mode = b.mode or "rw" }
   end
   -- Elevation grants sit ON TOP of the preset's hull, exactly like the rule
   -- overlay sits on top of its rules: session-scoped, revocable, never
   -- rewriting the preset.
   for _, b in ipairs(bind_overlay) do
-    binds[#binds + 1] = { path = expand(b.path), mode = b.mode or "rw" }
+    binds[#binds + 1] = { path = bind_path(b.path), mode = b.mode or "rw" }
   end
   local network = override.network
   if network == nil then

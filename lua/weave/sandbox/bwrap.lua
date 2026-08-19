@@ -45,19 +45,46 @@ local function mountable(path, fs)
   return fs.realpath(path) or path
 end
 
+--- A hull may ask for the whole filesystem, writable — the `yolo` preset
+--- does. That cannot be honoured as one more grant: `/` is the bind every
+--- other mount is layered ONTO, so binding it again after the private /dev,
+--- /proc and tmpfs mounts would re-lay the host root over them and undo the
+--- floor. The coherent reading is that the request is about the ROOT bind's
+--- MODE, which is exactly where this puts it — the private mounts still land
+--- on top, and the writable root only changes what the rest of the
+--- filesystem allows.
+---
+--- A `ro` bind of `/` is dropped rather than honoured backwards: read-only is
+--- what the root already is, so it asks for nothing.
+--- @param binds weave.sandbox.Grant[]|nil
+--- @return boolean rw_root
+--- @return weave.sandbox.Grant[] rest the binds that are ordinary grants
+local function split_root(binds)
+  local rw_root, rest = false, {}
+  for _, b in ipairs(binds or {}) do
+    if b.path == "/" then
+      rw_root = rw_root or b.mode ~= "ro"
+    else
+      rest[#rest + 1] = b
+    end
+  end
+  return rw_root, rest
+end
+
 --- The shared confinement floor for every sandboxed process, agent or tool:
 --- everything readable except /tmp, /dev, /proc and $HOME, which are
 --- private; own pid/ipc/uts namespaces; dies with nvim.
 --- @param home string
+--- @param rw_root? boolean bind the root read-WRITE (see split_root)
 --- @return string[]
-local function base_argv(home)
+local function base_argv(home, rw_root)
   return {
     "--die-with-parent",
     "--unshare-pid",
     "--unshare-ipc",
     "--unshare-uts",
     "--unshare-cgroup-try",
-    "--ro-bind",
+    rw_root and "--bind" or "--ro-bind",
     "/",
     "/",
     "--dev",
@@ -128,15 +155,16 @@ function M.wrap_agent(command, args, hull, fs)
   fs = fs or require("weave.sandbox.fs")
   local home = mountable(hull.home, fs)
   local cwd = mountable(hull.cwd, fs)
+  local rw_root, grants = split_root(hull.grants)
 
-  -- Mounts apply in order, later ones on top: the ro root first, then the
+  -- Mounts apply in order, later ones on top: the root bind first, then the
   -- private /tmp /dev /proc and the $HOME tmpfs, then the project mount and
   -- the explicit grants punched through them.
-  local argv = base_argv(home)
+  local argv = base_argv(home, rw_root)
   vim.list_extend(argv, { "--tmpfs", cwd, "--remount-ro", cwd })
 
   local mount = mounter(argv, home, fs)
-  for _, grant in ipairs(hull.grants or {}) do
+  for _, grant in ipairs(grants) do
     mount(grant.mode == "ro" and "--ro-bind-try" or "--bind-try", grant.path)
   end
 
@@ -158,8 +186,9 @@ end
 function M.wrap_tool(command, args, hull, fs)
   fs = fs or require("weave.sandbox.fs")
   local home = mountable(hull.home, fs)
+  local rw_root, binds = split_root(hull.binds)
 
-  local argv = base_argv(home)
+  local argv = base_argv(home, rw_root)
   -- Tools do not need the model API, so the network is deniable here in a
   -- way it never was for the agent process.
   if not hull.network then
@@ -167,7 +196,7 @@ function M.wrap_tool(command, args, hull, fs)
   end
 
   local mount = mounter(argv, home, fs)
-  for _, b in ipairs(hull.binds or {}) do
+  for _, b in ipairs(binds) do
     mount(b.mode == "ro" and "--ro-bind" or "--bind", b.path)
   end
 

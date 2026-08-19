@@ -94,6 +94,7 @@ describe("preset sandbox hull", function()
     -- one: a builtin that leaned on DEFAULT_BINDS would leave the hull
     -- invisible at the surface users read and copy from.
     it("every sandboxed builtin states its hull instead of inheriting it", function()
+      assert.is_not_nil(Permissions.get("yolo").sandbox, "yolo declares a sandbox section")
       for _, name in ipairs({ "ask", "read_only", "edit", "auto" }) do
         local preset = Permissions.get(name)
         assert.is_not_nil(preset.sandbox, name .. " declares a sandbox section")

@@ -201,29 +201,43 @@ highlighted, and neither are the always options on an agent-side ACP request,
 whose bookkeeping is the agent's own and leaves weave's store untouched.
 
 `;;p` cycles the active preset; the prompt border colour is an ambient
-reminder. Eight builtins ship: four shapes, once per [sandbox mode](#sandbox).
+reminder. Nine builtins ship: four shapes, once per [sandbox mode](#sandbox),
+plus **YOLO** for the sandbox being on.
 
 | | with the sandbox **on** (default) | with it **off** |
 |---|---|---|
 | **Ask** | every tool call inside the workspace asks | every ACP request asks |
 | **Read-only** | reads and searches run; writes and commands are denied, and the workspace is mounted read-only | ACP reads allowed, edits/deletes/commands denied |
 | **Edit** | reads and writes run unprompted; commands still ask | ACP reads and edits allowed, the rest asks |
-| **Auto** | every weave tool runs unprompted inside the workspace | everything allowed |
+| **Auto** | every tool runs unprompted inside the workspace | everything allowed |
+| **YOLO** | nothing asks and nothing is scoped: the tools get the whole filesystem read-write, with the network | — (`unsandboxed_auto` already is this) |
 
-Two rules hold across all four sandboxed presets. `acp:*` is **denied** —
-under mode on the agent's builtin tools only reach an empty read-only
-stand-in for the project, so letting them through buys a confusing failure at
-best and a confident wrong answer at worst; the deny carries a message
-pointing at weave's tools, which stay reachable (`acp:mcp`). And the
+Two rules hold across the four scoped sandboxed presets. `acp:*` is
+**denied** — under mode on the agent's builtin tools only reach an empty
+read-only stand-in for the project, so letting them through buys a confusing
+failure at best and a confident wrong answer at worst; the deny carries a
+message pointing at weave's tools, which stay reachable (`acp:mcp`). And the
 **workspace is the whole world**: anything outside it is denied with a
 message naming `request_access`, the tool the agent uses to ask you for a
 path. An approved grant lands in the overlay, which is consulted first, so it
 out-votes that deny without editing the preset.
 
-Even **Auto** keeps two things on a leash: sandbox grants (`request_access`
-always asks — it is the user's call by construction) and tools weave does not
-own (`mcp:*`, e.g. clankbox's `exec_lua`, which runs in the *unsandboxed*
-editor).
+**Auto** keeps one thing on a leash — sandbox grants, since `request_access`
+always asks by construction — and otherwise runs every tool call unprompted,
+weave's own and foreign MCP ones alike (a proxied third-party server,
+clankbox's `exec_lua`, another plugin's tools). What it does *not* do is
+widen anyone's reach: the workspace boundary is still the workspace boundary.
+
+**YOLO** is the one that drops the boundary too. It asks nothing, scopes
+nothing, and hands every tool subprocess the whole filesystem read-write with
+the network on. The one thing it cannot hand back is the agent's *own*
+sandbox: mode on confines the agent process invariantly — that hull is not a
+preset's to widen — so its builtin tools still meet the empty project
+stand-in and `acp:*` stays denied there too. The honest summary is "your
+tools can do anything, through weave", and everything still arrives as a tool
+call in the transcript. There is no `unsandboxed_yolo`, so turning the
+sandbox off from here lands on `unsandboxed_ask` rather than silently
+handing over allow-everything with no sandbox underneath.
 
 Presets are **mode-scoped**: each builtin is tagged for the mode it was
 written against, and only presets for the mode you are in are offered —
