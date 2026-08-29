@@ -35,7 +35,17 @@ local M = {}
 --- @field col integer|nil 1-based start column for a partial selection
 --- @field end_col integer|nil 1-based end column for a partial selection
 --- @field body string the user's comment
+--- @field reply_to weave.feedback.ReplyTo|nil the agent annotation this answers
 --- @field created_at integer
+
+--- What a reply comment is answering. The message is a SNAPSHOT of the
+--- annotation as the user read it: annotations get updated and dismissed while
+--- a reply sits in the draft, and the reply must quote what was actually on
+--- screen, not whatever the note says by send time. The id rides along so the
+--- agent can correlate (and act on the annotation it still holds).
+--- @class weave.feedback.ReplyTo
+--- @field id integer the annotation id (weave.annotations)
+--- @field message string the annotation text at reply time
 
 --- @class weave.feedback.Item
 --- @field id integer
@@ -94,7 +104,7 @@ function M.get(id)
 end
 
 --- Attach a comment to a span of code, opening a draft if none is open.
---- @param opts { bufnr: integer, range: weave.feedback.Range, body?: string, source?: string }
+--- @param opts { bufnr: integer, range: weave.feedback.Range, body?: string, source?: string, reply_to?: weave.feedback.ReplyTo }
 --- @return weave.feedback.Comment|nil comment, string|nil err
 function M.add(opts)
   opts = opts or {}
@@ -127,6 +137,7 @@ function M.add(opts)
     col = range.col,
     end_col = range.end_col,
     body = opts.body or "",
+    reply_to = opts.reply_to,
     created_at = os.time(),
   }
   next_comment_id = next_comment_id + 1

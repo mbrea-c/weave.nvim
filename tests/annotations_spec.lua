@@ -102,6 +102,61 @@ end)
 -- The agent names a span from the file as it last READ it. In tutor mode the
 -- user has very likely typed since, so the line number alone is a guess; the
 -- text the agent expected to find there is what makes it checkable.
+-- The marker is derived from the feedback draft — "a reply is pending" MEANS
+-- "a draft comment with reply_to = this id exists" — so it can never disagree
+-- with what a flush would actually send.
+describe("annotation reply markers", function()
+  local Store = require("weave.feedback_store")
+
+  before_each(function()
+    Store._reset()
+    Annotations._reset()
+  end)
+
+  after_each(function()
+    Store._reset()
+    Annotations._reset()
+  end)
+
+  local function virt_text(ann)
+    return table.concat(
+      vim.tbl_map(function(chunk)
+        return chunk[1][1]
+      end, mark(ann)[3].virt_lines),
+      "\n"
+    )
+  end
+
+  it("marks a note while a draft reply to it exists, and unmarks when it goes", function()
+    local buf = scratch({ "local x = 1" })
+    local ann = assert(Annotations.add({ bufnr = buf, lnum = 1, message = "note" }))
+    assert.falsy(virt_text(ann):find("reply pending", 1, true))
+
+    local c = assert(Store.add({ bufnr = buf, range = { lnum = 1 }, reply_to = { id = ann.id, message = "note" } }))
+    assert.truthy(virt_text(ann):find("reply pending", 1, true))
+
+    Store.remove(c.id)
+    assert.falsy(virt_text(ann):find("reply pending", 1, true))
+  end)
+
+  it("does not mark a note someone else's reply names", function()
+    local buf = scratch({ "local x = 1", "local y = 2" })
+    local a = assert(Annotations.add({ bufnr = buf, lnum = 1, message = "one" }))
+    local b = assert(Annotations.add({ bufnr = buf, lnum = 2, message = "two" }))
+    assert(Store.add({ bufnr = buf, range = { lnum = 1 }, reply_to = { id = a.id, message = "one" } }))
+    assert.truthy(virt_text(a):find("reply pending", 1, true))
+    assert.falsy(virt_text(b):find("reply pending", 1, true))
+  end)
+
+  it("clears every marker when the draft is discarded", function()
+    local buf = scratch({ "local x = 1" })
+    local ann = assert(Annotations.add({ bufnr = buf, lnum = 1, message = "note" }))
+    assert(Store.add({ bufnr = buf, range = { lnum = 1 }, reply_to = { id = ann.id, message = "note" } }))
+    Store.clear()
+    assert.falsy(virt_text(ann):find("reply pending", 1, true))
+  end)
+end)
+
 describe("annotation placement", function()
   before_each(function()
     Annotations._reset()

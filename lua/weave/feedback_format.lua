@@ -20,6 +20,7 @@ local M = {}
 --- @field orphaned boolean the anchored code is gone; the line number is stale
 --- @field col integer|nil 1-based start column of a partial selection
 --- @field end_col integer|nil 1-based end column of a partial selection
+--- @field reply_to weave.feedback.ReplyTo|nil the agent annotation this answers
 
 --- The fragment a partial selection actually covered, when it sits on one line.
 --- A selection spanning several lines is not summarised: the quote already
@@ -68,10 +69,21 @@ function M.render(entries)
     if e.source and e.source ~= "weave" then
       head = ("%d. [%s] %s"):format(i, e.source, location(e))
     end
+    if e.reply_to then
+      head = head .. (" (reply to your annotation #%d)"):format(e.reply_to.id)
+    end
     if e.orphaned then
       head = head .. " (stale: the code this pointed at has since been changed or deleted)"
     end
     out[#out + 1] = head
+    if e.reply_to then
+      -- The annotation as the user read it, blockquoted: the agent may have
+      -- updated or dismissed #id since, and the answer must sit under the
+      -- question it was actually answering.
+      for _, line in ipairs(vim.split(e.reply_to.message, "\n", { plain = true })) do
+        out[#out + 1] = "> " .. line
+      end
+    end
     out[#out + 1] = "```" .. (e.filetype or "")
     for _, line in ipairs(e.quote or {}) do
       out[#out + 1] = line
@@ -111,6 +123,7 @@ function M.entry(comment)
     orphaned = at.orphaned,
     col = at.col,
     end_col = at.end_col,
+    reply_to = comment.reply_to,
   }
 end
 

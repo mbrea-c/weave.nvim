@@ -1,6 +1,7 @@
 -- The public API users bind. The editor opener is injected so these exercise
 -- the capture and send paths without mounting a float.
 
+local Annotations = require("weave.annotations")
 local Feedback = require("weave.feedback")
 local Sinks = require("weave.feedback_sinks")
 local Store = require("weave.feedback_store")
@@ -24,6 +25,8 @@ describe("feedback API", function()
   before_each(function()
     Store._reset()
     Sinks._reset()
+    -- after Store._reset: re-links the reply-marker subscription it wiped
+    Annotations._reset()
   end)
 
   describe("visual range", function()
@@ -78,6 +81,43 @@ describe("feedback API", function()
       open_buffer({ "alpha" })
       local _, open = capture_open()
       assert.equal("perijove", Feedback.comment_line({ open = open, source = "perijove" }).source)
+    end)
+  end)
+
+  -- The same binding doubles as "answer the note": on an annotated line the
+  -- annotation is the most salient thing under the cursor, and a plain
+  -- comment there is still one gesture away (V then comment_selection).
+  describe("replying to annotations", function()
+    it("replies to the annotation under the cursor, covering its span", function()
+      local buf = open_buffer({ "alpha", "beta", "gamma" })
+      local ann = assert(Annotations.add({ bufnr = buf, lnum = 2, end_lnum = 3, message = "swap these" }))
+      vim.api.nvim_win_set_cursor(0, { 2, 0 })
+      local _, open = capture_open()
+      local c = assert(Feedback.comment_line({ open = open }))
+      assert.equal(ann.id, c.reply_to.id)
+      assert.equal("swap these", c.reply_to.message)
+      assert.same({ "beta", "gamma" }, c.quote)
+    end)
+
+    it("snapshots the message: a later update does not rewrite the question", function()
+      local buf = open_buffer({ "alpha" })
+      local ann = assert(Annotations.add({ bufnr = buf, lnum = 1, message = "first wording" }))
+      vim.api.nvim_win_set_cursor(0, { 1, 0 })
+      local _, open = capture_open()
+      local c = assert(Feedback.comment_line({ open = open }))
+      Annotations.update(ann.id, { message = "second wording" })
+      assert.equal("first wording", c.reply_to.message)
+    end)
+
+    it("leaves a selection alone: V on an annotated line comments the code", function()
+      local buf = open_buffer({ "alpha", "beta" })
+      assert(Annotations.add({ bufnr = buf, lnum = 2, message = "note" }))
+      vim.api.nvim_win_set_cursor(0, { 2, 0 })
+      vim.fn.setpos("'<", { buf, 2, 1, 0 })
+      vim.fn.setpos("'>", { buf, 2, 4, 0 })
+      local _, open = capture_open()
+      local c = assert(Feedback.comment_selection({ open = open }))
+      assert.is_nil(c.reply_to)
     end)
   end)
 

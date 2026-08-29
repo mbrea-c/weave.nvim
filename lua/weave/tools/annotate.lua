@@ -35,7 +35,10 @@ M.annotate = {
     .. "Pass `expect` with the exact line(s) you are annotating: the user may have edited since you read the "
     .. "file, and it is what lets weave re-find your span instead of highlighting whatever moved into it. "
     .. "With NO path/lnum this is just a notification to the user — use that when there is no one line to "
-    .. "point at. Annotating does not modify the file.",
+    .. "point at. Annotating does not modify the file.\n\n"
+    .. "The user can reply to an annotation; the reply arrives in their next feedback message as "
+    .. "'reply to your annotation #N' with your note quoted. Act on it through the annotation it names: "
+    .. "annotate_update to continue the thread on the code, annotate_dismiss once it is settled.",
   inputSchema = {
     type = "object",
     properties = {

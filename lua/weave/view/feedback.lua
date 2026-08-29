@@ -16,6 +16,7 @@ local ui = require("fibrous.inline.components")
 local Autosize = require("weave.view.autosize")
 local Store = require("weave.feedback_store")
 local TerminalTasks = require("weave.view.terminal_tasks")
+local Theme = require("weave.view.theme")
 
 local M = {}
 
@@ -123,10 +124,22 @@ function M.Section(ctx, props)
   }
 
   if #comments > 0 then
+    local replies = 0
+    for _, comment in ipairs(comments) do
+      if comment.reply_to then
+        replies = replies + 1
+      end
+    end
+    local label = ("%d comment(s)"):format(#comments)
+    if replies > 0 then
+      -- Called out separately: a reply answers a note the agent is waiting
+      -- on, which reads differently from fresh remarks about the code.
+      label = label .. (" (%d repl%s)"):format(replies, replies == 1 and "y" or "ies")
+    end
     rows[#rows + 1] = {
       comp = ui.button,
       props = {
-        label = ("%d comment(s)"):format(#comments),
+        label = label,
         theme = false,
         style = { _hover = { hl = "FibrousHover" } },
         on_press = function()
@@ -238,7 +251,10 @@ function M.List(ctx, props)
       children = {
         {
           comp = ui.label,
-          props = orphaned and { text = "⚠", style = { text_hl = "WeaveTaskIconFailed" } } or { text = "•" },
+          -- ⚠ beats ↩: knowing the line numbers went stale matters more than
+          -- knowing the comment is a reply.
+          props = orphaned and { text = "⚠", style = { text_hl = "WeaveTaskIconFailed" } }
+            or { text = comment.reply_to and "↩" or "•" },
         },
         {
           comp = ui.button,
@@ -355,6 +371,20 @@ function M.Editor(ctx, props)
     rows[#rows + 1] = dim("the code this points at has changed; it will be sent marked stale")
   end
 
+  -- A reply shows what it answers while the user types it: the snapshot of
+  -- the annotation, in the same teal the note wears on the code.
+  if comment.reply_to then
+    rows[#rows + 1] = dim(("replying to the agent's annotation #%d:"):format(comment.reply_to.id))
+    rows[#rows + 1] = {
+      comp = ui.text,
+      props = {
+        text = comment.reply_to.message,
+        wrap = "char",
+        style = { text_hl = Theme.ANNOTATION_TEXT_HL, padding = { left = 2 } },
+      },
+    }
+  end
+
   -- The quoted code as a real snippet (fibrous ui.code): syntax-highlighted,
   -- with a gutter whose numbers are the comment's LIVE position — resolve()
   -- follows the anchor, so they match the file as it is now, exactly what the
@@ -406,7 +436,7 @@ function M.Editor(ctx, props)
       style = {
         border = {
           "rounded",
-          title = { text = "Comment", align = "left" },
+          title = { text = comment.reply_to and "Reply" or "Comment", align = "left" },
         },
       },
     },

@@ -47,6 +47,7 @@ M.HL = layer.HL
 --- @field anchor integer|nil extmark id
 --- @field pending boolean true while it waits for its file to be opened
 --- @field drifted boolean the span was re-found by text, not by line number
+--- @field reply_pending boolean|nil a draft comment replying to this note awaits flush
 --- @field message string
 --- @field position "above"|"below"
 --- @field expect string[]|nil the text the agent expected at the span
@@ -154,6 +155,18 @@ local function width_for(bufnr)
   return M.DEFAULT_WIDTH
 end
 
+--- Whether a draft comment replying to annotation `id` is pending flush.
+--- @param id integer
+--- @return boolean
+local function reply_pending(id)
+  for _, c in ipairs(require("weave.feedback_store").comments()) do
+    if c.reply_to and c.reply_to.id == id then
+      return true
+    end
+  end
+  return false
+end
+
 --- (Re)place the extmark for an annotation at `lnum..end_lnum`.
 --- @param ann weave.annotations.Annotation
 --- @param lnum integer
@@ -163,8 +176,14 @@ local function place(ann, lnum, end_lnum)
     layer.clear(ann.bufnr, ann.anchor)
   end
   ann.lnum, ann.end_lnum = lnum, end_lnum
+  local virt = M._virt_lines(ann.message, ann.width or width_for(ann.bufnr), ann.max_lines or M.MAX_LINES)
+  if ann.reply_pending then
+    -- So the user can see which notes they have already answered without
+    -- opening the draft. Dimmed: it is bookkeeping, not part of the message.
+    virt[#virt + 1] = { { "↩ reply pending", "@comment" } }
+  end
   ann.anchor = layer.set(ann.bufnr, { lnum = lnum, end_lnum = end_lnum }, {
-    virt_lines = M._virt_lines(ann.message, ann.width or width_for(ann.bufnr), ann.max_lines or M.MAX_LINES),
+    virt_lines = virt,
     virt_lines_above = ann.position == "above",
   })
 end
@@ -413,6 +432,29 @@ function M.reattach(bufnr)
   end
 end
 
+--- Recompute each annotation's reply-pending marker from the feedback draft.
+--- Derived, not stored: "a reply is pending" MEANS "a draft comment with
+--- reply_to = this id exists", so scanning the draft can never disagree with
+--- the truth the way create/clear bookkeeping could. Driven by the store's
+--- change feed (see the link at the bottom of the module).
+function M.refresh_reply_markers()
+  local changed = false
+  for _, ann in ipairs(items) do
+    local pending = reply_pending(ann.id)
+    if (ann.reply_pending or false) ~= pending then
+      ann.reply_pending = pending
+      changed = true
+      if ann.bufnr and ann.anchor then
+        local at = M.resolve(ann)
+        place(ann, at.lnum, at.end_lnum)
+      end
+    end
+  end
+  if changed then
+    notify()
+  end
+end
+
 --- @param fn fun() called on every change
 --- @return fun() unsubscribe
 function M.subscribe(fn)
@@ -427,6 +469,19 @@ function M.subscribe(fn)
   end
 end
 
+--- Follow the feedback store so reply markers track the draft. Module-local
+--- handle: the store's test hook wipes its subscribers, so _reset re-links to
+--- keep specs order-independent (unlinking a wiped subscription is a no-op).
+local unlink
+local function link_store()
+  if unlink then
+    unlink()
+  end
+  unlink = require("weave.feedback_store").subscribe(function()
+    M.refresh_reply_markers()
+  end)
+end
+
 -- test hook
 function M._reset()
   for _, ann in ipairs(items) do
@@ -437,6 +492,9 @@ function M._reset()
   items = {}
   next_id = 1
   subscribers = {}
+  link_store()
 end
+
+link_store()
 
 return M

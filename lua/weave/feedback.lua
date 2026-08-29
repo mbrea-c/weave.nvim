@@ -13,6 +13,9 @@
 -- The flow: commenting creates the comment in the store immediately (so the
 -- highlight lands right away) and then opens the editor on it. Backing out of
 -- the editor removes an unwritten comment, so nothing is stranded.
+--
+-- comment_line doubles as "reply to the agent's annotation" when the cursor
+-- sits on one — see its doc comment for why the same binding carries both.
 
 local Format = require("weave.feedback_format")
 local Sinks = require("weave.feedback_sinks")
@@ -75,13 +78,31 @@ function M.add(opts)
 end
 
 --- Comment the current line, then open the editor on it.
+---
+--- On a line carrying an agent annotation this REPLIES to the annotation
+--- instead: same editor, but the comment covers the annotation's span and
+--- carries a snapshot of its text, so the flushed feedback reads as an answer
+--- to the note rather than a remark about the code. The annotation is the most
+--- salient thing under the cursor there, and a plain comment on such a line is
+--- still one gesture away (`V` then comment_selection, which never replies).
 --- @param opts { source?: string, open?: fun(id: integer) }|nil
 --- @return weave.feedback.Comment|nil
 function M.comment_line(opts)
   opts = opts or {}
   local bufnr = vim.api.nvim_get_current_buf()
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
-  local comment, err = Store.add({ bufnr = bufnr, range = { lnum = lnum, end_lnum = lnum }, source = opts.source })
+
+  local range = { lnum = lnum, end_lnum = lnum }
+  local reply_to
+  local Annotations = require("weave.annotations")
+  local ann = Annotations.at_cursor(bufnr, lnum)
+  if ann then
+    local at = Annotations.resolve(ann)
+    range = { lnum = at.lnum, end_lnum = at.end_lnum }
+    reply_to = { id = ann.id, message = ann.message }
+  end
+
+  local comment, err = Store.add({ bufnr = bufnr, range = range, source = opts.source, reply_to = reply_to })
   if not comment then
     vim.notify("weave: " .. tostring(err), vim.log.levels.WARN)
     return nil

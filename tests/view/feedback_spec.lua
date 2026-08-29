@@ -164,6 +164,13 @@ describe("pending flush sidebar section", function()
     assert.is_true(opened)
   end)
 
+  it("calls out how many of the comments are annotation replies", function()
+    local buf = scratch({ "alpha", "beta" }, "/tmp/weave-fb-replies.lua")
+    Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "fresh remark" })
+    Store.add({ bufnr = buf, range = { lnum = 2, end_lnum = 2 }, body = "yes", reply_to = { id = 7, message = "n" } })
+    assert.truthy(labels(section()):find("2 comment(s) (1 reply)", 1, true))
+  end)
+
   -- The count alone would hide this, and "which line was that again" is worth
   -- knowing BEFORE sending, not after.
   it("warns when a comment's code is gone", function()
@@ -278,6 +285,12 @@ describe("feedback comment list", function()
     assert.truthy(labels(View.List(fake_ctx(), {})):find("⚠", 1, true))
   end)
 
+  it("marks a reply with its own glyph", function()
+    local buf = scratch({ "alpha" }, "/tmp/weave-fb-list-reply.lua")
+    Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "yes", reply_to = { id = 3, message = "n" } })
+    assert.truthy(labels(View.List(fake_ctx(), {})):find("↩", 1, true))
+  end)
+
   it("says so when there is nothing to list", function()
     assert.truthy(labels(View.List(fake_ctx(), {})):find("(no comments)", 1, true))
   end)
@@ -309,6 +322,34 @@ describe("feedback comment editor", function()
     assert.equal(View.QUOTE_PREVIEW_LINES, snippet.props.max_lines)
     assert.is_false(snippet.props.header)
     assert.truthy(snippet.props.ref.path:find("weave%-fb%-editor"))
+  end)
+
+  -- The answer is written under the question: the snapshot of the annotation
+  -- sits above the code quote, and the input box says Reply, not Comment.
+  it("shows the annotation being replied to above the code", function()
+    local c = Store.add({
+      bufnr = buf,
+      range = { lnum = 1, end_lnum = 1 },
+      reply_to = { id = 9, message = "compute() is called twice" },
+    })
+    local tree = View.Editor(fake_ctx(), { id = c.id })
+    local text = labels(tree)
+    assert.truthy(text:find("annotation #9", 1, true))
+    assert.truthy(text:find("compute() is called twice", 1, true))
+    for _, node in ipairs(flatten(tree)) do
+      if node.comp == ui.text_input then
+        assert.equal("Reply", node.props.style.border.title.text)
+      end
+    end
+  end)
+
+  it("titles the input box Comment for a plain comment", function()
+    local tree = View.Editor(fake_ctx(), { id = comment.id })
+    for _, node in ipairs(flatten(tree)) do
+      if node.comp == ui.text_input then
+        assert.equal("Comment", node.props.style.border.title.text)
+      end
+    end
   end)
 
   it("skips the snippet for a comment with no quoted lines", function()

@@ -54,6 +54,16 @@ describe("feedback formatting", function()
     assert.falsy(Format.render({ entry() }):find("[weave]", 1, true))
   end)
 
+  -- A reply must carry the question with it: the agent may have updated or
+  -- dismissed the annotation since, so the snapshot is quoted, not the id alone.
+  it("frames a reply under the annotation it answers", function()
+    local text = Format.render({ entry({ reply_to = { id = 4, message = "cache this\nit is hot" } }) })
+    assert.truthy(text:find("(reply to your annotation #4)", 1, true))
+    assert.truthy(text:find("> cache this\n> it is hot", 1, true))
+    -- the quoted note reads before the quoted code
+    assert.is_true(text:find("> cache this", 1, true) < text:find("```lua", 1, true))
+  end)
+
   it("calls out the selected fragment of a partial selection", function()
     local text = Format.render({
       entry({ quote = { "local x = compute()" }, col = 11, end_col = 19 }),

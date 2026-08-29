@@ -337,6 +337,14 @@ vim.keymap.set("x", ";;cc", feedback.comment_selection, { desc = "weave: comment
 vim.keymap.set("n", ";;ce", feedback.edit_comment, { desc = "weave: edit the comment here" })
 ```
 
+On a line carrying one of the [agent's annotations](#what-the-agent-sends-back),
+`comment_line` **replies to the annotation** instead: same editor (titled
+*Reply*, with the note quoted above the code), but the comment covers the
+annotation's span and carries a snapshot of its text, so the flushed feedback
+reads as an answer to the note rather than a remark about the code. If you
+really do want a plain comment on that line, select it first — `V;;cc` never
+replies.
+
 Commenting highlights the span (`WeaveCodeFeedback`, a yellow background by
 default — `:highlight` it to taste) and opens a small editor float for the
 comment body, with **save** / **delete** / **cancel** buttons; `<CR>` in normal
@@ -352,7 +360,8 @@ so no highlight is stranded, and saving an empty body deletes the comment too
 
 The draft appears in the sidebar's **Pending flush** section (below **Terminal
 tasks**), which shows everything a flush would send: the comment draft as
-`N comment(s)` (activating it opens the full list — one row per comment,
+`N comment(s)`, with annotation replies called out (`2 comment(s) (1 reply)`)
+(activating it opens the full list — one row per comment,
 `file:line  body`; activating a row **jumps to that comment's code** and opens
 its editor there) and, when [edit tracking](#tutor-mode) is on, the unsent
 edits as `N files edited` (activating it peeks the very diff a flush would
@@ -545,6 +554,15 @@ vim.keymap.set("n", ";;X", require("weave").dismiss_annotations, { desc = "weave
 The agent can also list, rewrite and dismiss its own annotations
 (`annotate_list` / `annotate_update` / `annotate_dismiss`), and `annotate` with
 no span is a plain `vim.notify` for something that has no one line to point at.
+
+Annotations can be **replied to**: `;;cc` on an annotated line opens the
+comment editor as a reply (see [inline code feedback](#inline-code-feedback)),
+and the reply travels with the next flush, quoting the note it answers as
+`reply to your annotation #N`. While a reply sits unsent, the annotation grows
+a dimmed `↩ reply pending` line so you can see which notes you have already
+answered. The agent is told to act on a reply through the annotation it names —
+rewriting it to continue the thread on the code, or dismissing it once the
+point is settled.
 
 Annotations are anchored with extmarks, like your comments are, so they follow
 the code while you keep typing. Because in tutor mode you are *always* typing,
@@ -1244,6 +1262,7 @@ are reference-stable: a field's table is reassigned only when it changed, so
 local feedback = require("weave.feedback")
 
 feedback.comment_line(opts)       -- comment the cursor line, open the editor
+                                  --   (on an annotated line: reply to the note)
 feedback.comment_selection(opts)  -- comment the visual selection, open the editor
 feedback.edit_comment(opts)       -- reopen the comment under the cursor
 feedback.add(opts)                -- attach a comment with NO editor (for plugins)
