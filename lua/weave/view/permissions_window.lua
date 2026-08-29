@@ -143,15 +143,39 @@ local function open_editor(preset)
     end,
   })
 
+  local function close()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+
   require("weave.keys").map(buf, "close_float", function()
     if vim.bo[buf].modified then
       Logger.notify("weave: unsaved preset edits — :w applies, :q! discards", vim.log.levels.WARN)
       return
     end
-    if vim.api.nvim_win_is_valid(win) then
-      vim.api.nvim_win_close(win, true)
-    end
+    close()
   end, { nowait = true, desc = "weave: close preset editor" })
+
+  -- Dismissed on blur like every other popup (weave.view.float) — but this
+  -- one holds Lua you are still writing, so an unsaved buffer STAYS, on the
+  -- same rule the close key already applies. Said once: the check runs on
+  -- every focus change, and a warning per window switch would be its own
+  -- kind of broken.
+  local warned = false
+  require("weave.view.float").dismiss_on_unfocus(win, {
+    on_unfocus = close,
+    keep_open = function()
+      if not vim.bo[buf].modified then
+        return false
+      end
+      if not warned then
+        warned = true
+        Logger.notify("weave: unsaved preset edits — :w applies, :q! discards", vim.log.levels.WARN)
+      end
+      return true
+    end,
+  })
 end
 
 --- One preset row: the active marker + label as an activate button, the
@@ -330,11 +354,12 @@ function M.open()
     border = "rounded",
     backdrop = true,
   })
-  require("weave.keys").map(app.bufnr, "close_float", function()
-    app.unmount()
-  end, { nowait = true, desc = "weave: close permission presets" })
-  app.focus()
-  return app
+  return require("weave.view.float").chrome(app, {
+    close = function()
+      app.unmount()
+    end,
+    desc = "weave: close permission presets",
+  })
 end
 
 return M

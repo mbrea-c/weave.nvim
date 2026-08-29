@@ -171,8 +171,7 @@ function M.open(opts)
     backdrop = true,
   })
 
-  require("weave.keys").map(app.bufnr, "close_float", close, { nowait = true, desc = "weave: close session details" })
-  app.focus()
+  require("weave.view.float").chrome(app, { close = close, desc = "weave: close session details" })
 
   return {
     bufnr = app.bufnr,

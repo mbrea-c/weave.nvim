@@ -208,11 +208,31 @@ function M.open_list()
     backdrop = true,
     title = " code feedback ",
   })
-  require("weave.keys").map(app.bufnr, "close_float", function()
-    app.unmount()
-  end, { nowait = true, desc = "weave: close the code feedback list" })
-  app.focus()
-  return app
+  return require("weave.view.float").chrome(app, {
+    close = function()
+      app.unmount()
+    end,
+    desc = "weave: close the code feedback list",
+  })
+end
+
+--- Commit `body` to comment `id`. The save rule, in one place because three
+--- roads reach it: the save button, `<CR>`, and closing the editor at all
+--- (`q` or focusing something else — see open_editor).
+---
+--- An empty comment is noise in the bundle, so saving one DELETES it. That is
+--- what makes "clear the box and save" a way to drop a comment, and what
+--- keeps a fresh `;;cc` you walked away from without typing anything from
+--- leaving an orphan highlight behind.
+--- @param id integer
+--- @param body string|nil
+function M.save_body(id, body)
+  body = vim.trim(body or "")
+  if body == "" then
+    Store.remove(id)
+  else
+    Store.update(id, body)
+  end
 end
 
 --- The comment editor for one comment id.
@@ -222,7 +242,9 @@ end
 --- where the editor was opened by a fresh ;;cc, so backing out of writing a new
 --- comment leaves no orphan highlight behind.
 --- @param ctx table
---- @param props { id: integer, on_close?: fun() }
+--- @param props { id: integer, on_close?: fun(), on_change?: fun(text: string) }
+---   on_change reports every keystroke to the OWNER of the float, which is how
+---   closing it can save text that only the component knows about.
 function M.Editor(ctx, props)
   use_feedback(ctx)
   local comment = Store.get(props.id)
@@ -261,14 +283,7 @@ function M.Editor(ctx, props)
   end
 
   local function save()
-    local body = vim.trim(text.get())
-    -- An empty comment is noise in the bundle: saving one deletes it, which
-    -- also makes "clear the box and save" a working way to drop a comment.
-    if body == "" then
-      Store.remove(props.id)
-    else
-      Store.update(props.id, body)
-    end
+    M.save_body(props.id, text.get())
     close()
   end
 
@@ -286,6 +301,9 @@ function M.Editor(ctx, props)
       end,
       on_change = function(txt)
         text.set(txt)
+        if props.on_change then
+          props.on_change(txt)
+        end
       end,
       on_submit = save,
       -- Bordered, like the prompt box: an empty unbordered input is literally
@@ -335,17 +353,41 @@ function M.Editor(ctx, props)
 end
 
 --- Mount the editor for a comment in its own float.
+---
+--- Closing this float SAVES, unlike every other popup, where closing is just
+--- closing. The difference is that this one holds text you typed and nothing
+--- else does: dismissing it — with `q`, or by clicking into the code to check
+--- the thing you are commenting on — would otherwise throw the comment away.
+--- Saving loses nothing either way (an empty body deletes the comment, so
+--- walking away from an untouched `;;cc` still strands no highlight), and
+--- **cancel** remains the explicit discard.
 --- @param id integer
 function M.open_editor(id)
   local mount = require("fibrous.inline.mount")
   local app
+  -- The component owns the live text; this is the last value it reported, so
+  -- a close initiated from OUT here still knows what to save.
+  local typed = nil
   local function close()
     if app then
       app.unmount()
     end
   end
+  local function save_and_close()
+    local comment = Store.get(id)
+    if comment then
+      M.save_body(id, typed or comment.body)
+    end
+    close()
+  end
   app = mount.floating(function(ctx)
-    return M.Editor(ctx, { id = id, on_close = close })
+    return M.Editor(ctx, {
+      id = id,
+      on_close = close,
+      on_change = function(txt)
+        typed = txt
+      end,
+    })
   end, {}, {
     width = 76,
     height = math.min(20, math.max(vim.o.lines - 6, 8)),
@@ -354,11 +396,10 @@ function M.open_editor(id)
     backdrop = true,
     title = " code feedback ",
   })
-  require("weave.keys").map(app.bufnr, "close_float", function()
-    close()
-  end, { nowait = true, desc = "weave: close the code feedback editor" })
-  app.focus()
-  return app
+  return require("weave.view.float").chrome(app, {
+    close = save_and_close,
+    desc = "weave: save and close the code feedback editor",
+  })
 end
 
 return M

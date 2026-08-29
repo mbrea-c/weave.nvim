@@ -187,8 +187,7 @@ function M.open(opts)
     app.set_props(build_props())
   end
 
-  require("weave.keys").map(app.bufnr, "close_float", close, { nowait = true, desc = "weave: close session modal" })
-  app.focus()
+  require("weave.view.float").chrome(app, { close = close, desc = "weave: close session modal" })
 
   return {
     bufnr = app.bufnr,

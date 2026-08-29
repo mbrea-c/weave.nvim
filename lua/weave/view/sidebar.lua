@@ -417,11 +417,12 @@ function M.open_tasks_list(store)
     border = "rounded",
     backdrop = true,
   })
-  require("weave.keys").map(app.bufnr, "close_float", function()
-    app.unmount()
-  end, { nowait = true, desc = "weave: close task list" })
-  app.focus()
-  return app
+  return require("weave.view.float").chrome(app, {
+    close = function()
+      app.unmount()
+    end,
+    desc = "weave: close task list",
+  })
 end
 
 --- The plan (requests.md shape): at most MAX_TASKS rows, each clamped to

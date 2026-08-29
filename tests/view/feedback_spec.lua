@@ -304,4 +304,53 @@ describe("feedback comment editor", function()
     Store.remove(comment.id)
     assert.truthy(labels(View.Editor(fake_ctx(), { id = comment.id })):find("gone", 1, true))
   end)
+
+  it("reports every keystroke to the float that owns it", function()
+    local seen
+    local tree = View.Editor(fake_ctx(), {
+      id = comment.id,
+      on_change = function(txt)
+        seen = txt
+      end,
+    })
+    for _, node in ipairs(flatten(tree)) do
+      if node.comp == ui.text_input then
+        node.props.on_change("half a thought")
+      end
+    end
+    assert.equal("half a thought", seen)
+  end)
+end)
+
+-- Closing the editor SAVES, unlike every other popup, because this one holds
+-- text you typed: `q` — or clicking into the code to check what you are
+-- commenting on (weave.view.float dismisses on blur) — must not throw the
+-- comment away. Cancel stays the explicit discard.
+describe("feedback comment editor, closed", function()
+  local comment
+
+  before_each(function()
+    Store._reset()
+    comment = Store.add({ bufnr = scratch({ "local x = 1" }), range = { lnum = 1, end_lnum = 1 } })
+  end)
+
+  after_each(function()
+    Store._reset()
+  end)
+
+  it("keeps what was typed", function()
+    View.save_body(comment.id, "worth keeping")
+    assert.equal("worth keeping", Store.get(comment.id).body)
+  end)
+
+  it("removes a comment nothing was ever written into, leaving no orphan", function()
+    View.save_body(comment.id, comment.body)
+    assert.is_nil(Store.get(comment.id))
+  end)
+
+  it("treats whitespace as empty", function()
+    Store.update(comment.id, "typed then cleared")
+    View.save_body(comment.id, "   \n  ")
+    assert.is_nil(Store.get(comment.id))
+  end)
 end)

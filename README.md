@@ -156,6 +156,18 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | `;;s` | `sessions` | Open the session modal (also `:Weave sessions`) |
 | `q` / `<Esc>` | `close_float` | Close a weave floating window (modals, peek, the full task list) |
 
+**Every weave popup also closes when it loses focus** — modals, peek, the
+settings and permission windows, the task and comment lists. They are floats
+over a conversation you are reading, not windows to arrange things around, so
+clicking back into your code never leaves one hanging over the panel showing
+state from minutes ago. Their own controls do not count as leaving: typing in
+the settings window's fields keeps it open. Two popups qualify the rule
+because they hold text you have not committed — the [comment
+editor](#inline-code-feedback) **saves** on close instead of discarding, and
+the [permission preset editor](#permission-presets) **stays open** while its
+buffer is modified (`:w` applies, `:q!` discards), exactly as its close key
+already behaved.
+
 Two keys are **not** weave's to rebind, they come with the fibrous widgets:
 normal-mode `<CR>` in the prompt submits (insert-mode `<CR>` is a newline, so
 prompts compose multi-line), and `<Esc>` leaves a focused region (prompt /
@@ -271,6 +283,11 @@ active preset as a Lua table in a scratch float (`:w` applies it as a
 the shadowed definition), `[new]` starts from a template. Runtime presets
 live in memory for now.
 
+That editor is the one popup that does **not** vanish when you look away: with
+unsaved edits it stays put (and says so once), on the same rule its `q` already
+followed — `:w` applies, `:q!` discards. Unmodified, it dismisses like
+everything else.
+
 ### Sessions
 
 Sessions are **editor-global** (they keep running in the background) but
@@ -321,9 +338,13 @@ vim.keymap.set("n", ";;ce", feedback.edit_comment, { desc = "weave: edit the com
 Commenting highlights the span (`WeaveCodeFeedback`, a yellow background by
 default — `:highlight` it to taste) and opens a small editor float for the
 comment body, with **save** / **delete** / **cancel** buttons; `<CR>` in normal
-mode saves. Backing out of a comment you never wrote removes it, so no
-highlight is stranded. Saving an empty body deletes the comment too, which
-makes "clear the box and save" a working way to drop one.
+mode saves. **Closing the editor saves**, whether with `q` or by focusing
+something else (every popup [closes on blur](#keymaps-inside-the-panel)) — you
+often want to look at the code you are commenting on, and that must not throw
+the comment away. **cancel** is the discard: it restores the body the editor
+opened with. Backing out of a comment you never wrote removes it either way,
+so no highlight is stranded, and saving an empty body deletes the comment too
+— which makes "clear the box and save" a working way to drop one.
 
 The open draft appears in the sidebar below **Terminal tasks**, summarised as
 `N comment(s) pending` plus **send feedback** and **discard** buttons. The
@@ -1325,6 +1346,9 @@ mode](#tutor-mode) for the whole picture.
                              every fresh conversation
       prompts.lua          the agent-facing prose, loaded from prompts/*.md
                              (config override → user file → shipped file)
+      view/float.lua       the chrome every popup shares: the close key, and
+                             dismissal when focus leaves the float (its own
+                             subwindow controls not counting as leaving)
       init.lua             setup() + :Weave, panels per tabpage, flush()
     prompts/             what weave says to AGENTS, as editable markdown:
                            briefs/ (tutor, normal), edits.md, sandbox_

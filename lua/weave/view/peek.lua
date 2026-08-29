@@ -55,18 +55,12 @@ function M.open(text, title, filetype)
   end
   require("weave.keys").map(buf, "close_float", close, { nowait = true, desc = "weave: close peek" })
 
-  -- Leaving the float dismisses it. Peek is a glance at one entry, not a
-  -- window you arrange things around: clicking back into the transcript to
-  -- keep reading should not leave a stale copy of the old entry floating over
-  -- the conversation. Scheduled because a window cannot close from inside the
-  -- autocmd that is still leaving it.
-  vim.api.nvim_create_autocmd("WinLeave", {
-    buffer = buf,
-    once = true,
-    callback = function()
-      vim.schedule(close)
-    end,
-  })
+  -- Leaving the float dismisses it — the rule every weave popup follows now
+  -- (weave.view.float); peek is only the one that always did. A glance at one
+  -- entry is not a window you arrange things around: clicking back into the
+  -- transcript to keep reading should not leave a stale copy of the old entry
+  -- floating over the conversation.
+  require("weave.view.float").dismiss_on_unfocus(win, { on_unfocus = close })
   return win
 end
 

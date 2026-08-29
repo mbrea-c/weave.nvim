@@ -187,11 +187,12 @@ function M.open_task_list()
     border = "rounded",
     backdrop = true,
   })
-  require("weave.keys").map(app.bufnr, "close_float", function()
-    app.unmount()
-  end, { nowait = true, desc = "weave: close terminal task list" })
-  app.focus()
-  return app
+  return require("weave.view.float").chrome(app, {
+    close = function()
+      app.unmount()
+    end,
+    desc = "weave: close terminal task list",
+  })
 end
 
 --- One task's LIVE view: flag + status header, the command and cwd, then the
@@ -254,11 +255,12 @@ function M.open_task_view(id)
     border = "rounded",
     backdrop = true,
   })
-  require("weave.keys").map(app.bufnr, "close_float", function()
-    app.unmount()
-  end, { nowait = true, desc = "weave: close task view" })
-  app.focus()
-  return app
+  return require("weave.view.float").chrome(app, {
+    close = function()
+      app.unmount()
+    end,
+    desc = "weave: close task view",
+  })
 end
 
 return M

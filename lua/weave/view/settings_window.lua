@@ -217,11 +217,12 @@ function M.open(opts)
     border = "rounded",
     backdrop = true,
   })
-  require("weave.keys").map(app.bufnr, "close_float", function()
-    app.unmount()
-  end, { nowait = true, desc = "weave: close settings" })
-  app.focus()
-  return app
+  return require("weave.view.float").chrome(app, {
+    close = function()
+      app.unmount()
+    end,
+    desc = "weave: close settings",
+  })
 end
 
 return M

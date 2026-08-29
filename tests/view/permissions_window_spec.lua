@@ -228,4 +228,33 @@ describe("view.permissions_window", function()
     vim.api.nvim_feedkeys("q", "xt", false)
     assert.is_false(vim.api.nvim_win_is_valid(app.winid))
   end)
+
+  -- The preset editor follows the same blur dismissal as every other popup
+  -- (weave.view.float) with one exception it shares with its close key: Lua
+  -- you have not saved is not something a stray window switch may discard.
+  it("the preset editor dismisses itself when unfocused, unless it is dirty", function()
+    local elsewhere = vim.api.nvim_get_current_win()
+    local app = permissions_window.open()
+    press_on(app, "[edit]")
+    local ewin, ebuf = wait_float('name = "ask"', app.winid)
+    assert.is_not_nil(ewin, "the preset editor float")
+
+    -- dirty: it stays, and says why once
+    vim.api.nvim_buf_set_lines(ebuf, 0, -1, false, { '{ name = "ask", rules = {} }' })
+    assert.is_true(vim.bo[ebuf].modified)
+    vim.api.nvim_set_current_win(elsewhere)
+    vim.wait(50, function()
+      return false
+    end)
+    assert.is_true(vim.api.nvim_win_is_valid(ewin))
+
+    -- clean: the next blur takes it
+    vim.api.nvim_set_current_win(ewin)
+    vim.bo[ebuf].modified = false
+    vim.api.nvim_set_current_win(elsewhere)
+    vim.wait(200, function()
+      return not vim.api.nvim_win_is_valid(ewin)
+    end)
+    assert.is_false(vim.api.nvim_win_is_valid(ewin))
+  end)
 end)
