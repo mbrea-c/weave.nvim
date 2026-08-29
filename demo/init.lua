@@ -24,7 +24,7 @@
 -- (`-u /nix/store/...-source/demo/init.lua`) works from anywhere.
 local here = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h")
 local root = vim.fn.fnamemodify(here, ":h")
-local fibrous = vim.env.FIBROUS_PATH or (root .. "/../nui-reactive")
+local fibrous = vim.env.FIBROUS_PATH or (root .. "/../fibrous.nvim")
 
 vim.opt.runtimepath:prepend(root)
 vim.opt.runtimepath:prepend(fibrous)

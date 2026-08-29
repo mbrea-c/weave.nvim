@@ -12,7 +12,7 @@ local root = vim.fn.getcwd()
 -- stray plugin) go on the module path, so test failures can never be confused
 -- with user config. Fibrous comes from FIBROUS_PATH when set (`nix run .#test`
 -- points it at the pinned flake input) and the sibling checkout otherwise.
-local fibrous = vim.env.FIBROUS_PATH or (root .. "/../nui-reactive")
+local fibrous = vim.env.FIBROUS_PATH or (root .. "/../fibrous.nvim")
 -- Neovim's runtimepath loader beats package.path, so a weave installed in the
 -- running nvim (e.g. a nix vim-pack-dir) would silently shadow the working
 -- tree under test. Prepend the tree so the suite always tests THIS checkout.

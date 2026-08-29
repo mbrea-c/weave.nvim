@@ -49,7 +49,7 @@ change that is not yet committed and locked, point it at your checkout so the
 suite runs against the working tree (uncommitted and untracked files included):
 
 ```sh
-FIBROUS_PATH="$HOME/src/nui-reactive" nix run .#test
+FIBROUS_PATH="$HOME/src/nvim-infra/fibrous.nvim" nix run .#test
 ```
 
 ## 2. Check for regressions (benches)
@@ -86,7 +86,7 @@ silently walk past a docs problem you saw.
 - fibrous is a **peer plugin**, pinned in `flake.lock`, not vendored. For a nix
   build against a WIP fibrous tree (packages, `nix flake check`), override the
   input with a `path:` ref so untracked files come along:
-  `nix flake check --override-input fibrous path:../nui-reactive`. For the Lua
+  `nix flake check --override-input fibrous path:../fibrous.nvim`. For the Lua
   test and bench entry points, `FIBROUS_PATH` (above) is simpler and needs no
   commit.
 - A manual/interactive weave run needs BOTH working trees on the runtimepath

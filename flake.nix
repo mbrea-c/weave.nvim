@@ -6,7 +6,7 @@
     # The UI framework. A pinned flake input like any other: changes in the
     # sibling checkout are invisible until commit + push + `nix flake update
     # fibrous`. For day-to-day development every entry point below honors
-    # FIBROUS_PATH (the Makefile defaults it to ../nui-reactive), so `make
+    # FIBROUS_PATH (the Makefile defaults it to ../fibrous.nvim), so `make
     # test` / `make demo` always see the working tree.
     fibrous.url = "github:mbrea-c/fibrous.nvim";
   };

@@ -4,7 +4,7 @@ NVIM_BIN ?= nvim
 
 # Where fibrous lives during development (the flake pins its own copy; the
 # runners fall back to this sibling checkout when FIBROUS_PATH is unset).
-FIBROUS_PATH ?= ../nui-reactive
+FIBROUS_PATH ?= ../fibrous.nvim
 export FIBROUS_PATH
 
 # Run the full suite in a fully isolated headless Neovim: `-u NONE` loads no

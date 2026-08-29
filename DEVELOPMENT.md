@@ -23,7 +23,7 @@ fibrous is a **peer plugin**, not vendored:
   fibrous`, OR you override the input for one command (see below).
 - For the Lua entry points (`test`, `bench`, `demo`) fibrous is resolved at
   runtime from `FIBROUS_PATH`. The Makefile and the flake apps default it to the
-  sibling checkout `../nui-reactive` (the flake apps fall back to the pinned
+  sibling checkout `../fibrous.nvim` (the flake apps fall back to the pinned
   input when `FIBROUS_PATH` is unset), so day-to-day `make test` already runs
   against the fibrous working tree.
 
@@ -33,15 +33,15 @@ verbatim, so uncommitted AND untracked files come along (a plain or `git+file`
 ref would drop untracked files):
 
 ```sh
-nix flake check --override-input fibrous path:../nui-reactive
-nix build .#weave --override-input fibrous path:../nui-reactive
+nix flake check --override-input fibrous path:../fibrous.nvim
+nix build .#weave --override-input fibrous path:../fibrous.nvim
 ```
 
 For the Lua test and bench apps, an absolute `FIBROUS_PATH` is simpler and needs
 no commit:
 
 ```sh
-FIBROUS_PATH="$HOME/src/nui-reactive" nix run .#test
+FIBROUS_PATH="$HOME/src/nvim-infra/fibrous.nvim" nix run .#test
 ```
 
 ### Requirements

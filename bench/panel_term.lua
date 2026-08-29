@@ -18,7 +18,7 @@
 --   BENCH_TRANSCRIPT=200 make bench-panel-term   # pre-grow the transcript first
 
 local root = vim.fn.getcwd()
-local fibrous = vim.env.FIBROUS_PATH or (root .. "/../nui-reactive")
+local fibrous = vim.env.FIBROUS_PATH or (root .. "/../fibrous.nvim")
 package.path = table.concat({
   root .. "/lua/?.lua",
   root .. "/lua/?/init.lua",

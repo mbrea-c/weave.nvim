@@ -54,7 +54,7 @@ Canonical task list — keep ticked/updated as work lands.
   `test`/`bench`/`demo` (default = demo), devShell, `checks.tests`. fibrous is
   a PINNED input (github:mbrea-c/fibrous.nvim) — sibling changes invisible
   until commit+push+`nix flake update fibrous`; every runner honors
-  FIBROUS_PATH and the Makefile defaults it to ../nui-reactive, so `make *`
+  FIBROUS_PATH and the Makefile defaults it to ../fibrous.nvim, so `make *`
   always sees the working tree. New: bench/run.lua (discovers
   bench/*_bench.lua; none yet), demo/init.lua (floating provider list as a
   wiring proof until R5; resolves paths from its own file location so the nix

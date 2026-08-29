@@ -10,7 +10,7 @@
 --   nix run .#bench-term
 
 local root = vim.fn.getcwd()
-local fibrous = vim.env.FIBROUS_PATH or (root .. "/../nui-reactive")
+local fibrous = vim.env.FIBROUS_PATH or (root .. "/../fibrous.nvim")
 package.path = table.concat({
   root .. "/lua/?.lua",
   root .. "/lua/?/init.lua",
