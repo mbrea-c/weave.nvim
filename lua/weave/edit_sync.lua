@@ -57,6 +57,34 @@ local watched = setmetatable({}, { __mode = "k" })
 local log_unsubscribe = nil
 local global_effect_attached = false
 
+--- Hears every change to some session's pending window: a cursor move (flush
+--- delivered, gate consumed, window discarded) or a session gaining/losing
+--- its cursor. The sidebar's Pending-flush section re-renders off this. The
+--- payload is deliberately nothing — reading the window is cheap, and the
+--- listener reads it fresh either way.
+--- @type fun()[]
+local listeners = {}
+
+local function notify()
+  for _, fn in ipairs({ unpack(listeners) }) do
+    pcall(fn)
+  end
+end
+
+--- @param fn fun()
+--- @return fun() unsubscribe
+function M.subscribe(fn)
+  listeners[#listeners + 1] = fn
+  return function()
+    for i, f in ipairs(listeners) do
+      if f == fn then
+        table.remove(listeners, i)
+        return
+      end
+    end
+  end
+end
+
 --- @return weave.EditsConfig
 local function cfg()
   return Config.edits or {}
@@ -159,10 +187,12 @@ local function sync_state(session)
   if is_active() then
     if not states[session] then
       states[session] = { cursor = Log.head_id() }
+      notify()
     end
   elseif states[session] then
     disarm(states[session])
     states[session] = nil
+    notify()
   end
   ensure_log_subscription()
 end
@@ -332,6 +362,7 @@ function M.pending_message(session)
   if not diff then
     state.cursor = head
     state.first_pending_at = nil
+    notify()
     return nil
   end
 
@@ -346,6 +377,7 @@ function M.pending_message(session)
       if st and head > st.cursor then
         st.cursor = head
       end
+      notify()
     end,
     on_dropped = function()
       local st = states[session]
@@ -426,12 +458,72 @@ function M.consume(session)
   local rev = Log.squash_since(state.cursor)
   state.cursor = head
   state.first_pending_at = nil
+  notify()
   if not rev then
     return nil
   end
   local ok, Permissions = pcall(require, "weave.permissions")
   local root = ok and Permissions.project_root() or nil
   return Revision.render(rev, { root = root, max_bytes = cfg().max_diff_bytes })
+end
+
+--- The unsent window summarised for display — file counts, nothing taken: no
+--- timer disarmed, no cursor touched (contrast pending_message, which TAKES
+--- the window). Nil when this session has no cursor or the window is empty.
+--- Does not close the open burst: the burst boundary (idle, InsertLeave,
+--- save) will land the freshest keystrokes here moments later via the log's
+--- own subscribers, and chopping bursts mid-thought just to display a count
+--- would distort the log for every other consumer.
+--- @param session table|nil defaults to the current tab's session
+--- @return { files: integer, created: integer, deleted: integer }|nil
+function M.pending_summary(session)
+  session = session or current_session()
+  local state = session and states[session]
+  if not state then
+    return nil
+  end
+  local rev = Log.squash_since(state.cursor)
+  return rev and Revision.summary(rev) or nil
+end
+
+--- The unsent window rendered exactly as a flush would send it — for a peek.
+--- Read-only, like pending_summary.
+--- @param session table|nil defaults to the current tab's session
+--- @return string|nil
+function M.pending_preview(session)
+  session = session or current_session()
+  local state = session and states[session]
+  if not state then
+    return nil
+  end
+  local rev = Log.squash_since(state.cursor)
+  if not rev then
+    return nil
+  end
+  local ok, Permissions = pcall(require, "weave.permissions")
+  local root = ok and Permissions.project_root() or nil
+  return Revision.render(rev, { root = root, max_bytes = cfg().max_diff_bytes })
+end
+
+--- Discard the unsent window: mark it seen without sending — the edits half
+--- of a pending flush's discard (feedback.discard() is the comments half).
+--- CLOSES the open burst first, so what the user typed seconds ago is
+--- discarded too rather than popping the window right back up at the next
+--- burst boundary.
+--- @param session table|nil defaults to the current tab's session
+--- @return boolean discarded false when this session has no cursor
+function M.mark_seen(session)
+  session = session or current_session()
+  local state = session and states[session]
+  if not state then
+    return false
+  end
+  Log.close_burst()
+  disarm(state)
+  state.cursor = Log.head_id()
+  state.first_pending_at = nil
+  notify()
+  return true
 end
 
 --- @param session table
@@ -448,6 +540,7 @@ function M._reset()
   end
   states = setmetatable({}, { __mode = "k" })
   watched = setmetatable({}, { __mode = "k" })
+  listeners = {}
   if log_unsubscribe then
     log_unsubscribe()
     log_unsubscribe = nil

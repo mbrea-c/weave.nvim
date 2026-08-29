@@ -404,6 +404,102 @@ describe("edit sync", function()
       assert.equal(1, #session.sent) -- consumed window is not re-sent
     end)
   end)
+
+  -- What the sidebar's Pending-flush section reads: the unsent window as a
+  -- summary/preview WITHOUT taking it, a discard that marks it seen without
+  -- sending, and a change feed so the section re-renders when a cursor moves.
+  describe("the pending window, read and discarded", function()
+    it("pending_summary reads the unsent window without taking it", function()
+      local session = fake_session()
+      enable(session, "edit_gate")
+      assert.is_nil(Sync.pending_summary(session))
+
+      local bufnr = open("a.lua", { "one" })
+      edit(bufnr, { "two" })
+      local b2 = open("b.lua", { "x" })
+      edit(b2, { "y" })
+
+      local summary = Sync.pending_summary(session)
+      assert.equal(2, summary.files)
+      -- read-only: a second read still sees it, and nothing was sent
+      assert.equal(2, Sync.pending_summary(session).files)
+      assert.equal(0, #session.sent)
+    end)
+
+    it("summarises nothing for a session that is not collecting", function()
+      local session = fake_session()
+      local bufnr = open("a.lua", { "one" })
+      edit(bufnr, { "two" })
+      assert.is_nil(Sync.pending_summary(session))
+    end)
+
+    it("pending_preview renders the window read-only", function()
+      local session = fake_session()
+      enable(session, "edit_gate")
+      local bufnr = open("a.lua", { "one" })
+      edit(bufnr, { "two" })
+
+      local diff = Sync.pending_preview(session)
+      assert.truthy(diff:find("a.lua", 1, true))
+      assert.truthy(diff:find("\n+two", 1, true))
+      -- still pending: preview is a look, not a hand-off
+      assert.is_true(Sync.pending(session))
+    end)
+
+    it("mark_seen discards the window: seen, never sent", function()
+      local session = fake_session()
+      enable(session, "edit_gate")
+      local bufnr = open("a.lua", { "one" })
+      edit(bufnr, { "two" })
+
+      assert.is_true(Sync.mark_seen(session))
+      assert.is_nil(Sync.pending_summary(session))
+      assert.is_false(Sync.pending(session))
+      assert.equal(0, #session.sent)
+    end)
+
+    it("mark_seen closes the open burst first, so what was just typed goes too", function()
+      local session = fake_session()
+      enable(session, "edit_gate")
+      local bufnr = open("a.lua", { "one" })
+      -- mid-burst: changed but not yet closed into a revision
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "two" })
+      Log.note_change(bufnr)
+
+      Sync.mark_seen(session)
+      assert.is_false(Sync.pending(session))
+    end)
+
+    it("subscribers hear every cursor move: flush, consume, mark_seen", function()
+      local session = fake_session()
+      enable(session, "edit_gate")
+      local events = 0
+      local unsubscribe = Sync.subscribe(function()
+        events = events + 1
+      end)
+
+      local bufnr = open("a.lua", { "one" })
+      edit(bufnr, { "two" })
+      Sync.flush_now(session)
+      assert.is_true(events >= 1)
+
+      local after_flush = events
+      edit(bufnr, { "three" })
+      Sync.consume(session)
+      assert.is_true(events > after_flush)
+
+      local after_consume = events
+      edit(bufnr, { "four" })
+      Sync.mark_seen(session)
+      assert.is_true(events > after_consume)
+
+      unsubscribe()
+      local after_unsub = events
+      edit(bufnr, { "five" })
+      Sync.mark_seen(session)
+      assert.equal(after_unsub, events)
+    end)
+  end)
 end)
 
 -- The debounce is "quiet for a while OR waited long enough", which a

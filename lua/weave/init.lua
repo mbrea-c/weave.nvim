@@ -46,6 +46,10 @@ local function open_panel(entry, opts)
   local panel_opts = entry.session:view_handlers()
   panel_opts.store = entry.session:get_store()
   panel_opts.prefs = entry.prefs
+  -- The sidebar's Pending-flush section reads this session's unsent-edits
+  -- window and flushes to it, so the panel carries the session itself, not
+  -- just its projections.
+  panel_opts.session = entry.session
   panel_opts.session_settings = require("weave.settings").for_session(entry.session)
   panel_opts.width = opts.width
   panel_opts.sidebar_width = opts.sidebar_width

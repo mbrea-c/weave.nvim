@@ -1,5 +1,7 @@
--- The inline code feedback UI: a sidebar section listing the open draft (below
--- terminal tasks) and a floating editor for writing or revising one comment.
+-- The inline code feedback UI: the sidebar's Pending-flush section (below
+-- terminal tasks — the comment draft plus this session's unsent-edits window,
+-- everything weave.flush would send) and a floating editor for writing or
+-- revising one comment.
 --
 -- Both surfaces are projections of weave.feedback_store, re-rendered off one
 -- bridge hook over its subscribe — the same shape as view/terminal_tasks.lua,
@@ -52,61 +54,135 @@ function M.comment_label(comment)
   return where, at.orphaned
 end
 
---- The sidebar section. The header is always present so the feature is
---- discoverable before any comment exists, and is itself the way in — activating
---- it opens the full list. The draft is summarised as a COUNT rather than
---- listed: it bundles comments from several sources and routinely holds more
---- rows than the sidebar can spare without pushing Permissions off-screen.
+--- "2 files edited (1 new, 1 deleted)" — the unsent-edits window, phrased
+--- from its Revision.summary. Pure, so the wording is spec'd directly.
+--- @param summary { files: integer, created: integer, deleted: integer }
+--- @return string
+function M.edits_label(summary)
+  local noun = summary.files == 1 and "1 file" or (summary.files .. " files")
+  local parts = {}
+  if summary.created > 0 then
+    parts[#parts + 1] = summary.created .. " new"
+  end
+  if summary.deleted > 0 then
+    parts[#parts + 1] = summary.deleted .. " deleted"
+  end
+  local extra = #parts > 0 and (" (" .. table.concat(parts, ", ") .. ")") or ""
+  return noun .. " edited" .. extra
+end
+
+--- Peek the unsent edits as the very diff a flush would send. A look, not a
+--- hand-off: the window stays pending.
+--- @param session table|nil
+function M.peek_edits(session)
+  local diff = require("weave.edit_sync").pending_preview(session)
+  if diff then
+    require("weave.view.peek").open(diff, "unsent edits", "diff")
+  end
+end
+
+--- The Pending-flush sidebar section: everything a flush would send — the
+--- comment draft and this session's unsent-edits window — with one flush and
+--- one discard for the whole bundle. The two halves travel together
+--- (weave.flush sends them as ONE turn), so they read together too.
+---
+--- Each half is a COUNT with its own way in: the comments row opens the full
+--- list, the edits row peeks the pending diff. Counts, not listings — the
+--- sidebar is narrow and either half can hold more rows than it can spare
+--- without pushing Permissions off-screen. The header is always present so
+--- the feature is discoverable before anything is pending.
 --- @param ctx table
---- @param props { width?: integer }
+--- @param props { session?: table, width?: integer, on_flush?: fun(session: table|nil), on_discard?: fun(session: table|nil) }
+---   on_flush/on_discard override the buttons' targets (spec injection);
+---   the defaults are weave.flush and feedback.discard + edits mark_seen.
 function M.Section(ctx, props)
+  local Sync = require("weave.edit_sync")
   local draft = use_feedback(ctx)
+  -- Re-render when the edits half changes: a revision lands (the log) or a
+  -- cursor moves — flush delivered, gate consumed, window discarded (sync).
+  local ver = ctx.use_state(0)
+  ctx.use_effect(function()
+    local function bump()
+      ver.set(ver.get() + 1)
+    end
+    local unsub_log = require("weave.revision_log").subscribe(bump)
+    local unsub_sync = Sync.subscribe(bump)
+    return function()
+      unsub_log()
+      unsub_sync()
+    end
+  end, {})
+  ver.get()
+
+  local session = props.session
+  local comments = draft and draft.comments or {}
+  local summary = Sync.pending_summary(session)
+
   local rows = {
-    {
+    { comp = ui.label, props = { text = "Pending flush", style = { text_hl = "Title" } } },
+  }
+
+  if #comments > 0 then
+    rows[#rows + 1] = {
       comp = ui.button,
       props = {
-        label = "Code feedback",
+        label = ("%d comment(s)"):format(#comments),
         theme = false,
-        style = { text_hl = "Title", _hover = { hl = "FibrousHover" } },
+        style = { _hover = { hl = "FibrousHover" } },
         on_press = function()
           M.open_list()
         end,
       },
-    },
-  }
-
-  if not draft then
-    rows[#rows + 1] = dim("(no comments)")
-    return { comp = ui.col, props = {}, children = rows }
-  end
-
-  local stale = 0
-  for _, comment in ipairs(draft.comments) do
-    if Store.resolve(comment).orphaned then
-      stale = stale + 1
+    }
+    local stale = 0
+    for _, comment in ipairs(comments) do
+      if Store.resolve(comment).orphaned then
+        stale = stale + 1
+      end
+    end
+    if stale > 0 then
+      -- An orphaned comment still gets sent, labelled stale; the glyph warns
+      -- BEFORE sending that its line numbers can no longer be trusted.
+      rows[#rows + 1] = {
+        comp = ui.label,
+        props = { text = ("⚠ %d stale"):format(stale), style = { text_hl = "WeaveTaskIconFailed" } },
+      }
     end
   end
 
-  rows[#rows + 1] = dim(("%d comment(s) pending"):format(#draft.comments))
-  if stale > 0 then
-    -- An orphaned comment still gets sent, labelled stale; the glyph warns
-    -- BEFORE sending that its line numbers can no longer be trusted.
+  if summary then
     rows[#rows + 1] = {
-      comp = ui.label,
-      props = { text = ("⚠ %d stale"):format(stale), style = { text_hl = "WeaveTaskIconFailed" } },
+      comp = ui.button,
+      props = {
+        label = M.edits_label(summary),
+        theme = false,
+        style = { _hover = { hl = "FibrousHover" } },
+        on_press = function()
+          M.peek_edits(session)
+        end,
+      },
     }
   end
 
+  if #comments == 0 and not summary then
+    rows[#rows + 1] = dim("(nothing pending)")
+    return { comp = ui.col, props = {}, children = rows }
+  end
+
   rows[#rows + 1] = {
-    comp = ui.col,
-    props = {},
+    comp = ui.row,
+    props = { gap = 1 },
     children = {
       {
         comp = ui.button,
         props = {
-          label = "send feedback",
+          label = "flush",
           on_press = function()
-            require("weave.feedback").send()
+            if props.on_flush then
+              props.on_flush(session)
+            else
+              require("weave").flush({ session = session })
+            end
           end,
         },
       },
@@ -115,7 +191,12 @@ function M.Section(ctx, props)
         props = {
           label = "discard",
           on_press = function()
-            require("weave.feedback").discard()
+            if props.on_discard then
+              props.on_discard(session)
+            else
+              require("weave.feedback").discard()
+              Sync.mark_seen(session)
+            end
           end,
         },
       },

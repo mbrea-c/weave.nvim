@@ -122,7 +122,8 @@ The panel is **one docked pane** with three regions:
   permission requests. It scrolls independently. It's a fibrous *container*: `<CR>` steps
   into it, `h/j/k/l` at its edges step back out, `<C-d>/<C-u>` page inside.
 - **Sidebar** — session metadata, view toggles, the active permission preset,
-  the task list, running terminal tasks, and any pending permission request.
+  the task list, running terminal tasks, your pending flush (unsent comments
+  and edits), and any pending permission request.
 - **Prompt** — the input box. Its border colour reflects the active permission
   preset; an animated indicator shows when the agent is working.
 
@@ -349,15 +350,15 @@ opened with. Backing out of a comment you never wrote removes it either way,
 so no highlight is stranded, and saving an empty body deletes the comment too
 — which makes "clear the box and save" a working way to drop one.
 
-The open draft appears in the sidebar below **Terminal tasks**, summarised as
-`N comment(s) pending` plus **send feedback** and **discard** buttons. The
-**Code feedback** header is itself the way in: activating it opens the full
-list, one row per comment (`file:line  body`). Activating a row **jumps to that
-comment's code** and opens its editor there.
-
-`require("weave").flush()` sends the draft too, together with any [edits the
-agent has not seen](#tutor-mode) — one keypress for "here is what I did and
-what I want to ask about it", in one turn.
+The draft appears in the sidebar's **Pending flush** section (below **Terminal
+tasks**), which shows everything a flush would send: the comment draft as
+`N comment(s)` (activating it opens the full list — one row per comment,
+`file:line  body`; activating a row **jumps to that comment's code** and opens
+its editor there) and, when [edit tracking](#tutor-mode) is on, the unsent
+edits as `N files edited` (activating it peeks the very diff a flush would
+send). The **flush** button sends both halves as one turn —
+`require("weave").flush()` bound to a button — and **discard** drops both: the
+comments are cleared and the edit window is marked seen without being sent.
 
 Comments are anchored with **extmarks**, not line numbers, so they follow the
 code as it moves — including when the agent edits above them. A comment whose
@@ -503,7 +504,10 @@ turn**: they are one thought, and delivering them separately makes the agent
 answer the diff before it has read the question. Each half keeps its own
 delivery hook, so a batch wiped by a cancelled turn re-arms the edits and
 leaves the comments in the draft. With nothing pending it says so rather than
-sending an empty turn.
+sending an empty turn. The sidebar's **Pending flush** section shows what the
+next flush would carry — the comment count and the unsent-edits file count,
+each a click away from its detail — with **flush** and **discard** buttons
+for the whole bundle.
 
 With `auto_send_edits` on, batches *also* go out on their own: after **7
 seconds of quiet** (`debounce_ms`), or after **60 seconds** regardless if you
@@ -1372,7 +1376,7 @@ mode](#tutor-mode) for the whole picture.
                            permissions_window (preset config + Lua editing),
                            settings_window (every runtime setting + presets),
                            terminal_tasks (running tasks, live task views),
-                           feedback (code feedback section + comment editor),
+                           feedback (Pending-flush section + comment editor),
                            tool_call (tool-call rendering + the override
                              registry), renderers/ (builtin overrides),
                            wave (thinking indicator), prefs, theme, use_store

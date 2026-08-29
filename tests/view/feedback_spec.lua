@@ -78,66 +78,157 @@ local function labels(tree)
   return table.concat(out, "\n")
 end
 
-describe("feedback sidebar section", function()
+describe("pending flush sidebar section", function()
+  local Log = require("weave.revision_log")
+  local Permissions = require("weave.permissions")
+  local Settings = require("weave.settings")
+  local Sync = require("weave.edit_sync")
+
+  local root, session
+
+  --- One recorded user edit under the project root — what puts a "files
+  --- edited" row on the section.
+  local function edit_a_file(name, before, after)
+    local path = root .. "/" .. name
+    vim.fn.writefile(before, path)
+    local bufnr = vim.fn.bufadd(path)
+    vim.fn.bufload(bufnr)
+    Log.track(bufnr)
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, after)
+    Log.note_change(bufnr)
+    Log.close_burst()
+  end
+
   before_each(function()
     Store._reset()
+    root = vim.fn.tempname()
+    vim.fn.mkdir(root, "p")
+    Permissions._reset()
+    Permissions.set_project_root(root)
+    Sync._reset()
+    Settings._reset()
+    Log._reset()
+    session = { name = "pending-flush-double" }
+    Settings.global():set("track_edits", true)
+    Sync.watch(session)
   end)
 
-  it("shows the header and an empty note before any comment exists", function()
-    local tree = View.Section(fake_ctx(), { width = 40 })
-    assert.truthy(labels(tree):find("Code feedback", 1, true))
-    assert.truthy(labels(tree):find("(no comments)", 1, true))
+  after_each(function()
+    Sync._reset()
+    Settings._reset()
+    Log._reset()
+    Permissions._reset()
+    vim.fn.delete(root, "rf")
   end)
 
-  it("offers no send button with nothing to send", function()
-    assert.is_nil(find_button(View.Section(fake_ctx(), { width = 40 }), "send feedback"))
+  local function section(props)
+    return View.Section(fake_ctx(), vim.tbl_extend("force", { width = 40, session = session }, props or {}))
+  end
+
+  it("shows the header and a nothing-pending note", function()
+    local tree = section()
+    assert.truthy(labels(tree):find("Pending flush", 1, true))
+    assert.truthy(labels(tree):find("(nothing pending)", 1, true))
+  end)
+
+  it("offers no flush or discard with nothing pending", function()
+    assert.is_nil(find_button(section(), "flush"))
+    assert.is_nil(find_button(section(), "discard"))
   end)
 
   -- The sidebar is narrow and a draft can hold a dozen comments from several
   -- sources; a count plus a way in beats a list that pushes Permissions off
   -- the bottom of the screen.
-  it("summarises the draft as a count rather than listing every comment", function()
+  it("summarises comments as a count rather than listing them", function()
     local buf = scratch({ "alpha", "beta" }, "/tmp/weave-fb-section.lua")
     Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "rename this" })
     Store.add({ bufnr = buf, range = { lnum = 2, end_lnum = 2 }, body = "and this" })
-    local text = labels(View.Section(fake_ctx(), { width = 60 }))
-    assert.truthy(text:find("2 comment(s) pending", 1, true))
+    local text = labels(section())
+    assert.truthy(text:find("2 comment(s)", 1, true))
     assert.is_nil(text:find("rename this", 1, true))
   end)
 
-  it("makes the header the way into the full list", function()
+  it("makes the comments row the way into the full list", function()
     local buf = scratch({ "alpha" }, "/tmp/weave-fb-header.lua")
     Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "x" })
-    local header = find_button(View.Section(fake_ctx(), { width = 40 }), "Code feedback")
-    assert.is_not_nil(header)
+    local row = find_button(section(), "1 comment(s)")
+    assert.is_not_nil(row)
 
     local opened = false
     local real = View.open_list
     View.open_list = function()
       opened = true
     end
-    header.props.on_press()
+    row.props.on_press()
     View.open_list = real
     assert.is_true(opened)
   end)
 
-  it("offers send and discard once a draft exists", function()
-    local buf = scratch({ "alpha" }, "/tmp/weave-fb-buttons.lua")
-    Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "x" })
-    local tree = View.Section(fake_ctx(), { width = 40 })
-    assert.is_not_nil(find_button(tree, "send feedback"))
-    assert.is_not_nil(find_button(tree, "discard"))
-  end)
-
   -- The count alone would hide this, and "which line was that again" is worth
   -- knowing BEFORE sending, not after.
-  it("warns in the summary when a comment's code is gone", function()
+  it("warns when a comment's code is gone", function()
     local buf = scratch({ "alpha", "beta" }, "/tmp/weave-fb-orphan.lua")
     Store.add({ bufnr = buf, range = { lnum = 2, end_lnum = 2 }, body = "x" })
     vim.api.nvim_buf_set_lines(buf, 1, 2, false, {})
-    local text = labels(View.Section(fake_ctx(), { width = 40 }))
+    local text = labels(section())
     assert.truthy(text:find("⚠", 1, true))
     assert.truthy(text:find("1 stale", 1, true))
+  end)
+
+  it("shows the unsent-edits window as a file count", function()
+    edit_a_file("a.lua", { "one" }, { "two" })
+    edit_a_file("b.lua", { "x" }, { "y" })
+    local text = labels(section())
+    assert.truthy(text:find("2 files edited", 1, true))
+  end)
+
+  it("phrases the window's shape: new and deleted files called out", function()
+    assert.equal("1 file edited", View.edits_label({ files = 1, created = 0, deleted = 0 }))
+    assert.equal("3 files edited (1 new)", View.edits_label({ files = 3, created = 1, deleted = 0 }))
+    assert.equal("2 files edited (1 new, 1 deleted)", View.edits_label({ files = 2, created = 1, deleted = 1 }))
+  end)
+
+  it("skips the edits row when nothing is tracked for this session", function()
+    Settings.global():set("track_edits", false)
+    local text = labels(section())
+    assert.is_nil(text:find("edited", 1, true))
+  end)
+
+  it("makes the edits row a peek at the pending diff", function()
+    edit_a_file("a.lua", { "one" }, { "two" })
+    local row = find_button(section(), "1 file edited")
+    assert.is_not_nil(row)
+
+    local peeked
+    local real = View.peek_edits
+    View.peek_edits = function(s)
+      peeked = s
+    end
+    row.props.on_press()
+    View.peek_edits = real
+    assert.rawequal(session, peeked)
+  end)
+
+  it("offers flush once anything is pending, wired to the whole flush", function()
+    edit_a_file("a.lua", { "one" }, { "two" })
+    local flushed
+    local tree = section({
+      on_flush = function(s)
+        flushed = s
+      end,
+    })
+    find_button(tree, "flush").props.on_press()
+    assert.rawequal(session, flushed)
+  end)
+
+  it("discard drops BOTH halves: comments cleared, edits marked seen", function()
+    local buf = scratch({ "alpha" }, "/tmp/weave-fb-discard.lua")
+    Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "x" })
+    edit_a_file("a.lua", { "one" }, { "two" })
+
+    find_button(section(), "discard").props.on_press()
+    assert.is_nil(Store.draft())
+    assert.is_nil(Sync.pending_summary(session))
   end)
 end)
 

@@ -545,7 +545,7 @@ function M.PermissionsSection(ctx, props)
 end
 
 --- Pure composition — every section subscribes to its own store slice.
---- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.settings.Store, session_settings?: weave.settings.Store, on_details?: fun() }
+--- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.settings.Store, session?: table, session_settings?: weave.settings.Store, on_details?: fun() }
 function M.Sidebar(_, props)
   return {
     comp = ui.col,
@@ -570,10 +570,11 @@ function M.Sidebar(_, props)
       { comp = M.TasksSection, props = { store = props.store, width = props.sidebar_width } },
       -- terminal tasks sit ABOVE permissions (design-agent-sandbox.md, 0c)
       { comp = TerminalTasks.Section, props = { width = props.sidebar_width } },
-      -- inline code feedback sits below terminal tasks: it is a draft the user
-      -- is composing, not agent activity, so it reads as the last thing before
-      -- a permission prompt interrupts everything.
-      { comp = Feedback.Section, props = { width = props.sidebar_width } },
+      -- the Pending-flush section sits below terminal tasks: comments and
+      -- unsent edits are a draft the user is composing, not agent activity,
+      -- so it reads as the last thing before a permission prompt interrupts
+      -- everything.
+      { comp = Feedback.Section, props = { width = props.sidebar_width, session = props.session } },
       { comp = M.PermissionsSection, props = { store = props.store } },
     },
   }
