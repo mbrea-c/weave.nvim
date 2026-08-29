@@ -248,7 +248,7 @@ describe("view.tool_call Entry subrenderers", function()
     local handle = mount_transcript(store)
 
     -- our header, but the builtin diff body is untouched
-    assert.same({ "head:e1", "    - local a = 1", "    + local a = 2" }, trimmed(handle.bufnr))
+    assert.same({ "head:e1", "    1   - local a = 1", "      1 + local a = 2" }, trimmed(handle.bufnr))
     handle.unmount()
   end)
 

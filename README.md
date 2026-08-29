@@ -118,8 +118,8 @@ The panel is **one docked pane** with three regions:
 
 - **Transcript** — the conversation: your messages, streamed markdown replies,
   thinking blocks, tool calls (with inline diff previews — syntax highlighted
-  under the add/delete colours, language inferred from the file), and
-  permission requests. It scrolls independently. It's a fibrous *container*: `<CR>` steps
+  under the add/delete colours, language inferred from the file, an old│new
+  line-number gutter), and permission requests. It scrolls independently. It's a fibrous *container*: `<CR>` steps
   into it, `h/j/k/l` at its edges step back out, `<C-d>/<C-u>` page inside.
 - **Sidebar** — session metadata, view toggles, the active permission preset,
   the task list, running terminal tasks, your pending flush (unsent comments
@@ -885,10 +885,10 @@ return that same content and diff to nothing. So the old side is captured
 `(path, content)`, the pair both ends agree on. Snapshots are bounded and
 lookup is non-consuming, since a transcript entry re-renders on every flush;
 when one has been evicted the renderer declines the block rather than diffing
-against an empty file and claiming the agent wrote it from scratch. Because a
-write's two sides really are whole files, its diff is the one that shows
-**real line numbers**; edits diff fragments of unknown position, so theirs
-stay off rather than counting from 1 and lying.
+against an empty file and claiming the agent wrote it from scratch. A write's
+two sides really are whole files, so its diff's line numbers are the file's
+own; an edit diffs a fragment of unknown position, so its numbers are
+relative to the fragment.
 
 ### Permission presets
 

@@ -57,8 +57,7 @@ end
 
 --- An Entry whose body is the given diff, honouring the show_diffs pref and
 --- the same preview cap as the builtin body. `extra` merges into the diff
---- props: the path (language inference), and for the write renderer — the one
---- caller whose sides really are whole files — real line numbers.
+--- props — the path, for language inference.
 --- @param props weave.view.ToolCallProps
 --- @param old string[]
 --- @param new string[]
@@ -113,12 +112,9 @@ M.write = {
   render = function(_, props)
     local input = props.block.input
     local old = Snapshots.get(input.path, input.content) or {}
-    -- both sides are the WHOLE file here, so real line numbers are honest
-    return entry_with_diff(props, old, split(input.content), {
-      path = input.path,
-      line_numbers = true,
-      start_line = 1,
-    })
+    -- both sides are the WHOLE file here, so the default from-1 numbering
+    -- is the file's own
+    return entry_with_diff(props, old, split(input.content), { path = input.path })
   end,
 }
 

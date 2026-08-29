@@ -46,8 +46,8 @@ describe("fs diff renderers", function()
       assert.same({ "local a = 1" }, body.props.old)
       assert.same({ "local a = 2" }, body.props.new)
       assert.equal("/tmp/a.lua", body.props.path)
-      -- fragments: no honest line numbers to show
-      assert.is_nil(body.props.line_numbers)
+      -- fragments carry no anchor, so the default (fragment-relative) numbering applies
+      assert.is_nil(body.props.start_line)
     end)
 
     it("draws nothing when the show_diffs pref is off", function()
@@ -72,16 +72,14 @@ describe("fs diff renderers", function()
       assert.is_false(FsDiff.write.match(block(input)))
     end)
 
-    it("diffs the snapshot against the written content, with real numbers", function()
+    it("diffs the snapshot against the written content", function()
       vim.fn.writefile({ "one" }, path)
       Snapshots.capture(path, "one\ntwo\n")
       local body = body_props(FsDiff.write, { block = block(input), show_diff = true })
       assert.same({ "one" }, body.props.old)
       assert.same({ "one", "two" }, body.props.new)
-      -- whole files on both sides: line numbers are honest here
+      -- whole files on both sides: the default from-1 numbering IS the file's
       assert.equal(path, body.props.path)
-      assert.is_true(body.props.line_numbers)
-      assert.equal(1, body.props.start_line)
       vim.fn.delete(path)
     end)
   end)

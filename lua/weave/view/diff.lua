@@ -9,11 +9,12 @@
 -- vim.filetype.match): transcript entries already name the file in their own
 -- header, so the component's reference header stays off.
 --
--- Line numbers default OFF because a transcript diff is usually a FRAGMENT
--- pair (an edit tool's old_string/new_string, an ACP diff part of unknown
--- extent), and numbering a fragment from 1 would claim file lines it doesn't
--- have. A caller that really diffs whole files (the write renderer, which
--- diffs the pre-write snapshot against the written content) opts in.
+-- Line numbers default ON (line_numbers = false turns them off). A caller
+-- that knows where the diff sits in its file passes `start_line`; without
+-- one the numbers count from 1 — the file's own numbering when the sides are
+-- whole files (an ACP diff part, the write renderer's snapshot pair), and
+-- fragment-relative for a fragment pair (an edit tool's old_string /
+-- new_string), whose position in the file nothing downstream knows.
 
 local ui = require("fibrous.inline.components")
 
@@ -37,7 +38,7 @@ function M.Diff(_, props)
       lang = props.lang,
       ref = props.path and { path = props.path } or nil,
       header = false,
-      line_numbers = props.line_numbers == true,
+      line_numbers = props.line_numbers ~= false,
       start_line = props.start_line,
       max_lines = props.max_lines,
       style = style,

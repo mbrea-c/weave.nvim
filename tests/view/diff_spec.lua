@@ -29,16 +29,16 @@ local function mount_diff(props)
 end
 
 describe("view.diff", function()
-  it("renders an interleaved hunk: context plain, -/+ rows filled", function()
+  it("renders an interleaved hunk: numbered, context plain, -/+ rows filled", function()
     local handle = mount_diff({
       old = { "keep", "drop me", "keep too" },
       new = { "keep", "add me", "keep too" },
     })
     local lines = trimmed(handle.bufnr)
-    assert.equal("  keep", lines[1])
-    assert.equal("- drop me", lines[2])
-    assert.equal("+ add me", lines[3])
-    assert.equal("  keep too", lines[4])
+    assert.equal("1 1   keep", lines[1])
+    assert.equal("2   - drop me", lines[2])
+    assert.equal("  2 + add me", lines[3])
+    assert.equal("3 3   keep too", lines[4])
 
     -- the changed rows carry the Diff* fills (no syntax here: no path/lang)
     assert.truthy(#marks_with(handle.bufnr, "DiffDelete") >= 1)
@@ -65,15 +65,15 @@ describe("view.diff", function()
     handle.unmount()
   end)
 
-  it("keeps line numbers off by default (fragments), on by request", function()
-    local fragment = mount_diff({ old = { "a", "x", "b" }, new = { "a", "y", "b" } })
-    assert.equal("  a", trimmed(fragment.bufnr)[1])
-    fragment.unmount()
+  it("numbers by default (from start_line when known), off by request", function()
+    -- a fragment pair with no anchor numbers from 1, relative to the fragment
+    local bare = mount_diff({ old = { "a", "x", "b" }, new = { "a", "y", "b" }, line_numbers = false })
+    assert.equal("  a", trimmed(bare.bufnr)[1])
+    bare.unmount()
 
     local numbered = mount_diff({
       old = { "a", "x", "b" },
       new = { "a", "y", "b" },
-      line_numbers = true,
       start_line = 40,
     })
     assert.same({
@@ -93,8 +93,8 @@ describe("view.diff", function()
     end
     local handle = mount_diff({ old = old, new = new, indent = "  ", max_lines = 5 })
     local lines = trimmed(handle.bufnr)
-    assert.equal("  - line 1", lines[1])
-    assert.equal("  - line 5", lines[5])
+    assert.equal("   1    - line 1", lines[1])
+    assert.equal("   5    - line 5", lines[5])
     assert.truthy(lines[6]:find("truncated"))
     assert.equal("", lines[7])
     handle.unmount()
