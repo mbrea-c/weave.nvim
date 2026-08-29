@@ -117,8 +117,9 @@ agent's reply streams into the transcript above.
 The panel is **one docked pane** with three regions:
 
 - **Transcript** — the conversation: your messages, streamed markdown replies,
-  thinking blocks, tool calls (with inline diff previews), and permission
-  requests. It scrolls independently. It's a fibrous *container*: `<CR>` steps
+  thinking blocks, tool calls (with inline diff previews — syntax highlighted
+  under the add/delete colours, language inferred from the file), and
+  permission requests. It scrolls independently. It's a fibrous *container*: `<CR>` steps
   into it, `h/j/k/l` at its edges step back out, `<C-d>/<C-u>` page inside.
 - **Sidebar** — session metadata, view toggles, the active permission preset,
   the task list, running terminal tasks, and any pending permission request.
@@ -338,7 +339,9 @@ vim.keymap.set("n", ";;ce", feedback.edit_comment, { desc = "weave: edit the com
 Commenting highlights the span (`WeaveCodeFeedback`, a yellow background by
 default — `:highlight` it to taste) and opens a small editor float for the
 comment body, with **save** / **delete** / **cancel** buttons; `<CR>` in normal
-mode saves. **Closing the editor saves**, whether with `q` or by focusing
+mode saves. The quoted code shows as a real snippet — syntax highlighted, with
+a line-number gutter that tracks the comment's **live** position (anchors
+follow the code as it moves, and so do these numbers). **Closing the editor saves**, whether with `q` or by focusing
 something else (every popup [closes on blur](#keymaps-inside-the-panel)) — you
 often want to look at the code you are commenting on, and that must not throw
 the comment away. **cancel** is the discard: it restores the body the editor
@@ -878,7 +881,10 @@ return that same content and diff to nothing. So the old side is captured
 `(path, content)`, the pair both ends agree on. Snapshots are bounded and
 lookup is non-consuming, since a transcript entry re-renders on every flush;
 when one has been evicted the renderer declines the block rather than diffing
-against an empty file and claiming the agent wrote it from scratch.
+against an empty file and claiming the agent wrote it from scratch. Because a
+write's two sides really are whole files, its diff is the one that shows
+**real line numbers**; edits diff fragments of unknown position, so theirs
+stay off rather than counting from 1 and lying.
 
 ### Permission presets
 

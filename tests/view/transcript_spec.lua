@@ -458,11 +458,12 @@ describe("view.transcript tool calls", function()
 
     local lines = trimmed(handle.bufnr)
     assert.equal(tool_header("completed", "edit", "a.lua"), lines[1])
-    assert.equal("    @@ -1 +1 @@", lines[2])
-    assert.equal("    -local a = 1", lines[3])
-    assert.equal("    +local a = 2", lines[4])
-    assert.same({ { row = 2, col = 4, end_col = 16 } }, marks_with(handle.bufnr, "DiffDelete"))
-    assert.same({ { row = 3, col = 4, end_col = 16 } }, marks_with(handle.bufnr, "DiffAdd"))
+    assert.equal("    - local a = 1", lines[2])
+    assert.equal("    + local a = 2", lines[3])
+    -- the changed rows carry the Diff* fills; the syntax runs (file_path
+    -- names a.lua, so the sides highlight as lua) sit composed over them
+    assert.truthy(#marks_with(handle.bufnr, "DiffDelete") >= 1)
+    assert.truthy(#marks_with(handle.bufnr, "DiffAdd") >= 1)
     handle.unmount()
   end)
 
@@ -664,7 +665,7 @@ describe("view.transcript prefs", function()
     assert.same({}, marks_with(handle.bufnr, "DiffAdd"))
 
     prefs:toggle("show_diffs")
-    assert.equal("    +local a = 2", trimmed(handle.bufnr)[4])
+    assert.equal("    + local a = 2", trimmed(handle.bufnr)[3])
     handle.unmount()
   end)
 

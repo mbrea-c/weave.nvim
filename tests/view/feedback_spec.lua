@@ -201,10 +201,32 @@ describe("feedback comment editor", function()
     comment = Store.add({ bufnr = buf, range = { lnum = 1, end_lnum = 1 }, body = "" })
   end)
 
-  it("heads with the location and shows the quoted code", function()
-    local text = labels(View.Editor(fake_ctx(), { id = comment.id }))
-    assert.truthy(text:find("weave%-fb%-editor%.%d+%.lua:1"))
-    assert.truthy(text:find("local x = compute()", 1, true))
+  it("heads with the location and quotes the code as a real snippet", function()
+    local tree = View.Editor(fake_ctx(), { id = comment.id })
+    assert.truthy(labels(tree):find("weave%-fb%-editor%.%d+%.lua:1"))
+    -- the quote is a ui.code snippet: highlighted, numbered from the
+    -- comment's LIVE line, capped at the preview length
+    local snippet
+    for _, node in ipairs(flatten(tree)) do
+      if node.comp == ui.code then
+        snippet = node
+      end
+    end
+    assert.is_not_nil(snippet)
+    assert.equal("local x = compute()", snippet.props.code)
+    assert.equal(1, snippet.props.start_line)
+    assert.equal(View.QUOTE_PREVIEW_LINES, snippet.props.max_lines)
+    assert.is_false(snippet.props.header)
+    assert.truthy(snippet.props.ref.path:find("weave%-fb%-editor"))
+  end)
+
+  it("skips the snippet for a comment with no quoted lines", function()
+    local c2 = Store.add({ bufnr = buf, range = { lnum = 2, end_lnum = 2 }, body = "x" })
+    local stored = Store.get(c2.id)
+    stored.quote = {}
+    for _, node in ipairs(flatten(View.Editor(fake_ctx(), { id = c2.id }))) do
+      assert.is_true(node.comp ~= ui.code)
+    end
   end)
 
   it("seeds the input with the existing body", function()

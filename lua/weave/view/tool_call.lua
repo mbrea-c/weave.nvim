@@ -384,6 +384,9 @@ function M.Body(_, props)
     props = {
       old = tc.diff.old,
       new = tc.diff.new,
+      -- language inference only (view.diff keeps its header off); line
+      -- numbers stay off because a diff block's extent is unknown here
+      path = tc.file_path,
       max_lines = M.DIFF_PREVIEW_MAX_LINES,
       indent = "    ",
     },

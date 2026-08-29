@@ -274,12 +274,25 @@ function M.Editor(ctx, props)
     rows[#rows + 1] = dim("the code this points at has changed; it will be sent marked stale")
   end
 
+  -- The quoted code as a real snippet (fibrous ui.code): syntax-highlighted,
+  -- with a gutter whose numbers are the comment's LIVE position — resolve()
+  -- follows the anchor, so they match the file as it is now, exactly what the
+  -- head above claims. The head already names the file, so the snippet's own
+  -- reference header stays off; the ref still rides along for language
+  -- inference (a scratch comment has no path and degrades to plain).
   local quote = comment.quote or {}
-  for i = 1, math.min(#quote, M.QUOTE_PREVIEW_LINES) do
-    rows[#rows + 1] = dim("  " .. quote[i])
-  end
-  if #quote > M.QUOTE_PREVIEW_LINES then
-    rows[#rows + 1] = dim(("  (… %d more lines)"):format(#quote - M.QUOTE_PREVIEW_LINES))
+  if #quote > 0 then
+    rows[#rows + 1] = {
+      comp = ui.code,
+      props = {
+        code = table.concat(quote, "\n"),
+        ref = comment.path ~= "" and { path = comment.path } or nil,
+        header = false,
+        start_line = at.lnum,
+        max_lines = M.QUOTE_PREVIEW_LINES,
+        style = { padding = { left = 2 } },
+      },
+    }
   end
 
   local function save()

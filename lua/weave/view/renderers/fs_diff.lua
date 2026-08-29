@@ -56,12 +56,15 @@ local function split(text)
 end
 
 --- An Entry whose body is the given diff, honouring the show_diffs pref and
---- the same preview cap as the builtin body.
+--- the same preview cap as the builtin body. `extra` merges into the diff
+--- props: the path (language inference), and for the write renderer — the one
+--- caller whose sides really are whole files — real line numbers.
 --- @param props weave.view.ToolCallProps
 --- @param old string[]
 --- @param new string[]
+--- @param extra? { path?: string, line_numbers?: boolean, start_line?: integer }
 --- @return table
-local function entry_with_diff(props, old, new)
+local function entry_with_diff(props, old, new, extra)
   return {
     comp = ToolCall.Entry,
     props = vim.tbl_extend("force", {}, props, {
@@ -71,12 +74,12 @@ local function entry_with_diff(props, old, new)
         end
         return {
           comp = Diff.Diff,
-          props = {
+          props = vim.tbl_extend("force", {
             old = old,
             new = new,
             max_lines = ToolCall.DIFF_PREVIEW_MAX_LINES,
             indent = "    ",
-          },
+          }, extra or {}),
         }
       end,
     }),
@@ -92,7 +95,7 @@ M.edit = {
   end,
   render = function(_, props)
     local input = props.block.input
-    return entry_with_diff(props, split(input.old_string), split(input.new_string))
+    return entry_with_diff(props, split(input.old_string), split(input.new_string), { path = input.path })
   end,
 }
 
@@ -110,7 +113,12 @@ M.write = {
   render = function(_, props)
     local input = props.block.input
     local old = Snapshots.get(input.path, input.content) or {}
-    return entry_with_diff(props, old, split(input.content))
+    -- both sides are the WHOLE file here, so real line numbers are honest
+    return entry_with_diff(props, old, split(input.content), {
+      path = input.path,
+      line_numbers = true,
+      start_line = 1,
+    })
   end,
 }
 
