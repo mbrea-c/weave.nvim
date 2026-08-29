@@ -438,14 +438,14 @@ end
 -- Worded to cover the seatbelt backend too, where the same reads are DENIED
 -- rather than answered with nothing — a note that promised one shape would be
 -- wrong on the other platform.
-local STEERING_NOTE = table.concat({
-  "[weave] Your process is sandboxed: the working directory you can see is NOT the real",
-  "project, and your builtin file/search/shell tools cannot reach it — depending on the",
-  "platform they will either come back EMPTY or be denied outright. The real project is",
-  "reachable only through the weave MCP tools (read, write, edit, glob, grep,",
-  "task_start, ...). Use those for everything. If you need access beyond the project",
-  "(another directory, or network for a command), ask with request_access.",
-}, "\n")
+--
+-- The words are in prompts/sandbox_steering.md (weave.prompts), read per
+-- conversation rather than at require time, so editing them takes effect on
+-- the next session instead of the next restart.
+--- @return string|nil
+local function steering_note()
+  return require("weave.prompts").get("sandbox_steering")
+end
 
 --- THIS session's frozen spawn confinement — the client's, never the
 --- globally selected session's.
@@ -633,6 +633,23 @@ function Session:send_system(opts)
   return true
 end
 
+--- Send several messages as ONE turn, interrupting whatever is in flight.
+---
+--- The primitive behind the flush command (weave.flush): the edits you made
+--- and the comments you wrote about them are one thought, and delivering them
+--- as two turns makes the agent answer the first before it has read the
+--- second. Each message keeps its own on_sent/on_dropped, so a mixed batch
+--- can advance the edit cursor and clear the comment draft independently.
+--- @param msgs weave.session.Message[] `kind` decides how each is echoed
+--- @return boolean accepted false when the session cannot take them (not ready)
+function Session:send_batch(msgs)
+  if type(msgs) ~= "table" or #msgs == 0 or not self:is_ready() then
+    return false
+  end
+  self:_steer_messages(msgs)
+  return true
+end
+
 --- Wipe the steer queue, telling the owners that care. A queued message is an
 --- ACCEPTED send that never made the wire; firing its on_dropped here is what
 --- lets tutor mode re-arm and resend the edits it carried instead of losing
@@ -734,6 +751,8 @@ end
 --- @field kind "user"|"tutor"
 --- @field text string what the agent receives
 --- @field label? string what the transcript shows for a non-user message
+--- @field on_sent? fun() fired when this block actually reaches the wire
+--- @field on_dropped? fun() fired when a queue wipe kills it first (see send_system)
 
 --- Drive one turn from a list of messages. Usually that list is a single user
 --- prompt; it is longer when several interruptions landed on the same dying
@@ -779,8 +798,14 @@ function Session:_send_messages(msgs)
   -- echo (already appended above) and in the agent's own history.
   vim.list_extend(prompt, self:_attachment_blocks(attachments))
   if self:_sandbox_mode() == "on" and self._steered_session ~= session_id then
+    local note = steering_note()
+    -- Mark it steered either way: a note that will not load is a warning
+    -- (weave.prompts) and a slightly worse-informed agent, not a reason to
+    -- re-read the missing file on every prompt of the conversation.
     self._steered_session = session_id
-    table.insert(prompt, 1, { type = "text", text = STEERING_NOTE })
+    if note then
+      table.insert(prompt, 1, { type = "text", text = note })
+    end
   end
 
   self._client:send_prompt(session_id, prompt, function(_response, err)

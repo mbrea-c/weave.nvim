@@ -34,10 +34,12 @@
 --- @field max_wait_ms integer Hard ceiling from the first unsent edit, so a continuously-typing user still gets sent
 --- @field on_flush "interrupt"|"queue" Whether a debounced batch cancels the turn in flight or waits behind it
 --- @field max_diff_bytes integer Cap on one batch's diff text (truncation is announced, never silent)
---- @field edits_prompt string Preamble ahead of each batch of user edits
+--- @field edits_prompt? string Preamble ahead of each batch of user edits; unset = the shipped prompts/edits.md
 
 --- @class weave.BriefConfig One agent brief: a standing instruction profile for a conversation
---- @field prompt string Sent when a session switches to this brief; non-default briefs are re-announced to every fresh conversation (/new, restore)
+--- Sent when a session switches to this brief; non-default briefs are re-announced to every fresh conversation (/new, restore).
+--- @field prompt? string The text, inline. Wins over `prompt_file` when both are set
+--- @field prompt_file? string A markdown file holding the text: absolute, ~-relative, or relative to weave's own prompts/ dir
 
 --- @class weave.SettingsConfig The runtime-settings surface (weave.settings)
 --- @field sidebar string[] Setting keys the sidebar renders directly; everything else lives behind its Settings header
@@ -65,6 +67,7 @@
 --- @field sandbox weave.SandboxConfig
 --- @field edits weave.EditsConfig
 --- @field settings weave.SettingsConfig
+--- @field prompts table<string, string> Per-name overrides of weave's shipped agent prompts (weave.prompts): a path to your own markdown file
 --- @field view weave.ViewConfig Default panel geometry (width / sidebar_width / prompt_height)
 --- @field keys table<string, weave.UserConfig.KeymapValue> Key(s) per named action (see weave.keys ACTIONS); `false` disables one
 --- @field tool_renderers weave.view.ToolRenderer[] Per-tool-call rendering overrides (see weave.view.tool_call)
@@ -277,21 +280,41 @@ local ConfigDefault = {
   -- How edit batches reach the agent (weave.edit_sync). Whether they are
   -- collected and sent at all is runtime state, not config — see the
   -- track_edits / auto_send_edits / debounce_ms settings in weave.settings.
+  --
+  -- `edits_prompt` is deliberately absent: the preamble lives in
+  -- prompts/edits.md, where prose is editable (weave.prompts). Setting it here
+  -- still wins, for config written before the files existed.
   edits = {
     max_wait_ms = 60000,
     on_flush = "interrupt",
     max_diff_bytes = 100 * 1024,
-    edits_prompt = "[weave] The user has been editing. Everything they changed since your last"
-      .. " update, squashed into one diff:",
   },
+
+  -- Overrides for weave's shipped agent-facing prompts (weave.prompts), by
+  -- name: point one at your own markdown file and weave reads that instead.
+  -- The names are the files in this repo's prompts/ dir — today
+  -- `sandbox_steering` (what a mode-on agent is told about its sandbox) and
+  -- `edits` (the preamble ahead of a batch of user edits). Brief prompts are
+  -- configured per brief instead, under settings.briefs.
+  prompts = {},
 
   -- The runtime-settings surface (weave.settings): which settings get a
   -- permanent sidebar checkbox, per-key default overrides, the agent briefs
   -- (the `brief` setting's options — standing instruction profiles, sent on
   -- switch and re-announced to fresh conversations), and the presets (window
-  -- buttons; each sets only the keys it names). The brief prompts are the
-  -- whole agent-facing contract and are meant to be rewritten: they are what
-  -- makes the agent behave like a tutor rather than an assistant.
+  -- buttons; each sets only the keys it names).
+  --
+  -- The brief prompts are the whole agent-facing contract — they are what
+  -- makes the agent behave like a tutor rather than an assistant — and they
+  -- are meant to be rewritten, so they live as markdown under prompts/
+  -- rather than as string literals here (weave.prompts). Point `prompt_file`
+  -- at your own to replace one wholesale; `prompt` still takes text inline.
+  --
+  -- The `tutor` preset does NOT turn auto-send on. Tracking without
+  -- auto-send is the tutor that speaks when spoken to: everything you write
+  -- is collected, and it reaches the agent when you flush it (weave.flush),
+  -- together with whatever inline comments you have written. Add
+  -- `auto_send_edits = true` to a preset of your own for the timer-driven one.
   settings = {
     sidebar = { "show_thoughts", "show_diffs", "conceal_markdown", "follow", "auto_send_edits" },
     defaults = {},
@@ -299,7 +322,7 @@ local ConfigDefault = {
     presets = {
       {
         name = "tutor",
-        settings = { track_edits = true, auto_send_edits = true, brief = "tutor" },
+        settings = { track_edits = true, auto_send_edits = false, brief = "tutor" },
       },
       {
         name = "normal",
@@ -308,45 +331,8 @@ local ConfigDefault = {
     },
 
     briefs = {
-      normal = {
-        prompt = table.concat({
-          "[weave] Tutor mode is now OFF. You will stop receiving the user's edits as they",
-          "make them. Go back to answering what you are asked.",
-        }, "\n"),
-      },
-      tutor = {
-        prompt = table.concat({
-          "[weave] TUTOR MODE IS NOW ON.",
-          "",
-          "From now on you will periodically receive diffs of what the USER is writing,",
-          "unprompted, as they write it. They are not asking you to make changes — they are",
-          "asking you to teach. For each batch:",
-          "",
-          "  - Read what they did and why it might be wrong, fragile, or simply not the",
-          "    clearest way to say it. Say so plainly, and say what you would do instead.",
-          "  - Leave the feedback ON THE CODE with the `annotate` tool (a file, a line",
-          "    range, and your message), not only in chat. That is what the user reads.",
-          "  - Praise is cheap and unhelpful; if a batch is genuinely fine, say nothing or",
-          "    say it in one line. Do not invent problems to have something to say.",
-          "  - Do NOT edit their files. They are practising. Show them, do not do it.",
-          "",
-          "Be BRIEF, and be specific. The user is mid-flow with their hands on the",
-          "keyboard — they did not stop to ask you a question, and every annotation you",
-          "leave pushes their code down the screen to make room for itself. A paragraph",
-          "where a sentence would do is something they have to read, dismiss, and then",
-          "recover their place from. One or two sentences per point: name the exact thing,",
-          "say what you would do instead, stop. Do not restate what the code does, do not",
-          "explain the concept from first principles, and do not pad a thin observation",
-          "into a lecture — say less, or say nothing. If a point genuinely needs the long",
-          "version, leave the short annotation and offer the detail in chat for them to",
-          "ask for; do not deliver it unasked. Three sharp notes beat ten diligent ones.",
-          "",
-          "One caveat about the diffs: they are the user's edits as weave observed them, so",
-          "changes made by shell commands YOU ran (a formatter, a codemod) can appear in",
-          "them too. If a hunk looks like your own work, it probably is — say so rather",
-          "than crediting it to the user.",
-        }, "\n"),
-      },
+      normal = { prompt_file = "briefs/normal.md" },
+      tutor = { prompt_file = "briefs/tutor.md" },
     },
   },
 }

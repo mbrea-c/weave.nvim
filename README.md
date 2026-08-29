@@ -331,6 +331,10 @@ The open draft appears in the sidebar below **Terminal tasks**, summarised as
 list, one row per comment (`file:line  body`). Activating a row **jumps to that
 comment's code** and opens its editor there.
 
+`require("weave").flush()` sends the draft too, together with any [edits the
+agent has not seen](#tutor-mode) — one keypress for "here is what I did and
+what I want to ask about it", in one turn.
+
 Comments are anchored with **extmarks**, not line numbers, so they follow the
 code as it moves — including when the agent edits above them. A comment whose
 code is deleted outright is counted as `⚠ N stale` in the sidebar, marked in
@@ -432,23 +436,30 @@ worse.
 ### Tutor mode
 
 The same idea as inline feedback pointed the other way: instead of you
-reviewing the agent's code, the agent reviews **yours**, as you write it.
-Tutor mode is a **preset**: the `[tutor]` button in the settings window sets
-`track_edits`, `auto_send_edits` and `brief = "tutor"` in one press; the
-`[normal]` preset is the way back. The pieces are ordinary settings, so a
-tutor that never interrupts (`auto_send_edits` off, `edit_gate` on, agent
-pulls with `check_user_edits`) is just a different combination.
+reviewing the agent's code, the agent reviews **yours**. Tutor mode is a
+**preset**: the `[tutor]` button in the settings window sets `track_edits` and
+`brief = "tutor"` in one press; the `[normal]` preset is the way back.
+
+The shipped preset does **not** turn `auto_send_edits` on. Everything you
+write is collected, and it reaches the agent when *you* send it — `flush`,
+below, which takes your inline comments along with it. The pieces are ordinary
+settings, so the other shapes are just other combinations: `auto_send_edits`
+for the tutor on a timer, or `edit_gate` for one that never interrupts (the
+agent pulls with `check_user_edits` before it may write).
 
 The **brief** is what makes the agent a tutor rather than an assistant: a
 standing instruction profile, sent when the setting changes — and re-announced
-to every fresh conversation (`/new`, restore), so the mode survives them.
-Briefs are setup-configurable (`settings.briefs`): add a profile, and it
-appears in the `brief` enum next to the shipped `normal` and `tutor`.
+to every fresh conversation (`/new`, restore), so the mode survives them. The
+shipped ones live in [`prompts/briefs/`](prompts/briefs) as markdown you can
+edit; `settings.briefs` adds your own, and a new profile appears in the
+`brief` enum next to `normal` and `tutor`. See [Agent
+prompts](#agent-prompts).
 
-Auto-send is **per session** — a tutor in one panel and an ordinary assistant
+Delivery is **per session** — a tutor in one panel and an ordinary assistant
 in another is a normal thing to want. Collection is editor-global; each
-session tracks what it has already **seen** (one cursor shared by auto-send
-and the edit gate), so two of them never eat each other's window.
+session tracks what it has already **seen** (one cursor, shared by all three
+roads out: auto-send, the edit gate, and a manual flush), so two of them never
+eat each other's window.
 
 What the agent receives is one **squashed diff** of everything you changed
 since its last update — not a replay of every keystroke. A line you typed and
@@ -456,16 +467,29 @@ retyped five times arrives as whatever it finally says, and a change you made
 and then undid does not arrive at all. File creations and deletions are in
 there too.
 
-By default a batch goes out after **7 seconds of quiet** (`debounce_ms`), or
-after **60 seconds** regardless if you never stop typing, and it
-**interrupts** the turn in flight (the same thing `<C-x>` does). The cursor
-only advances when a diff actually reaches the wire: a send that dies parked
-behind a cancelled turn is re-squashed into the next one instead of being
-lost. For the impatient, send now:
+**Flush** is how a batch normally goes out — bind it, or use `:Weave flush`:
 
 ```lua
-vim.keymap.set("n", ";;F", require("weave.edit_sync").flush_now, { desc = "weave: flush my edits now" })
+vim.keymap.set("n", ";;F", require("weave").flush, { desc = "weave: flush edits + comments" })
 ```
+
+It sends the edits the agent has not seen **and** the [inline
+comments](#inline-code-feedback) you have written but not sent, as **one
+turn**: they are one thought, and delivering them separately makes the agent
+answer the diff before it has read the question. Each half keeps its own
+delivery hook, so a batch wiped by a cancelled turn re-arms the edits and
+leaves the comments in the draft. With nothing pending it says so rather than
+sending an empty turn.
+
+With `auto_send_edits` on, batches *also* go out on their own: after **7
+seconds of quiet** (`debounce_ms`), or after **60 seconds** regardless if you
+never stop typing, **interrupting** the turn in flight (the same thing `<C-x>`
+does). Either way the cursor only advances when a diff actually reaches the
+wire: a send that dies parked behind a cancelled turn is re-squashed into the
+next one instead of being lost.
+
+`require("weave.edit_sync").flush_now(session)` is the edits-only half, if you
+want them without the comments.
 
 Sends appear in the transcript as a single quiet line (`⇅ sent 2 files you
 changed`) rather than as prose you appear to have written; `K` on it shows the
@@ -511,7 +535,50 @@ namespaces, so `;;x` never dismisses one of your own comments.
 Everything about the mode is configurable — see `edits` and `settings` under
 [Configuration](#configuration). The brief prompts especially: they are the
 whole agent-facing contract, and rewriting them is how you get the tutor you
-actually want.
+actually want. They are markdown files — see below.
+
+### Agent prompts
+
+Every block of prose weave sends to an **agent** lives in
+[`prompts/`](prompts) as markdown, not as a Lua string literal, because these
+are meant to be rewritten and editing prose inside a `table.concat` of quoted
+lines is miserable:
+
+| File | What it is |
+| --- | --- |
+| `prompts/briefs/tutor.md` | The tutor brief: what makes the agent review your work instead of doing it |
+| `prompts/briefs/normal.md` | The way back — announced when you leave a non-default brief |
+| `prompts/edits.md` | The preamble ahead of each batch of your edits |
+| `prompts/sandbox_steering.md` | What a [sandboxed](#sandbox) agent is told about where the real project is |
+
+They are read **at send time**, so editing one takes effect on the next send —
+no restart, no reload. Point weave at your own copies instead of editing in
+place (an update would overwrite those):
+
+```lua
+require("weave").setup({
+  -- by name, for weave's own prompts
+  prompts = { sandbox_steering = "~/dotfiles/weave/steering.md" },
+  settings = {
+    briefs = {
+      -- briefs carry their own file, so your own profiles work the same way
+      tutor = { prompt_file = "~/dotfiles/weave/tutor.md" },
+      rustacean = { prompt_file = "~/dotfiles/weave/rust-tutor.md" },
+      -- or inline, which still wins over a file
+      terse = { prompt = "[weave] Answer in at most three sentences." },
+    },
+  },
+})
+```
+
+Paths are absolute or `~`-relative; a bare name resolves inside weave's own
+`prompts/` dir, never the cwd. A file that will not load is a warning and a
+prompt that says nothing — never a failed send.
+
+Short refusals the agent reads at the point of failure (a permission deny, the
+edit gate's "you have not seen the user's edits yet") stay in the code beside
+the check that emits them: they are one line each, and a file per sentence
+would make them harder to find, not easier.
 
 ---
 
@@ -529,6 +596,7 @@ actually want.
 | `sandbox` | `table` | `{ mode = "on" }` | Agent process confinement (bubblewrap on Linux, Seatbelt on macOS — see [Sandbox](#sandbox)) |
 | `edits` | `table` | see below | Edit-batch delivery mechanics ([tutor mode](#tutor-mode)); the on/off switches are runtime [settings](#settings) |
 | `settings` | `table` | see below | The runtime-settings surface: sidebar subset, default overrides, agent briefs, presets |
+| `prompts` | `table` | `{}` | Per-name overrides of weave's shipped [agent prompts](#agent-prompts): a path to your own markdown file |
 | `debug` | `boolean` | `false` | Write a debug log (via the bundled logger) |
 | `view` | `table` | see below | Default panel geometry |
 | `keys` | `table` | see [Keybinds](#keybinds) | Key(s) per named action |
@@ -548,22 +616,22 @@ the `track_edits`/`auto_send_edits` runtime [settings](#settings)):
 | `edits` field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `max_wait_ms` | `integer` | `60000` | Ceiling from the first unsent edit, so continuous typing still gets sent (the quiet window itself is the `debounce_ms` setting) |
-| `on_flush` | `string` | `"interrupt"` | `"interrupt"` cancels the turn in flight (like `<C-x>`); `"queue"` waits behind it. `flush_now()` always interrupts |
+| `on_flush` | `string` | `"interrupt"` | `"interrupt"` cancels the turn in flight (like `<C-x>`); `"queue"` waits behind it. An explicit flush always interrupts |
 | `max_diff_bytes` | `integer` | `102400` | Cap on one batch's diff; truncation is announced, never silent |
-| `edits_prompt` | `string` | see source | Preamble ahead of each batch of edits |
+| `edits_prompt` | `string` | unset | Preamble ahead of each batch of edits, inline. Unset = [`prompts/edits.md`](prompts/edits.md) |
 
 `settings` configures the runtime-settings surface. The shipped `tutor` brief
-prompt is the entire agent-facing contract — it asks for annotations over
-chat, presses for **brevity** (you are mid-flow, and every annotation pushes
-your code down the screen), discourages empty praise, and forbids doing the
-work for you. But a tutor for learning Rust and a tutor for reviewing a
-colleague's style want different words.
+is the entire agent-facing contract — it asks for annotations over chat,
+presses for **brevity** (you are mid-flow, and every annotation pushes your
+code down the screen), discourages empty praise, and forbids doing the work
+for you. But a tutor for learning Rust and a tutor for reviewing a colleague's
+style want different words, so it is [a markdown file](#agent-prompts).
 
 | `settings` field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `sidebar` | `string[]` | the four view toggles + `auto_send_edits` | Which settings get a permanent sidebar row; everything else lives behind the Settings header |
 | `defaults` | `table` | `{}` | Per-key overrides of the builtin setting defaults (e.g. `{ debounce_ms = 3000 }`) |
-| `briefs` | `table` | `normal`, `tutor` | The `brief` enum's options: `name = { prompt = "..." }`. Non-default briefs are re-announced to every fresh conversation |
+| `briefs` | `table` | `normal`, `tutor` | The `brief` enum's options: `name = { prompt_file = "..." }` (or `prompt = "..."` inline, which wins). Non-default briefs are re-announced to every fresh conversation |
 | `presets` | `list` | `tutor`, `normal` | Settings-window buttons: `{ name = "...", settings = { key = value } }`; each sets ONLY the keys it names |
 
 ```lua
@@ -1074,6 +1142,7 @@ weave.get_session()    -- the current tab's selected Session (or nil)
 weave.stop()           -- close every session (and all their panels)
 
 weave.attach(path)     -- attach a file to the next prompt (asks if omitted)
+weave.flush()          -- send pending edits AND comments now, as one turn
 
 weave.dismiss_annotation()   -- drop the agent's annotation under the cursor
 weave.dismiss_annotations()  -- drop them all ({ buffer = true } for this file only)
@@ -1106,6 +1175,10 @@ session:restore(session_id)      -- restore a saved conversation in place
 
 session:is_ready()               -- agent connected + ACP session created?
 session:get_store()              -- the state snapshot + subscription (below)
+
+session:send_system(opts)        -- send something that is not the user's words
+session:send_batch(msgs)         -- several messages as ONE turn (what weave.flush
+                                 -- uses to put edits and comments together)
 ```
 
 ### The store
@@ -1146,6 +1219,7 @@ feedback.add(opts)                -- attach a comment with NO editor (for plugin
 feedback.goto_comment(id)         -- jump to a comment's code; false if it is gone
 
 feedback.send(opts)               -- format the draft and hand it to a sink
+feedback.pending_message()        -- the draft as a turn message, or nil (see weave.flush)
 feedback.discard()                -- drop the draft and its highlights
 feedback.draft()                  -- the open item, or nil
 feedback.subscribe(fn)            -- called on every draft change; returns unsubscribe
@@ -1171,8 +1245,10 @@ settings.for_session(s):set("auto_send_edits", true)
 settings.apply_preset(preset, { session = ..., view = ..., global = ... })
 
 local sync = require("weave.edit_sync")
-sync.flush_now(session)   -- send pending edits NOW, interrupting
-sync.pending(session)     -- does this conversation have unseen edits?
+sync.flush_now(session)      -- send pending EDITS now, interrupting (weave.flush
+                             -- is the one to bind: it takes the comments too)
+sync.pending(session)        -- does this conversation have unseen edits?
+sync.pending_message(session)-- that window as a turn message, or nil
 
 require("weave.view.settings_window").open()  -- the full settings window
 ```
@@ -1202,6 +1278,7 @@ mode](#tutor-mode) for the whole picture.
 | `:Weave` | Toggle the panel |
 | `:Weave sessions` | Open the session modal |
 | `:Weave attach <file>` | Attach a file to the next prompt |
+| `:Weave flush` | Send pending edits and comments now, as one turn |
 
 ---
 
@@ -1246,7 +1323,12 @@ mode](#tutor-mode) for the whole picture.
                              debounce, the shared seen-cursor, gate questions
       briefs.lua           agent briefs: announce on change, re-announce to
                              every fresh conversation
-      init.lua             setup() + :Weave, panels per tabpage
+      prompts.lua          the agent-facing prose, loaded from prompts/*.md
+                             (config override → user file → shipped file)
+      init.lua             setup() + :Weave, panels per tabpage, flush()
+    prompts/             what weave says to AGENTS, as editable markdown:
+                           briefs/ (tutor, normal), edits.md, sandbox_
+                           steering.md — read at send time, no restart
     lua/weave/tools/     the MCP tool suite hosted by clankbox: fs (read/
                            write/edit, buffer-aware), search (glob/grep over
                            ripgrep, buffer-aware), tasks (task lifecycle),

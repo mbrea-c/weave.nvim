@@ -10,6 +10,13 @@
 -- from its three ready sites — start, /new, restore). That construction is
 -- what fixes the old tutor gap where /new silently forgot the mode.
 --
+-- The words themselves live in markdown (prompts/briefs/*.md by default, or
+-- wherever a brief's `prompt_file` points — see weave.prompts); a brief with
+-- an inline `prompt` still works and still wins. A brief whose text will not
+-- load has nothing to say, and saying nothing is not a failure: it counts as
+-- heard, so a broken path costs one warning rather than an announcement
+-- retried forever.
+--
 -- The builtin default brief ("normal") is the silent baseline: a fresh
 -- conversation is born normal, so there is nothing to announce — its prompt
 -- exists only for the TRANSITION back from something else. A user-configured
@@ -17,6 +24,7 @@
 -- a conversation should be, so every fresh conversation is told.
 
 local Config = require("weave.config")
+local Prompts = require("weave.prompts")
 local Settings = require("weave.settings")
 
 local M = {}
@@ -69,8 +77,7 @@ function M.ensure(session)
   if st.announced == want then
     return
   end
-  local brief = briefs_config()[want]
-  local prompt = brief and brief.prompt
+  local prompt = Prompts.resolve(briefs_config()[want])
   if type(prompt) ~= "string" or prompt == "" then
     -- a brief with nothing to say costs nothing to have "heard"
     st.announced = want

@@ -203,7 +203,8 @@ describe("view.settings_window", function()
     press_on(handle, "[tutor]")
 
     assert.is_true(s.global:get("track_edits"))
-    assert.is_true(s.session:get("auto_send_edits"))
+    -- tracking, but NOT auto-send: the shipped tutor speaks when you flush
+    assert.is_false(s.session:get("auto_send_edits"))
     assert.equal("tutor", s.session:get("brief"))
     assert.equal(7000, s.session:get("debounce_ms")) -- partial: untouched
     assert.truthy(text_of(handle.bufnr):find("last applied: tutor", 1, true))

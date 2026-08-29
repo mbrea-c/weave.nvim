@@ -136,7 +136,48 @@ describe("edit sync", function()
     enable(session)
     Settings.for_session(session):set("auto_send_edits", false)
     assert.is_true(Log.collecting())
-    assert.is_nil(Sync._cursor(session)) -- but the session's state is gone
+    -- and the cursor stays with it: auto-send is one road out of three, and
+    -- an explicit flush still needs somewhere to measure "unseen" from. This
+    -- is the shape tutor mode runs in now (tracking on, auto-send off).
+    assert.is_not_nil(Sync._cursor(session))
+  end)
+
+  it("flushes on demand with auto-send and the gate both off", function()
+    local session = fake_session()
+    Sync.watch(session)
+    Settings.global():set("track_edits", true)
+    local bufnr = open("a.lua", { "one" })
+    edit(bufnr, { "two" })
+
+    assert.is_true(Sync.flush_now(session))
+    assert.truthy(session.sent[1].text:find("\n+two", 1, true))
+  end)
+
+  it("drops the cursor when collection stops, and starts a fresh one when it resumes", function()
+    local session = fake_session()
+    Sync.watch(session)
+    Settings.global():set("track_edits", true)
+    assert.is_not_nil(Sync._cursor(session))
+
+    Settings.global():set("track_edits", false)
+    assert.is_nil(Sync._cursor(session))
+    -- and turning it back off does not turn it back on behind the user's back
+    assert.is_false(Settings.global():get("track_edits"))
+
+    Settings.global():set("track_edits", true)
+    assert.is_not_nil(Sync._cursor(session))
+  end)
+
+  -- The global switch is the user's to hold: a session with auto-send on must
+  -- not silently re-enable collection they just turned off.
+  it("does not re-arm collection when the user switches it off under a syncing session", function()
+    local session = fake_session()
+    enable(session)
+    Settings.global():set("track_edits", false)
+
+    assert.is_false(Settings.global():get("track_edits"))
+    assert.is_false(Log.collecting())
+    assert.is_nil(Sync._cursor(session))
   end)
 
   it("sends the squashed diff of everything since its last send", function()

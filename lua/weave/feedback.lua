@@ -238,6 +238,29 @@ function M.send(opts)
   return true
 end
 
+--- The open draft as a message ready to go into a turn, or nil when there is
+--- nothing written. The counterpart of weave.edit_sync.pending_message, and
+--- what lets one flush carry both (see weave.flush).
+---
+--- The draft clears on DELIVERY rather than on hand-off: a message parked
+--- behind an active turn can still be wiped (cancel, /new, restore), and
+--- comments the user typed must survive that — unlike send(), which has
+--- already reached its sink by the time it returns.
+--- @return weave.session.Message|nil
+function M.pending_message()
+  local item = Store.draft()
+  if not item or #item.comments == 0 then
+    return nil
+  end
+  return {
+    kind = "user",
+    text = Format.format(item),
+    on_sent = function()
+      Store.clear()
+    end,
+  }
+end
+
 --- Drop the open draft and every highlight it placed.
 function M.discard()
   Store.clear()

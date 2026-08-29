@@ -11,8 +11,12 @@
 --                              pending()/consume() here.
 --
 -- Per session there is ONE cursor into the log — "what this conversation has
--- seen" — shared by auto-send and the gate, because "seen" is one concept:
--- a diff that reached the agent by either road needs no second delivery.
+-- seen" — shared by all three roads out (auto-send, the gate, and an explicit
+-- flush), because "seen" is one concept: a diff that reached the agent by any
+-- of them needs no second delivery. The cursor exists whenever collection
+-- does, not only while auto-send or the gate is on: a flush has to have
+-- something to point at, and a cursor created at flush time would sit at the
+-- head with nothing behind it.
 -- The cursor advances only when a send actually dispatches (on_sent) or a
 -- consume() hands the window to a tool result; a send that dies in a wiped
 -- steer queue keeps its window unsent and re-squashed into the next one.
@@ -32,6 +36,7 @@
 
 local Config = require("weave.config")
 local Log = require("weave.revision_log")
+local Prompts = require("weave.prompts")
 local Revision = require("weave.revision")
 local Settings = require("weave.settings")
 
@@ -122,9 +127,60 @@ local function ensure_log_subscription()
   end
 end
 
+--- Does this session need a cursor? Whenever there is anything to point INTO.
+---
+--- Deliberately NOT "is auto-send or the gate on": a conversation can also be
+--- handed the user's edits by an explicit flush (weave.flush), which is how
+--- tutor mode delivers now that the preset no longer auto-sends. A cursor
+--- created at flush time would sit at the log head and have nothing to send —
+--- the first flush of every session would come up empty — so the cursor has
+--- to exist from the moment collection starts. It is one integer per
+--- conversation.
+--- @return boolean
+local function is_active()
+  return Settings.global():get("track_edits") == true
+end
+
+--- Which session settings need collection ON to mean anything. The gate and
+--- auto-send are pushed/pulled by weave itself, so they resolve the
+--- dependency out loud; a manual flush does not (you turned tracking on to
+--- get here in the first place).
+--- @param state table<string, any> a session settings snapshot
+--- @return boolean
+local function wants_collection(state)
+  return state.auto_send_edits == true or state.edit_gate == true
+end
+
+--- Give this session a cursor, or take it away, per is_active(). The cursor
+--- starts at the log's head, so what the user did BEFORE this conversation
+--- cared is not its business.
+--- @param session table
+local function sync_state(session)
+  if is_active() then
+    if not states[session] then
+      states[session] = { cursor = Log.head_id() }
+    end
+  elseif states[session] then
+    disarm(states[session])
+    states[session] = nil
+  end
+  ensure_log_subscription()
+end
+
+--- Re-evaluate every watched session — what the global track_edits switch
+--- flipping means for sessions that follow only their own store. Activation
+--- ONLY: running the dependency resolution here would turn tracking straight
+--- back on for anyone who switched it off with an auto-sending session open.
+local function resync_watched()
+  for session in pairs(watched) do
+    sync_state(session)
+  end
+end
+
 --- Attach the track_edits effect: the one global setting with a body — the
---- revision log's collection switch. Idempotent; called from setup() and
---- from the first watch(), whichever comes first.
+--- revision log's collection switch, and the cursors that point into it.
+--- Idempotent; called from setup() and from the first watch(), whichever
+--- comes first.
 function M.init()
   if global_effect_attached then
     return
@@ -140,6 +196,7 @@ function M.init()
       else
         Log.stop()
       end
+      resync_watched()
     end
   end)
   if last then
@@ -147,37 +204,22 @@ function M.init()
   end
 end
 
---- @param state table<string, any> a session settings snapshot
---- @return boolean
-local function is_active(state)
-  return state.auto_send_edits == true or state.edit_gate == true
-end
-
---- React to a session settings snapshot (prev == nil on first sight). The
---- cursor starts at the log's head on activation: what the user did BEFORE
---- this conversation cared is not its business.
+--- React to a session settings snapshot (prev == nil on first sight).
 --- @param session table
 --- @param prev table<string, any>|nil
 --- @param state table<string, any>
 function M._on_settings(session, prev, state)
-  local was = prev ~= nil and is_active(prev)
-  local active = is_active(state)
-
-  if active and not states[session] then
-    states[session] = { cursor = Log.head_id() }
-  elseif not active and states[session] then
-    disarm(states[session])
-    states[session] = nil
-  end
-  ensure_log_subscription()
-
-  if active and not was then
+  -- Resolve the dependency FIRST: turning tracking on is what makes this
+  -- session active at all, and doing it afterwards would leave it cursorless
+  -- until the next settings change.
+  if wants_collection(state) and not (prev ~= nil and wants_collection(prev)) then
     local global = Settings.global()
     if not global:get("track_edits") then
       global:set("track_edits", true)
       vim.notify("weave: edit sync needs collection — Track user edits is now on", vim.log.levels.INFO)
     end
   end
+  sync_state(session)
 end
 
 --- Start driving this session from its settings store. Idempotent. The
@@ -245,83 +287,110 @@ local function label_for(rev)
   return "sent " .. noun .. " you changed" .. extra
 end
 
---- Send this session's unsent window now, whatever the debounce thinks. This
---- is the impatient path — bind it and stop waiting.
---- @param session table|nil
---- @return boolean sent
-function M.flush_now(session)
-  return M.flush(session, { interrupt = true })
+--- The current session, for the bindable entry points that take none. A
+--- keymap callback is handed the key it fired on, not a session.
+--- @return table|nil
+local function current_session()
+  local ok, Weave = pcall(require, "weave")
+  return ok and Weave.get_session() or nil
 end
 
---- Send the window past this session's cursor, if it has anything in it.
+--- This session's unsent window as a message ready to go into a turn, or nil
+--- when there is nothing to say. TAKES the window: the debounce timer is
+--- disarmed, and the returned message carries the hooks that decide the
+--- window's fate.
+---
+--- The cursor advances only when the diff actually reaches the wire (on_sent).
+--- A send can be ACCEPTED and still die: parked behind an active turn, it is
+--- wiped by cancel//new/restore — precisely the moments the user is editing
+--- over the agent's shoulder, which made those edits vanish from tutoring. On
+--- a drop the window stays unsent and a retry is armed; the next flush
+--- re-squashes it together with whatever came after. A caller whose send is
+--- REFUSED outright owes the message an on_dropped() for the same reason.
 --- @param session table|nil
---- @param opts { interrupt?: boolean }|nil
---- @return boolean sent
-function M.flush(session, opts)
-  opts = opts or {}
-  if not session then
-    return false
-  end
-  local state = states[session]
+--- @return weave.session.Message|nil
+function M.pending_message(session)
+  session = session or current_session()
+  local state = session and states[session]
   if not state then
-    return false
+    return nil
   end
   disarm(state)
 
   local head = Log.head_id()
   local rev = Log.squash_since(state.cursor)
-  if not rev then
-    -- Step over a window that netted no change: it has nothing to say, but
-    -- leaving the cursor behind it means re-squashing the same dead revisions
-    -- on every flush, forever.
-    state.cursor = head
-    state.first_pending_at = nil
-    return false
-  end
-
+  -- Step over a window that netted no change: it has nothing to say, but
+  -- leaving the cursor behind it means re-squashing the same dead revisions
+  -- on every flush, forever.
   local conf = cfg()
-  local ok, Permissions = pcall(require, "weave.permissions")
-  local root = ok and Permissions.project_root() or nil
-  local diff = Revision.render(rev, { root = root, max_bytes = conf.max_diff_bytes })
+  local diff
+  if rev then
+    local ok, Permissions = pcall(require, "weave.permissions")
+    local root = ok and Permissions.project_root() or nil
+    diff = Revision.render(rev, { root = root, max_bytes = conf.max_diff_bytes })
+  end
   if not diff then
     state.cursor = head
     state.first_pending_at = nil
-    return false
+    return nil
   end
 
-  local interrupt = opts.interrupt
-  if interrupt == nil then
-    interrupt = (conf.on_flush or "interrupt") == "interrupt"
-  end
-
-  -- The cursor advances only when the diff actually reaches the wire. A send
-  -- can be ACCEPTED and still die: parked behind an active turn, it is wiped
-  -- by cancel//new/restore — precisely the moments the user is editing over
-  -- the agent's shoulder, which made those edits vanish from tutoring. On a
-  -- drop (or an outright refusal from a not-ready session) the window stays
-  -- unsent and a retry is armed; the next flush re-squashes it together with
-  -- whatever came after.
-  local retry = function()
-    local st = states[session]
-    if st then
-      st.first_pending_at = st.first_pending_at or M._now()
-      arm(session, st)
-    end
-  end
-  local accepted = send(session, (conf.edits_prompt or "") .. "\n\n" .. diff, label_for(rev), interrupt, {
+  state.first_pending_at = nil
+  local preamble = conf.edits_prompt or Prompts.get("edits") or ""
+  return {
+    kind = "tutor",
+    text = preamble .. "\n\n" .. diff,
+    label = label_for(rev),
     on_sent = function()
       local st = states[session]
       if st and head > st.cursor then
         st.cursor = head
       end
     end,
-    on_dropped = retry,
-  })
-  if not accepted then
-    retry()
+    on_dropped = function()
+      local st = states[session]
+      if st then
+        st.first_pending_at = st.first_pending_at or M._now()
+        arm(session, st)
+      end
+    end,
+  }
+end
+
+--- Send this session's unsent window now, whatever the debounce thinks. This
+--- is the impatient path for EDITS only; weave.flush is the one to bind (it
+--- takes the inline comments along too).
+--- @param session table|nil defaults to the current tab's session
+--- @return boolean sent
+function M.flush_now(session)
+  return M.flush(session, { interrupt = true })
+end
+
+--- Send the window past this session's cursor, if it has anything in it.
+--- @param session table|nil defaults to the current tab's session
+--- @param opts { interrupt?: boolean }|nil
+--- @return boolean sent
+function M.flush(session, opts)
+  opts = opts or {}
+  session = session or current_session()
+  local msg = M.pending_message(session)
+  if not msg then
     return false
   end
-  state.first_pending_at = nil
+
+  local interrupt = opts.interrupt
+  if interrupt == nil then
+    interrupt = (cfg().on_flush or "interrupt") == "interrupt"
+  end
+
+  local accepted = send(session, msg.text, msg.label, interrupt, {
+    on_sent = msg.on_sent,
+    on_dropped = msg.on_dropped,
+  })
+  if not accepted then
+    msg.on_dropped()
+    return false
+  end
   return true
 end
 

@@ -220,11 +220,13 @@ function M.setup(opts)
       M.sessions()
     elseif sub == "attach" then
       M.attach(rest ~= "" and rest or nil)
+    elseif sub == "flush" then
+      M.flush()
     else
       M.toggle()
     end
   end, {
-    desc = "Toggle the weave panel (:Weave sessions | :Weave attach <file>)",
+    desc = "Toggle the weave panel (:Weave sessions | :Weave attach <file> | :Weave flush)",
     nargs = "*",
     complete = function(arg_lead, line)
       -- after `attach`, complete FILES; the subcommands otherwise
@@ -233,7 +235,7 @@ function M.setup(opts)
       end
       return vim.tbl_filter(function(name)
         return vim.startswith(name, arg_lead)
-      end, { "sessions", "attach" })
+      end, { "sessions", "attach", "flush" })
     end,
   })
 end
@@ -275,6 +277,72 @@ function M.attach(path)
   end
   session:get_store():add_attachment(attachment)
   Logger.notify(("attached %s — it rides the next prompt"):format(attachment.name), vim.log.levels.INFO)
+end
+
+--- Send everything you have pending to the current conversation, as ONE turn:
+--- the edits the agent has not seen yet, and the inline comments you have
+--- written but not sent. This is the flush command — bind it and stop waiting
+--- for the debounce (which tutor mode no longer runs by default anyway):
+---
+---   vim.keymap.set("n", ";;F", require("weave").flush, { desc = "weave: flush" })
+---
+--- One turn, not two: the edits and the comments about them are one thought,
+--- and delivering them separately makes the agent answer the diff before it
+--- has read the question. Each half keeps its own delivery hook, so a wiped
+--- send re-arms the edits and keeps the comments in the draft.
+---
+--- Comments go to weave's own session sink; a user who has REPLACED that sink
+--- (`feedback.register_sink`) meant it, so they are dispatched through it
+--- separately rather than being quietly rerouted into this turn.
+--- @param opts { session?: table }|nil session is spec injection
+--- @return boolean sent
+function M.flush(opts)
+  opts = opts or {}
+  local session = opts.session or M.get_session()
+  if not session then
+    Logger.notify("No weave session to flush to — open the panel first.", vim.log.levels.WARN)
+    return false
+  end
+
+  local Feedback = require("weave.feedback")
+  local msgs = {}
+  local edits = require("weave.edit_sync").pending_message(session)
+  if edits then
+    msgs[#msgs + 1] = edits
+  end
+
+  local sent_elsewhere = false
+  if not require("weave.feedback_sinks").default_is_builtin() then
+    local draft = Feedback.draft()
+    if draft and #draft.comments > 0 then
+      sent_elsewhere = Feedback.send() == true
+    end
+  else
+    local comments = Feedback.pending_message()
+    if comments then
+      msgs[#msgs + 1] = comments
+    end
+  end
+
+  if #msgs == 0 then
+    if not sent_elsewhere then
+      Logger.notify("weave: nothing to flush — no unsent edits or comments", vim.log.levels.INFO)
+    end
+    return sent_elsewhere
+  end
+
+  if not session:send_batch(msgs) then
+    -- Not ready: hand every half back its window (the edits re-arm, the
+    -- comments stay in the draft) instead of dropping them on the floor.
+    for _, msg in ipairs(msgs) do
+      if msg.on_dropped then
+        pcall(msg.on_dropped)
+      end
+    end
+    Logger.notify("weave: the session is not ready yet — nothing was sent", vim.log.levels.WARN)
+    return false
+  end
+  return true
 end
 
 --- Dismiss the agent's annotation under the cursor — "read it, done with it".

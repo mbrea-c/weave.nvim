@@ -74,6 +74,17 @@ function M.default()
   return M.get("weave") or sinks[1]
 end
 
+--- Is the default sink weave's OWN — the one that prompts the current
+--- session? The flush path asks (see weave.flush): it delivers comments by
+--- putting them in the session's turn itself, which is the same destination
+--- but not the same code, so it may only do that when nobody has taken the
+--- destination over. Identity, not name: `register` replaces by name, so a
+--- sink someone substituted for the builtin still answers to "weave".
+--- @return boolean
+function M.default_is_builtin()
+  return M.default() == WEAVE_SINK
+end
+
 --- Hand `text` to the named sink. A sink that throws is reported as a failed
 --- send rather than unwinding into the button press that triggered it — the
 --- draft is only cleared on a genuine success, so a broken sink loses nothing.
