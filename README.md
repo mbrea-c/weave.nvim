@@ -26,9 +26,9 @@ prompt — is a pure `state → render` projection of it.
   plugin only launches and talks to them.
 - **Treesitter parsers `markdown` and `markdown_inline`** (recommended) — for
   the rendered markdown in agent replies.
-- **[ripgrep](https://github.com/BurntSushi/ripgrep)** (optional) — the
-  `glob`/`grep` MCP tools shell out to it. Without it `grep` errors and `glob`
-  falls back to a slower walk.
+- **[ripgrep](https://github.com/BurntSushi/ripgrep)** (optional): the
+  `weave_glob`/`weave_grep` MCP tools shell out to it. Without it
+  `weave_grep` errors and `weave_glob` falls back to a slower walk.
 - **[bubblewrap](https://github.com/containers/bubblewrap)** (optional, Linux)
   — the preferred [Sandbox](#sandbox) backend. On macOS weave falls back to
   Seatbelt (`sandbox-exec`, part of the OS), which confines less — see
@@ -232,12 +232,12 @@ read-only stand-in for the project, so letting them through buys a confusing
 failure at best and a confident wrong answer at worst; the deny carries a
 message pointing at weave's tools, which stay reachable (`acp:mcp`). And the
 **workspace is the whole world**: anything outside it is denied with a
-message naming `request_access`, the tool the agent uses to ask you for a
+message naming `weave_request_access`, the tool the agent uses to ask you for a
 path. An approved grant lands in the overlay, which is consulted first, so it
 out-votes that deny without editing the preset.
 
-**Auto** keeps one thing on a leash — sandbox grants, since `request_access`
-always asks by construction — and otherwise runs every tool call unprompted,
+**Auto** keeps one thing on a leash: sandbox grants. `weave_request_access`
+always asks by construction; otherwise every tool call runs unprompted,
 weave's own and foreign MCP ones alike (a proxied third-party server,
 clankbox's `exec_lua`, another plugin's tools). What it does *not* do is
 widen anyone's reach: the workspace boundary is still the workspace boundary.
@@ -449,7 +449,7 @@ just three homes:
 | `track_edits` | global | boolean | `false` | Collect the USER's edits into the revision log (one log per editor, hence global) |
 | `auto_send_edits` | session | boolean | `false` | Send this conversation debounced squashed diffs of your edits |
 | `debounce_ms` | session | integer | `7000` | Quiet time before a batch goes out |
-| `edit_gate` | session | boolean | `false` | Refuse the agent's `write`/`edit`/`task_start` while you have edits it has not seen (it calls `check_user_edits` to catch up) |
+| `edit_gate` | session | boolean | `false` | Refuse the agent's `weave_write`/`weave_edit`/`weave_task_start` while you have edits it has not seen (it calls `weave_check_user_edits` to catch up) |
 | `brief` | session | enum | `"normal"` | The agent's standing instruction profile (see [briefs](#tutor-mode)) |
 
 *View* settings are per panel, *session* settings per conversation, *global*
@@ -479,7 +479,7 @@ write is collected, and it reaches the agent when *you* send it — `flush`,
 below, which takes your inline comments along with it. The pieces are ordinary
 settings, so the other shapes are just other combinations: `auto_send_edits`
 for the tutor on a timer, or `edit_gate` for one that never interrupts (the
-agent pulls with `check_user_edits` before it may write).
+agent pulls with `weave_check_user_edits` before it may write).
 
 The **brief** is what makes the agent a tutor rather than an assistant: a
 standing instruction profile, sent when the setting changes — and re-announced
@@ -539,7 +539,7 @@ of; the shipped tutor prompt tells the agent that a hunk may be its own work.
 
 #### What the agent sends back
 
-Feedback lands **on the code**, through the `annotate` tool: a highlighted span
+Feedback lands **on the code**, through the `weave_annotate` tool: a highlighted span
 (`WeaveAnnotation`, teal by default) with the message rendered beside it as
 virtual lines. That is the point — chat scrolls away, an annotation sits on the
 line it is about.
@@ -552,8 +552,9 @@ vim.keymap.set("n", ";;X", require("weave").dismiss_annotations, { desc = "weave
 ```
 
 The agent can also list, rewrite and dismiss its own annotations
-(`annotate_list` / `annotate_update` / `annotate_dismiss`), and `annotate` with
-no span is a plain `vim.notify` for something that has no one line to point at.
+(`weave_annotate_list` / `weave_annotate_update` /
+`weave_annotate_dismiss`), and `weave_annotate` with no span is a plain
+`vim.notify` for something that has no one line to point at.
 
 Annotations can be **replied to**: `;;cc` on an annotated line opens the
 comment editor as a reply (see [inline code feedback](#inline-code-feedback)),
@@ -637,7 +638,7 @@ would make them harder to find, not easier.
 | `provider` | `string` | `"claude-agent-acp"` | Key of the `acp_providers` entry to start by default |
 | `acp_providers` | `table` | 13 built-ins | Agent launch definitions (see below) |
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
-| `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (read/write/edit, glob/grep, task lifecycle, web_fetch) via clankbox; `clankbox_path`, `ripgrep_path` and `curl_path` override binary/checkout auto-detection |
+| `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (`weave_read`/`weave_write`/`weave_edit`, `weave_glob`/`weave_grep`, task lifecycle, `weave_web_fetch`) via clankbox; `clankbox_path`, `ripgrep_path` and `curl_path` override binary/checkout auto-detection |
 | `permissions` | `table` | `{ presets = {} }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
 | `sandbox` | `table` | `{ mode = "on" }` | Agent process confinement (bubblewrap on Linux, Seatbelt on macOS — see [Sandbox](#sandbox)) |
 | `edits` | `table` | see below | Edit-batch delivery mechanics ([tutor mode](#tutor-mode)); the on/off switches are runtime [settings](#settings) |
@@ -754,39 +755,45 @@ creation (this is not Neovim's own MCP connection). A provider entry's own
 `mcpServers` overrides the global list for that provider. Each entry is
 `{ name, command, args, env }` where `env` is a list of `{ name, value }`.
 
-With `tools.enabled` (the default) weave also appends a **clankbox** entry —
-the stdio shim run by this very nvim — carrying weave's own tool suite:
+With `tools.enabled` (the default) weave also appends a **clankbox** entry,
+the stdio shim run by this very nvim, carrying weave's own tool suite. Every
+public endpoint starts with `weave_`, so agents that flatten MCP endpoints and
+their builtins into one namespace cannot confuse the two:
 
-- `read`/`write`/`edit`, with live-buffer awareness: a file open in the
-  editor is read as you currently see it and written *through* the buffer.
-- `glob`/`grep`, discovery over [ripgrep](https://github.com/BurntSushi/ripgrep)
-  with Claude-compatible parameters (`output_mode`, `-i`, `-n`, `-A`/`-B`/`-C`,
-  `glob`, `type`, `multiline`, `head_limit`). Files with unsaved edits are
-  searched as they stand in the buffer — through a second `rg` on stdin, so a
-  file's results cannot change flavour just because it happens to be open.
-  Pass `buffers = "off"` for pure disk. Needs `rg` on Neovim's `PATH` or
-  `tools.ripgrep_path` set; without it `grep` errors and `glob` falls back to
-  a slower `vim.fn.glob` walk.
-- `task_start`/`task_status`/`task_wait`/`task_kill`, a lifecycle over managed
-  shell tasks (surfaced in the sidebar's *Terminal tasks* section).
-- `web_fetch`, written for parity with Claude's own WebFetch: same `url` +
-  `prompt` parameters, `http://` upgraded to `https://`, HTML converted to
-  markdown, a 15-minute cache, and a redirect to a **different host** reported
-  rather than followed (the URL is what your permission rule matched — quietly
-  following would make the rule a lie). It needs `curl` on Neovim's `PATH` or
-  `tools.curl_path` set. One difference, stated rather than faked: Claude's
-  tool answers `prompt` using a second small model; weave has none to call, so
-  it returns the page whole for the agent to apply the prompt to itself.
-  Because the gated resource is the URL, rules can scope by host:
+- `weave_read`/`weave_write`/`weave_edit`, with live-buffer awareness: a
+  file open in the editor is read as you currently see it and written *through*
+  the buffer.
+- `weave_glob`/`weave_grep`, discovery over
+  [ripgrep](https://github.com/BurntSushi/ripgrep) with Claude-compatible
+  parameters (`output_mode`, `-i`, `-n`, `-A`/`-B`/`-C`, `glob`, `type`,
+  `multiline`, `head_limit`). Files with unsaved edits are searched as they
+  stand in the buffer through a second `rg` on stdin, so a file's results
+  cannot change flavour just because it happens to be open. Pass
+  `buffers = "off"` for pure disk. Needs `rg` on Neovim's `PATH` or
+  `tools.ripgrep_path` set; without it `weave_grep` errors and `weave_glob`
+  falls back to a slower `vim.fn.glob` walk.
+- `weave_task_start`/`weave_task_status`/`weave_task_wait`/`weave_task_kill`,
+  a lifecycle over managed shell tasks (surfaced in the sidebar's *Terminal
+  tasks* section).
+- `weave_web_fetch`, written for parity with Claude's own WebFetch: same `url`
+  and `prompt` parameters, `http://` upgraded to `https://`, HTML converted
+  to markdown, a 15-minute cache, and a redirect to a **different host**
+  reported rather than followed. The URL is what your permission rule matched,
+  so quietly following would make the rule a lie. It needs `curl` on Neovim's
+  `PATH` or `tools.curl_path` set. One difference, stated rather than faked:
+  Claude's tool answers `prompt` using a second small model; weave has none to
+  call, so it returns the page whole for the agent to apply the prompt to
+  itself. Because the gated resource is the URL, rules can scope by host:
   `{ tool = "weave:web_fetch", resource = "https://docs.example.com/**",
   decision = "allow" }`.
 
-Every call is gated by the permission engine as `weave:<tool>` (see below).
-For `glob`/`grep` the gated resource is the search **root**, not the files
-matched: a deny rule on `*/secrets/*` blocks a search rooted inside that
-directory, but not a cwd-rooted search that surfaces content from within it.
-Gating per result would mean one prompt per file; content-level exclusion
-belongs in rg's own filters.
+The permission engine deliberately keeps its stable `weave:<short-name>`
+actions, so the public endpoint `weave_write` is still configured by a
+`weave:write` rule. For `weave_glob`/`weave_grep` the gated resource is the
+search **root**, not the files matched: a deny rule on `*/secrets/*` blocks a
+search rooted inside that directory, but not a cwd-rooted search that surfaces
+content from within it. Gating per result would mean one prompt per file;
+content-level exclusion belongs in rg's own filters.
 
 ### Tool call rendering
 
@@ -810,12 +817,13 @@ are never tagged.
 
 The header **title** beside the tag follows the same recognition. Weave's tools
 arrive over MCP, so their agent-supplied title is only the bare endpoint name
-(`mcp__clankbox__read`) — which says nothing the `[w:read]` tag doesn't — so the
-header shows the call's meaningful argument instead: the file path for
-`read`/`write`/`edit`/`glob`, the pattern for `grep`, the command for
-`task_start`, the URL for `web_fetch`, the task id for the other `task_*`
-tools. Everything else keeps
-its normal title (the agent's title, else the file path, else an id label).
+(`mcp__clankbox__weave_read`). That says nothing the `[w:read]` tag does not,
+so the header shows the call's meaningful argument instead: the file path for
+`weave_read`/`weave_write`/`weave_edit`/`weave_glob`, the pattern for
+`weave_grep`, the command for `weave_task_start`, the URL for
+`weave_web_fetch`, and the task id for the other `weave_task_*` tools.
+Everything else keeps its normal title (the agent's title, else the file path,
+else an id label).
 
 Those titles are routinely wider than the panel, so the header **wraps** rather
 than clipping at the edge, and so do the expanded raw input/output and content
@@ -889,14 +897,16 @@ the task on the way *in*: `rawInput` is exactly the arguments the tool
 declared, with no ACP or MCP correlation id anywhere in it.
 
 `weave.view.renderers.fs_diff` is the other builtin, registered automatically
-by `setup`, and it exists for the same reason: weave's `read`/`write`/`edit`
-reach the agent over MCP, so the tool call arrives with no tool name and no
+by `setup`, and it exists for the same reason: weave's
+`weave_read`/`weave_write`/`weave_edit` reach the agent over MCP, so the
+tool call arrives with no tool name and no
 `kind = "edit"` — which is exactly what the builtin diff rendering keys on. It
 duck-types `rawInput` instead, and both its renderers draw through
 `weave.view.diff`, the same component the native ACP edit path uses.
 
-An `edit` call needs nothing else: `old_string` and `new_string` are both in
-`rawInput`. A `write` call carries only the new content, and by the time the
+A `weave_edit` call needs nothing else: `old_string` and `new_string` are
+both in `rawInput`. A `weave_write` call carries only the new content, and by
+the time the
 transcript draws, the write has landed — reading the file back would just
 return that same content and diff to nothing. So the old side is captured
 *before* the handler runs (`weave.tools.write_snapshots`) and looked up by
@@ -995,8 +1005,9 @@ absent inherit it (above, tasks get the network while their binds stay the
 preset's). The builtin sandboxed presets use it for exactly one tool —
 `weave:web_fetch` runs with `network = true, binds = {}`, since fetching is
 the one job that needs the network and no filesystem at all, and nobody should
-have to grant the whole session network access to read a doc page. Session **elevation grants** — what `request_access` writes when
-you approve it — are deliberately global: they widen every tool's hull,
+have to grant the whole session network access to read a doc page. Session
+**elevation grants**, which `weave_request_access` writes when you approve it,
+are deliberately global: they widen every tool's hull,
 overridden ones included, since granting access answers "may we reach this
 at all". The `sandbox` section is orthogonal to the sandbox MODE in a second
 sense too: with the mode off, nothing is wrapped at all and the section is
@@ -1035,13 +1046,13 @@ sandbox — there is nothing to configure on it, because the agent process is
 not a policy surface; all capability lives at the tool layer:
 
 - The **agent process** sees: its own state/auth dirs, the network (the
-  model API is non-negotiable), the scoped clankbox broker socket — and
-  nothing else. The project directory is unreachable — under bubblewrap an
+  model API is non-negotiable), the scoped clankbox broker socket, and nothing
+  else. The project directory is unreachable. Under bubblewrap it is an
   **empty read-only tmpfs**, so its builtin write tools fail loudly (EROFS)
-  instead of writing into a void — and the weave `w:*` tools are the only
-  paths that persist. `$NVIM` (nvim's raw RPC socket — `nvim_exec_lua`, a
-  full escape) never enters the sandbox; the broker socket speaks scoped MCP
-  and nothing else.
+  instead of writing into a void. The weave `weave_*` endpoints are the only
+  paths that persist. `$NVIM` (nvim's raw RPC socket, where `nvim_exec_lua`
+  would be a full escape) never enters the sandbox; the broker socket speaks
+  scoped MCP and nothing else.
 - **Tool invocations** (tasks, searches) each run in their own sandbox
   derived from the active preset's `sandbox` section on EVERY
   spawn: only the listed binds, **network off by default**. A preset switch
@@ -1049,7 +1060,7 @@ not a policy surface; all capability lives at the tool layer:
 - **Agentside permission requests are denied** by the sandboxed presets
   (`acp:* deny`), not auto-approved: the tools they gate cannot reach the
   real project anyway, and a denial on the first attempt redirects the
-  agent to the `weave:*` tools, which is where the effects actually happen.
+  agent to the `weave_*` tools, which is where the effects actually happen.
   Weave says why once in the transcript — ACP's permission response has no
   text channel to say it to the agent.
 - **The agent is told once, up front.** The first prompt of a mode-on
@@ -1382,12 +1393,13 @@ mode](#tutor-mode) for the whole picture.
     prompts/             what weave says to AGENTS, as editable markdown:
                            briefs/ (tutor, normal), edits.md, sandbox_
                            steering.md — read at send time, no restart
-    lua/weave/tools/     the MCP tool suite hosted by clankbox: fs (read/
-                           write/edit, buffer-aware), search (glob/grep over
-                           ripgrep, buffer-aware), tasks (task lifecycle),
-                           annotate (feedback on the user's code),
-                           gate (the permission wrap over every def),
-                           user_edits (the edit gate + check_user_edits)
+    lua/weave/tools/     the MCP tool suite hosted by clankbox: fs
+                           (weave_read/weave_write/weave_edit, buffer-aware),
+                           search (weave_glob/weave_grep over ripgrep,
+                           buffer-aware), tasks (weave_task_* lifecycle),
+                           weave_annotate (feedback on the user's code), gate
+                           (the permission wrap over every def), user_edits
+                           (the edit gate + weave_check_user_edits)
     lua/weave/view/      fibrous components: transcript, sidebar, prompt,
                            panel (one docked pane, one mount; the transcript
                            is a fibrous ui.container), session_modal,

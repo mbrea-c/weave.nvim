@@ -1,4 +1,4 @@
--- w:request_access, the elevation tool (design-agent-sandbox-v2.md phase H):
+-- weave_request_access (rendered as w:request_access), the elevation tool (design-agent-sandbox-v2.md phase H):
 -- an accepted grant lands in the permission engine's overlays — a bind for
 -- the kernel hull AND allow rules for the gate (folder), or the network
 -- flag (tasks) — and applies to the next tool spawn with no restart.
@@ -7,7 +7,7 @@ local Access = require("weave.tools.access")
 local Gate = require("weave.tools.gate")
 local Permissions = require("weave.permissions")
 
-describe("request_access", function()
+describe("weave_request_access", function()
   local real_ask_store = Gate._ask_store
   local queued
 

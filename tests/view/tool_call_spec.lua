@@ -397,7 +397,7 @@ describe("view.tool_call weave-tool tag", function()
   end)
 end)
 
--- The MCP endpoint name ("mcp__clankbox__read") is a useless title next to the
+-- The MCP endpoint name ("mcp__clankbox__weave_read") is a useless title next to the
 -- `[w:read]` tag, so a weave tool's header shows its meaningful argument
 -- instead: the path, the command, the pattern.
 describe("view.tool_call weave-tool title", function()
@@ -437,7 +437,7 @@ describe("view.tool_call weave-tool title", function()
     store:upsert_tool_call({
       tool_call_id = "r1",
       kind = "read",
-      argument = "mcp__clankbox__read", -- the bare endpoint name we must NOT show
+      argument = "mcp__clankbox__weave_read", -- the bare endpoint name we must NOT show
       status = "completed",
       input = input,
     })
@@ -445,7 +445,7 @@ describe("view.tool_call weave-tool title", function()
     local first = trimmed(handle.bufnr)[1]
     assert.truthy(first:find("[w:read]", 1, true))
     assert.truthy(first:find("lua/weave/init.lua", 1, true))
-    assert.is_nil(first:find("mcp__clankbox__read", 1, true))
+    assert.is_nil(first:find("mcp__clankbox__weave_read", 1, true))
     handle.unmount()
     ToolIdent.reset()
   end)

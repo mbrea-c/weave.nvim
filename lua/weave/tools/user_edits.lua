@@ -1,7 +1,7 @@
--- The edit gate + the check_user_edits tool: with the `edit_gate` session
--- setting on, the agent's write/edit/task_start calls are refused while the
--- user has edits the conversation has not seen, until it pulls them through
--- check_user_edits (or auto-send delivers them first). "Seen" is
+-- The edit gate + the weave_check_user_edits tool: with the `edit_gate` session
+-- setting on, the agent's weave_write/weave_edit/weave_task_start calls
+-- are refused while the user has edits the conversation has not seen, until it pulls them through
+-- weave_check_user_edits (or auto-send delivers them first). "Seen" is
 -- weave.edit_sync's per-session cursor — one cursor for both roads.
 --
 -- The gate closes a race no prompt can: the agent writing over (or reasoning
@@ -42,7 +42,7 @@ function M.gate_reason()
     return nil
   end
   return "blocked: the user has made edits you have not seen."
-    .. " Call check_user_edits to receive them, then retry this call."
+    .. " Call weave_check_user_edits to receive them, then retry this call."
 end
 
 --- Wrap a tool def so it refuses while the gate holds. Wraps INSIDE
@@ -72,7 +72,7 @@ end
 M.check = {
   description = table.concat({
     "Everything the user changed since you last saw their edits, squashed into one diff.",
-    "Call this when a write/edit/task_start is refused because of unseen user edits,",
+    "Call this when weave_write/weave_edit/weave_task_start is refused because of unseen user edits,",
     "or whenever you want to be sure you are reasoning about the code as it is NOW.",
     "Returns 'no pending user edits' when you are already in sync.",
   }, " "),

@@ -8,7 +8,7 @@
 --     place of the arguments other providers report verbatim
 --   * codex and claude also spell the endpoint in the TITLE, as
 --     `mcp.<server>.<tool>` and `mcp__<server>__<tool>` respectively
---   * opencode names it loosely, with no shape to key on ("clankbox_read")
+--   * opencode names it loosely, with no shape to key on ("clankbox_weave_read")
 --
 -- This module exists because TWO paths need that answer and they must agree.
 -- The render path (weave.acp.acp_client) unwraps the envelope so a call shows
@@ -59,8 +59,8 @@ end
 --- Titles are agent-authored prose in general, so only the exact endpoint
 --- shape counts — "Editing tool_call.lua" is a title, not a name. Anchored at
 --- both ends for that reason, and non-greedy on the server so a tool with
---- underscores of its own survives: `mcp__clankbox__task_start` is
---- clankbox/task_start, not clankbox__task.
+--- underscores of its own survives: `mcp__clankbox__weave_task_start` is
+--- clankbox/weave_task_start, not clankbox__task.
 --- @param title any A tool call's title
 --- @return { server: string, tool: string }|nil
 function M.from_title(title)

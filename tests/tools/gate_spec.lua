@@ -72,22 +72,22 @@ describe("tools permission gate", function()
     for _, def in pairs(tools) do
       assert.is_true(def.async)
     end
-    assert.equal(raw.description, tools.read.description)
-    assert.equal(raw.inputSchema, tools.read.inputSchema)
+    assert.equal(raw.description, tools.weave_read.description)
+    assert.equal(raw.inputSchema, tools.weave_read.inputSchema)
   end)
 
   it("the unsandboxed default lets the suite run unchanged", function()
     local path = tmpfile("hello gate\n")
-    local result = call(wrapped_tools().read, { path = path })
+    local result = call(wrapped_tools().weave_read, { path = path })
     assert.truthy(text_of(result):find("hello gate", 1, true))
   end)
 
   it("the sandboxed default refuses the same read, and says how to ask", function()
     Permissions.set_mode("on")
     Permissions.set_active("ask")
-    local result = call(wrapped_tools().read, { path = tmpfile("hello gate\n") })
+    local result = call(wrapped_tools().weave_read, { path = tmpfile("hello gate\n") })
     assert.is_true(result.isError)
-    assert.truthy(text_of(result):find("request_access", 1, true))
+    assert.truthy(text_of(result):find("weave_request_access", 1, true))
   end)
 
   it("a deny rule answers isError naming the preset, and the tool never runs", function()
@@ -100,7 +100,7 @@ describe("tools permission gate", function()
       },
     })
     Permissions.set_active("locked")
-    local result = call(wrapped_tools().write, { path = path, content = "nope" })
+    local result = call(wrapped_tools().weave_write, { path = path, content = "nope" })
     assert.is_true(result.isError)
     assert.truthy(text_of(result):find("locked", 1, true))
     assert.truthy(text_of(result):find("weave:write", 1, true))
@@ -119,7 +119,7 @@ describe("tools permission gate", function()
       },
     })
     Permissions.set_active("redirecting")
-    local result = call(wrapped_tools().write, { path = path, content = "nope" })
+    local result = call(wrapped_tools().weave_write, { path = path, content = "nope" })
     assert.truthy(text_of(result):find("write through the review queue instead", 1, true))
   end)
 
@@ -132,7 +132,7 @@ describe("tools permission gate", function()
       },
     })
     Permissions.set_active("cwd-jail")
-    local result = call(wrapped_tools().read, { path = "README.md" })
+    local result = call(wrapped_tools().weave_read, { path = "README.md" })
     assert.is_true(result.isError)
   end)
 
@@ -146,9 +146,9 @@ describe("tools permission gate", function()
     })
     Permissions.set_active("no-rm")
     local tools = wrapped_tools()
-    local denied = call(tools.task_start, { command = "rm -rf /tmp/x" })
+    local denied = call(tools.weave_task_start, { command = "rm -rf /tmp/x" })
     assert.is_true(denied.isError)
-    local ok = call(tools.task_start, { command = "echo fine" })
+    local ok = call(tools.weave_task_start, { command = "echo fine" })
     assert.truthy(text_of(ok):find("task 1 started", 1, true))
   end)
 
@@ -167,7 +167,7 @@ describe("tools permission gate", function()
     Permissions.set_active("confirm-exec")
 
     local result
-    wrapped_tools().task_start.handler({ command = "echo asked" }, function(ret)
+    wrapped_tools().weave_task_start.handler({ command = "echo asked" }, function(ret)
       result = ret
     end)
     -- nothing ran yet: the request waits in the queue like an ACP one
@@ -200,7 +200,7 @@ describe("tools permission gate", function()
 
     local path = vim.fn.tempname() .. "-asked.txt"
     local result
-    wrapped_tools().write.handler({ path = path, content = "nope" }, function(ret)
+    wrapped_tools().weave_write.handler({ path = path, content = "nope" }, function(ret)
       result = ret
     end)
     local perm = store:get_permission()
@@ -220,7 +220,7 @@ describe("tools permission gate", function()
       rules = { { tool = "*", decision = "ask" } },
     })
     Permissions.set_active("ask-everything")
-    local result = call(wrapped_tools().task_status, { id = 1 })
+    local result = call(wrapped_tools().weave_task_status, { id = 1 })
     assert.is_true(result.isError)
     assert.truthy(text_of(result):find("no active weave session", 1, true))
   end)
@@ -240,7 +240,7 @@ describe("tools permission gate", function()
     Permissions.set_active("confirm-reads")
 
     local result
-    wrapped_tools().read.handler({ path = vim.fn.tempname() .. "-absent.txt" }, function(ret)
+    wrapped_tools().weave_read.handler({ path = vim.fn.tempname() .. "-absent.txt" }, function(ret)
       result = ret
     end)
     local perm = store:get_permission()
@@ -273,7 +273,7 @@ describe("tools permission gate", function()
       })
       Permissions.set_active("confirm-writes")
       local result
-      wrapped_tools().write.handler({ path = path, content = "x" }, function(ret)
+      wrapped_tools().weave_write.handler({ path = path, content = "x" }, function(ret)
         result = ret
       end)
       local perm = store:get_permission()
@@ -333,7 +333,7 @@ describe("tools permission gate", function()
 
     it("records the tool name keyed on the call arguments", function()
       local path = tmpfile("hi\n")
-      call(wrapped_tools().read, { path = path })
+      call(wrapped_tools().weave_read, { path = path })
       assert.equal("read", ToolIdent.lookup({ path = path }))
     end)
 
@@ -347,7 +347,7 @@ describe("tools permission gate", function()
         },
       })
       Permissions.set_active("locked")
-      call(wrapped_tools().write, { path = path, content = "nope" })
+      call(wrapped_tools().weave_write, { path = path, content = "nope" })
       assert.equal("write", ToolIdent.lookup({ path = path, content = "nope" }))
     end)
   end)

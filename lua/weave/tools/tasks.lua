@@ -1,5 +1,5 @@
--- The task lifecycle tools (task_start/task_status/task_wait/task_kill): the
--- execute interface from design-agent-sandbox.md, as thin MCP defs over
+-- The task lifecycle tools (weave_task_start/weave_task_status/
+-- weave_task_wait/weave_task_kill): the execute interface from design-agent-sandbox.md, as thin MCP defs over
 -- weave.task_store. Blocking start and wait are ASYNC clankbox tools, so the
 -- user's editor never freezes while an agent waits on a command; the store
 -- fires waiter callbacks on the main loop, which is where respond must run.
@@ -11,7 +11,7 @@ local M = {}
 local DEFAULT_TIMEOUT_MS = 120000
 local MAX_STREAM_BYTES = 30000
 
-local ID_PROP = { id = { type = "integer", description = "Task id, as returned by task_start" } }
+local ID_PROP = { id = { type = "integer", description = "Task id, as returned by weave_task_start" } }
 
 local function tail(text)
   if #text <= MAX_STREAM_BYTES then
@@ -64,7 +64,7 @@ M.start = {
     "Start a shell command (sh -c) as a managed task in the user's live editor environment;",
     "prefer this over other shell tools in this session.",
     "Default: returns a task id IMMEDIATELY while the command runs in the background;",
-    "follow up with task_status / task_wait / task_kill.",
+    "follow up with weave_task_status / weave_task_wait / weave_task_kill.",
     "With blocking=true it waits for completion (up to timeout_ms) and returns the full report;",
     "on timeout the task keeps running.",
   }, " "),
@@ -92,7 +92,7 @@ M.start = {
     end
     if not args.blocking then
       respond(
-        ("task %d started (pid %d): %s\ncheck it with task_status, block on it with task_wait, stop it with task_kill"):format(
+        ("task %d started (pid %d): %s\ncheck it with weave_task_status, block on it with weave_task_wait, stop it with weave_task_kill"):format(
           task.id,
           task.pid,
           task.command
@@ -105,7 +105,7 @@ M.start = {
       if timed_out then
         respond(
           render(t)
-            .. ("\n\n(still running after %dms; it continues in the background: task_status / task_wait / task_kill with id %d)"):format(
+            .. ("\n\n(still running after %dms; it continues in the background: weave_task_status / weave_task_wait / weave_task_kill with id %d)"):format(
               timeout,
               t.id
             )
@@ -173,7 +173,7 @@ M.kill = {
     if not ok then
       error(err, 0)
     end
-    return ("sent SIGTERM to task %d's process group; SIGKILL follows in %ds if it does not exit. Use task_wait to confirm."):format(
+    return ("sent SIGTERM to task %d's process group; SIGKILL follows in %ds if it does not exit. Use weave_task_wait to confirm."):format(
       task.id,
       math.floor(TaskStore._sigkill_ms / 1000)
     )

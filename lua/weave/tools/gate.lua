@@ -178,7 +178,8 @@ function M.middleware()
 end
 
 --- Wrap a raw clankbox tool def behind the permission engine.
---- @param name string Bare tool name as registered ("read", "task_start", ...)
+--- @param name string Stable short identity ("read", "task_start", ...),
+---   without the public `weave_` prefix
 --- @param def table The raw def (sync or async)
 --- @param opts { resource?: fun(args: table): string|nil, kind?: string }
 ---   resource extracts the action's resource from the call arguments; kind is

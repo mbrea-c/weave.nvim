@@ -108,10 +108,10 @@ describe("tools wiring", function()
     return capture
   end
 
-  it("register_into plants the fs and task tools", function()
+  it("register_into namespaces every weave tool and exposes no bare aliases", function()
     local server = fake_clankbox()
     Tools.register_into(server)
-    for _, name in ipairs({
+    for _, short_name in ipairs({
       "read",
       "write",
       "edit",
@@ -121,13 +121,20 @@ describe("tools wiring", function()
       "task_status",
       "task_wait",
       "task_kill",
+      "check_user_edits",
       "request_access",
+      "web_fetch",
+      "annotate",
+      "annotate_list",
+      "annotate_update",
+      "annotate_dismiss",
     }) do
-      local def = server.tools[name]
+      local def = server.tools["weave_" .. short_name]
       assert.is_not_nil(def)
       assert.equal("function", type(def.handler))
       assert.truthy(def.description)
       assert.is_not_nil(def.inputSchema)
+      assert.is_nil(server.tools[short_name])
     end
   end)
 
@@ -261,8 +268,8 @@ describe("tools wiring", function()
       return server
     end
     require("weave").setup({})
-    assert.is_not_nil(server.tools.read)
-    assert.is_not_nil(server.tools.write)
-    assert.is_not_nil(server.tools.edit)
+    assert.is_not_nil(server.tools.weave_read)
+    assert.is_not_nil(server.tools.weave_write)
+    assert.is_not_nil(server.tools.weave_edit)
   end)
 end)

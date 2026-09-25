@@ -1,5 +1,5 @@
--- w:request_access — the elevation tool (design-agent-sandbox-v2.md,
--- phase H). Under sandbox mode on the agent has no direct reach and its
+-- weave_request_access (rendered as w:request_access): the elevation tool
+-- (design-agent-sandbox-v2.md, phase H). Under sandbox mode on the agent has no direct reach and its
 -- tools run inside the preset's hull; this is the agent's explicit, visible
 -- way to ask for MORE: a folder beyond the hull, or network for its tasks.
 --
@@ -57,7 +57,7 @@ M.def = {
     local wants_network = args.network == true
     if not wants_path and not wants_network then
       return respond({
-        content = { { type = "text", text = "request_access needs `path` and/or `network = true`" } },
+        content = { { type = "text", text = "weave_request_access needs `path` and/or `network = true`" } },
         isError = true,
       })
     end

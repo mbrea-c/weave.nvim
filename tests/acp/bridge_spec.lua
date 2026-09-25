@@ -66,12 +66,12 @@ describe("acp_bridge sandboxed acp denial", function()
   -- title. Those are the agent reaching for the CLIENT-side tools — already
   -- gated at the broker — so the acp:* deny must not catch them, or weave
   -- blocks the only way out of the sandbox it just steered the agent toward.
-  -- (Live opencode: title "clankbox_read", kind "other", no locations.)
+  -- (Live opencode: title "clankbox_weave_read", kind "other", no locations.)
   it("lets through the agent's request to call a tool weave brokers", function()
     local store, handlers = setup()
     local answered
     handlers.on_request_permission({
-      toolCall = { kind = "other", title = "clankbox_read", locations = {} },
+      toolCall = { kind = "other", title = "clankbox_weave_read", locations = {} },
       options = {
         { optionId = "once", kind = "allow_once" },
         { optionId = "reject", kind = "reject_once" },
@@ -87,7 +87,7 @@ describe("acp_bridge sandboxed acp denial", function()
     local _, handlers = setup()
     local answered
     handlers.on_request_permission({
-      toolCall = { kind = "other", title = "mcp__clankbox__task_start" },
+      toolCall = { kind = "other", title = "mcp__clankbox__weave_task_start" },
       options = { { optionId = "once", kind = "allow_once" }, { optionId = "r", kind = "reject_once" } },
     }, function(option_id)
       answered = option_id
@@ -107,7 +107,7 @@ describe("acp_bridge sandboxed acp denial", function()
       toolCall = {
         toolCallId = "exec-1",
         kind = "execute",
-        rawInput = { server = "clankbox", tool = "read", arguments = { path = "src/main.rs" } },
+        rawInput = { server = "clankbox", tool = "weave_read", arguments = { path = "src/main.rs" } },
       },
       options = { { optionId = "once", kind = "allow_once" }, { optionId = "r", kind = "reject_once" } },
     }, function(option_id)
@@ -124,7 +124,7 @@ describe("acp_bridge sandboxed acp denial", function()
     handlers.on_tool_call({
       tool_call_id = "exec-2",
       kind = "execute",
-      mcp = { server = "clankbox", tool = "read" },
+      mcp = { server = "clankbox", tool = "weave_read" },
     })
     local answered
     handlers.on_request_permission({

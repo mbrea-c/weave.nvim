@@ -486,7 +486,7 @@ function ACPClient:__build_tool_call_message(update)
   -- tool that made it by hashing those arguments. Codex sends an ENVELOPE
   -- instead, { server, tool, arguments }, so every argument-shaped match
   -- missed and weave's own calls rendered as generic rows titled
-  -- "mcp.clankbox.grep".
+  -- "mcp.clankbox.weave_grep".
   --
   -- Unwrapping it here, at the provider boundary, is what keeps that
   -- disagreement from leaking into the UI: downstream sees one shape. And the

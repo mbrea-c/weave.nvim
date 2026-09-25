@@ -129,12 +129,12 @@ local ALLOW_ATTACHMENTS = { tool = "acp:read", resource = ATTACHMENTS_TOKEN .. "
 -- Every sandboxed preset ends its weave:* run with a deny carrying this: the
 -- workspace is the whole world by default, and the way out is to ASK, not to
 -- try a wider path and hope. Saying so in the refusal is what turns a dead
--- end into the next step — the agent reads it and calls request_access.
+-- end into the next step: the agent reads it and calls weave_request_access.
 --
 -- The deny is safe to state absolutely because elevation grants land in the
 -- OVERLAY, which resolve() consults before the active preset: an approved
 -- /data grant out-votes this line without editing the preset.
-local OUTSIDE_WORKSPACE = "outside the workspace: call request_access to ask the user for this path"
+local OUTSIDE_WORKSPACE = "outside the workspace: call weave_request_access to ask the user for this path"
 
 -- What a read-only preset says when it turns back a write or a command.
 local READ_ONLY = "this preset is read-only; switch presets to write or run commands"

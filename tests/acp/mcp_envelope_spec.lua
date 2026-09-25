@@ -7,7 +7,7 @@
 --
 -- Codex reports an ENVELOPE instead: { server, tool, arguments }. Everything
 -- keyed on argument shape then misses, so weave's own calls came out as
--- generic `[execute]` rows titled `mcp.clankbox.grep`. Since the envelope also
+-- generic `[execute]` rows titled `mcp.clankbox.weave_grep`. Since the envelope also
 -- names the tool outright — which the ACP wire format otherwise never does —
 -- unwrapping it is a strict gain: the block looks like every other provider's
 -- AND carries a real name.
@@ -24,10 +24,10 @@ describe("mcp envelope rawInput", function()
     local msg = build({
       toolCallId = "exec-1",
       kind = "execute",
-      title = "mcp.clankbox.grep",
+      title = "mcp.clankbox.weave_grep",
       rawInput = {
         server = "clankbox",
-        tool = "grep",
+        tool = "weave_grep",
         arguments = { pattern = "struct EditorDocument", path = "src/bin/asset_editor.rs" },
       },
     })
@@ -37,9 +37,9 @@ describe("mcp envelope rawInput", function()
   it("keeps the server and tool the envelope named", function()
     local msg = build({
       toolCallId = "exec-1",
-      rawInput = { server = "clankbox", tool = "grep", arguments = { pattern = "x" } },
+      rawInput = { server = "clankbox", tool = "weave_grep", arguments = { pattern = "x" } },
     })
-    assert.same({ server = "clankbox", tool = "grep" }, msg.mcp)
+    assert.same({ server = "clankbox", tool = "weave_grep" }, msg.mcp)
   end)
 
   it("leaves a verbatim rawInput alone", function()
@@ -66,9 +66,9 @@ describe("mcp envelope rawInput", function()
   end)
 
   it("survives an envelope carrying no arguments at all", function()
-    local msg = build({ toolCallId = "t1", rawInput = { server = "clankbox", tool = "task_status" } })
+    local msg = build({ toolCallId = "t1", rawInput = { server = "clankbox", tool = "weave_task_status" } })
     assert.same({}, msg.input)
-    assert.equal("task_status", msg.mcp.tool)
+    assert.equal("weave_task_status", msg.mcp.tool)
   end)
 end)
 
@@ -81,12 +81,13 @@ describe("mcp envelope rendering", function()
   end)
 
   --- What the transcript sees for a codex-shaped clankbox call.
-  local function codex_block(tool, arguments)
+  local function codex_block(short_name, arguments)
+    local public_name = "weave_" .. short_name
     return build({
       toolCallId = "exec-1",
       kind = "execute",
-      title = "mcp.clankbox." .. tool,
-      rawInput = { server = "clankbox", tool = tool, arguments = arguments },
+      title = "mcp.clankbox." .. public_name,
+      rawInput = { server = "clankbox", tool = public_name, arguments = arguments },
     })
   end
 
@@ -122,9 +123,9 @@ describe("mcp envelope rendering", function()
     local block = build({
       toolCallId = "toolu_016G9J8BosPQpzF4DVZBFqnu",
       kind = "other",
-      title = "mcp__clankbox__edit",
+      title = "mcp__clankbox__weave_edit",
       rawInput = args,
-      _meta = { claudeCode = { toolName = "mcp__clankbox__edit" } },
+      _meta = { claudeCode = { toolName = "mcp__clankbox__weave_edit" } },
     })
 
     -- the arguments are the point: untouched, exactly as claude sent them, so
@@ -132,7 +133,7 @@ describe("mcp envelope rendering", function()
     assert.same(args, block.input)
     -- the name comes off the endpoint title rather than the envelope, but it
     -- is the same tool by either route
-    assert.same({ server = "clankbox", tool = "edit" }, block.mcp)
+    assert.same({ server = "clankbox", tool = "weave_edit" }, block.mcp)
     assert.equal("w:edit", ToolCall.tool_tag(block))
     -- the path, shortened against ~ / cwd (which one depends on where the
     -- suite runs, so assert the shortening rather than one spelling of it)
@@ -149,7 +150,7 @@ describe("mcp envelope rendering", function()
     local block = build({
       toolCallId = "t1",
       kind = "other",
-      title = "mcp__clankbox__edit",
+      title = "mcp__clankbox__weave_edit",
       rawInput = { path = "/p/x.lua", old_string = "a", new_string = "b" },
     })
     assert.equal("w:edit", ToolCall.tool_tag(block))
@@ -157,7 +158,7 @@ describe("mcp envelope rendering", function()
   end)
 
   it("reads the dotted spelling too", function()
-    local block = build({ toolCallId = "t1", title = "mcp.clankbox.grep", rawInput = { pattern = "x" } })
+    local block = build({ toolCallId = "t1", title = "mcp.clankbox.weave_grep", rawInput = { pattern = "x" } })
     assert.equal("w:grep", ToolCall.tool_tag(block))
   end)
 

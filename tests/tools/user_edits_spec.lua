@@ -1,5 +1,5 @@
 -- The edit gate: write/edit/task_start refused while the acting session has
--- edit_gate on and unseen user edits; check_user_edits pulls the window and
+-- edit_gate on and unseen user edits; weave_check_user_edits pulls the window and
 -- lifts the gate. The acting session is a stubbed seam here (MCP calls carry
 -- no session identity; resolution is the selected-or-first convention).
 
@@ -88,7 +88,7 @@ describe("edit gate", function()
     edit(bufnr, { "two" })
 
     local reason = UserEdits.gate_reason()
-    assert.truthy(reason:find("check_user_edits", 1, true))
+    assert.truthy(reason:find("weave_check_user_edits", 1, true))
   end)
 
   it("guard refuses a wrapped tool while closed, passes it through when open", function()
@@ -133,7 +133,7 @@ describe("edit gate", function()
     assert.equal("done", got)
   end)
 
-  describe("check_user_edits", function()
+  describe("weave_check_user_edits", function()
     it("says so when tracking is not enabled for the session", function()
       local out = UserEdits.check.handler({})
       assert.truthy(out:find("not enabled", 1, true))

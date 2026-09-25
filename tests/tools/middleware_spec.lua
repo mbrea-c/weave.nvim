@@ -73,7 +73,7 @@ describe("foreign tool middleware", function()
       { tool = "mcp:*", decision = "deny" },
       { tool = "*", decision = "allow" },
     })
-    local out = call("read", { path = "/tmp/x" })
+    local out = call("weave_read", { path = "/tmp/x" })
     assert.is_true(out.ran)
     assert.is_nil(out.responded)
   end)

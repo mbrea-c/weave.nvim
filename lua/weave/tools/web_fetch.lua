@@ -1,4 +1,5 @@
--- w:web_fetch — fetch a URL and hand the agent its readable content.
+-- weave_web_fetch (rendered as w:web_fetch): fetch a URL and hand the
+-- agent its readable content.
 --
 -- Written for parity with Claude's own WebFetch, because an agent arrives
 -- knowing that tool and will call this one the same way. Matched behaviours:
@@ -96,7 +97,7 @@ end
 --- @return string|nil normalized, string|nil err
 function M.normalize_url(url)
   if type(url) ~= "string" or url:gsub("%s", "") == "" then
-    return nil, "web_fetch needs a `url`"
+    return nil, "weave_web_fetch needs a `url`"
   end
   url = url:gsub("^%s+", ""):gsub("%s+$", "")
   local scheme = url:match("^(%a[%w+.-]*)://")
@@ -108,10 +109,10 @@ function M.normalize_url(url)
   if scheme == "http" then
     url = "https://" .. url:sub(#"http://" + 1)
   elseif scheme ~= "https" then
-    return nil, ("web_fetch only speaks http(s); %q is not fetchable"):format(scheme)
+    return nil, ("weave_web_fetch only speaks http(s); %q is not fetchable"):format(scheme)
   end
   if not M.host_of(url) then
-    return nil, ("%q is not a URL web_fetch can parse"):format(url)
+    return nil, ("%q is not a URL weave_web_fetch can parse"):format(url)
   end
   return url, nil
 end
@@ -277,7 +278,7 @@ local function fetch_chain(url, hops, cb)
           ("%s redirects to a different host:\n\n%s\n\nweb_fetch does not follow cross-host redirects. "):format(
             url,
             target
-          ) .. "Call web_fetch again with that URL if you want it.",
+          ) .. "Call weave_web_fetch again with that URL if you want it.",
           nil
         )
       end
@@ -292,7 +293,7 @@ local function fetch_chain(url, hops, cb)
 
     local content_type = header(res.headers, "content-type")
     if not M.is_textual(content_type) then
-      return cb(nil, ("%s is %s, which web_fetch cannot read as text"):format(url, content_type or "untyped"))
+      return cb(nil, ("%s is %s, which weave_web_fetch cannot read as text"):format(url, content_type or "untyped"))
     end
 
     local text, title = M.render_body(res.body, content_type)
@@ -330,7 +331,7 @@ M.def = {
 
     local hit = cached(url)
     if hit then
-      return respond(hit .. "\n\n(from web_fetch's 15-minute cache)")
+      return respond(hit .. "\n\n(from weave_web_fetch's 15-minute cache)")
     end
 
     fetch_chain(url, 0, function(text, ferr)

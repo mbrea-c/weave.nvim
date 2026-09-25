@@ -320,7 +320,7 @@ M.write = {
     "Write full content to a file or Neovim buffer.",
     "When the file is open in the editor the write routes THROUGH the buffer (then saves),",
     "so the editor stays in sync; `buffer` writes buffers with no backing file.",
-    "Creates missing files and parent directories. For partial changes prefer `edit`.",
+    "Creates missing files and parent directories. For partial changes prefer `weave_edit`.",
     TARGET_RULE,
   }, " "),
   inputSchema = schema({

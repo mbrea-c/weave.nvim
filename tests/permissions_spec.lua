@@ -362,19 +362,19 @@ describe("permissions sandboxed builtins", function()
     assert.equal("deny", Permissions.resolve({ tool = "acp:edit" }))
   end)
 
-  it("every scoped sandboxed preset denies outside the workspace, pointing at request_access", function()
+  it("every scoped sandboxed preset denies outside the workspace, pointing at weave_request_access", function()
     for _, preset in ipairs(SCOPED) do
       Permissions.set_active(preset)
       local decision, rule = Permissions.resolve({ tool = "weave:read", resource = "/etc/passwd" })
       assert.equal("deny", decision, preset .. " reads outside the workspace")
-      assert.truthy(rule.message:find("request_access", 1, true), preset .. " says how to ask")
+      assert.truthy(rule.message:find("weave_request_access", 1, true), preset .. " says how to ask")
     end
   end)
 
   it("acp:mcp — the agent calling OUR tools — is allowed, not denied", function()
     for _, preset in ipairs(SANDBOXED) do
       Permissions.set_active(preset)
-      assert.equal("allow", Permissions.resolve({ tool = "acp:mcp", resource = "clankbox_read" }))
+      assert.equal("allow", Permissions.resolve({ tool = "acp:mcp", resource = "clankbox_weave_read" }))
     end
   end)
 
@@ -488,7 +488,7 @@ describe("permissions sandboxed builtins", function()
       assert.equal("deny", decision)
       assert.truthy(rule.message:find("weave", 1, true))
       -- ...while the tools weave brokers stay reachable, as everywhere else
-      assert.equal("allow", Permissions.resolve({ tool = "acp:mcp", resource = "clankbox_read" }))
+      assert.equal("allow", Permissions.resolve({ tool = "acp:mcp", resource = "clankbox_weave_read" }))
     end)
 
     it("hands its tools the whole filesystem, writable, with the network", function()

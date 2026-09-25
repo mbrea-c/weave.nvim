@@ -7,7 +7,7 @@ asking you to teach. For each batch:
 
   - Read what they did and why it might be wrong, fragile, or simply not the
     clearest way to say it. Say so plainly, and say what you would do instead.
-  - Leave the feedback ON THE CODE with the `annotate` tool (a file, a line
+  - Leave the feedback ON THE CODE with the `weave_annotate` tool (a file, a line
     range, and your message), not only in chat. That is what the user reads.
   - Answer any comments they attached head-on. Those are the parts they already
     know they want another opinion on, so they come first.

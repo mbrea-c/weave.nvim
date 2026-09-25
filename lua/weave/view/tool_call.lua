@@ -165,8 +165,8 @@ M.one_line = one_line
 --- The title for one of weave's OWN clankbox tools, derived from the call
 --- ARGUMENTS (weave.tool_ident gives us the tool name; the args are the
 --- block's rawInput). These arrive over MCP, so the agent-supplied title is
---- the bare endpoint name ("mcp__clankbox__read") — which says nothing the
---- `[w:read]` tag doesn't — so the meaningful argument stands in for it: the
+--- the bare endpoint name ("mcp__clankbox__weave_read"). It adds nothing to
+--- the `[w:read]` tag, so the meaningful argument stands in for it: the
 --- file path for read/write/edit/glob (glob's own root when it names one), the
 --- pattern for grep, the command for task_start, the id for task_*. Returns
 --- nil when the expected argument is absent, so the caller falls back to the
@@ -234,17 +234,19 @@ end
 --- weave.tool_ident is a bounded ring, so a busy turn can evict the record a
 --- tag would otherwise rest on. Everyone else still goes through the store.
 ---
---- A name from an envelope is only claimed as OURS when it is a tool weave
---- actually registers, on weave's own server. Another server's `grep` is not
---- weave's grep, and tagging it `w:` would be a lie about where the call went.
+--- A public name from an envelope is only claimed as OURS when it is a tool
+--- weave actually registers on its own server. It is shortened before
+--- rendering. Another server's `grep` is not weave's grep, and tagging it
+--- `w:` would be a lie about where the call went.
 --- @param tc table ToolCallBlock
 --- @return string|nil
 function M.weave_tool(tc)
   local mcp = tc.mcp
   if mcp and type(mcp.tool) == "string" then
     local ok, Tools = pcall(require, "weave.tools")
-    if ok and mcp.server == "clankbox" and Tools.OWNS[mcp.tool] then
-      return mcp.tool
+    local short_name = ok and mcp.server == "clankbox" and Tools.short_name(mcp.tool) or nil
+    if short_name then
+      return short_name
     end
     return nil
   end

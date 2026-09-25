@@ -34,7 +34,7 @@ describe("prompts", function()
   end)
 
   it("ships the prompts its own defaults name", function()
-    assert.truthy(Prompts.get("sandbox_steering"):find("request_access", 1, true))
+    assert.truthy(Prompts.get("sandbox_steering"):find("weave_request_access", 1, true))
     assert.truthy(Prompts.get("edits"):find("squashed into one diff", 1, true))
     assert.truthy(Prompts.read("briefs/tutor.md"):lower():find("tutor mode", 1, true))
     assert.truthy(Prompts.read("briefs/normal.md"):lower():find("tutor mode is now off", 1, true))

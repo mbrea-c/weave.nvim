@@ -85,7 +85,7 @@ end
 ---      client normalizes every frame into the store, so the merged block is
 ---      the one place that has seen all of them
 ---   3. the loose substring, for providers that name the server with no shape
----      to key on (opencode: "clankbox_read")
+---      to key on (opencode: "clankbox_weave_read")
 ---
 --- Loose on purpose: a false positive costs a redundant approval of an
 --- already-gated call, a false negative breaks the sandbox's only way out.

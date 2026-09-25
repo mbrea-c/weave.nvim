@@ -11,27 +11,55 @@ local M = {}
 
 local registered = false
 
---- The tools weave registers itself. Gate.wrap already mediates these, so the
---- foreign-tool middleware skips them: gating twice would raise two prompts
---- for one call.
-M.OWNS = {
-  read = true,
-  write = true,
-  edit = true,
-  glob = true,
-  grep = true,
-  task_start = true,
-  task_status = true,
-  task_wait = true,
-  task_kill = true,
-  check_user_edits = true,
-  request_access = true,
-  web_fetch = true,
-  annotate = true,
-  annotate_list = true,
-  annotate_update = true,
-  annotate_dismiss = true,
+--- Public MCP names are prefixed because some agents flatten MCP tools and
+--- their builtins into one namespace. Keep the short name as weave's internal
+--- identity: permission actions stay `weave:<short>` and transcript tags stay
+--- `w:<short>`.
+M.PREFIX = "weave_"
+
+local SHORT_NAMES = {
+  "read",
+  "write",
+  "edit",
+  "glob",
+  "grep",
+  "task_start",
+  "task_status",
+  "task_wait",
+  "task_kill",
+  "check_user_edits",
+  "request_access",
+  "web_fetch",
+  "annotate",
+  "annotate_list",
+  "annotate_update",
+  "annotate_dismiss",
 }
+
+--- @param short_name string
+--- @return string
+function M.public_name(short_name)
+  return M.PREFIX .. short_name
+end
+
+--- The public tools weave registers itself. Gate.wrap already mediates these,
+--- so the foreign-tool middleware skips them: gating twice would raise two
+--- prompts for one call.
+M.OWNS = {}
+for _, short_name in ipairs(SHORT_NAMES) do
+  M.OWNS[M.public_name(short_name)] = true
+end
+
+--- Return a weave tool's stable internal name, or nil when the public endpoint
+--- is not one of ours.
+--- @param public_name any
+--- @return string|nil
+function M.short_name(public_name)
+  if type(public_name) ~= "string" or not M.OWNS[public_name] then
+    return nil
+  end
+  return public_name:sub(#M.PREFIX + 1)
+end
 
 --- The fs tools' resource for the permission engine: the ABSOLUTE path (so
 --- resource globs match however the agent spelled it), or the buffer ref as
@@ -54,18 +82,21 @@ end
 --- @param server { register_tool: fun(name: string, def: table) }
 function M.register_into(server)
   local Gate = require("weave.tools.gate")
+  local function register(short_name, def)
+    server.register_tool(M.public_name(short_name), def)
+  end
   local fs = require("weave.tools.fs")
   -- The mutating tools additionally sit behind the EDIT gate (weave.tools.
   -- user_edits): with the edit_gate setting on, they refuse while the user
   -- has edits the conversation has not seen. Guard inside, permissions
   -- outside — a permission deny should not leak the gate's refusal text.
   local UserEdits = require("weave.tools.user_edits")
-  server.register_tool("read", Gate.wrap("read", fs.read, { resource = fs_resource, kind = "read" }))
-  server.register_tool(
+  register("read", Gate.wrap("read", fs.read, { resource = fs_resource, kind = "read" }))
+  register(
     "write",
     Gate.wrap("write", UserEdits.guard(fs.write), { resource = fs_resource, kind = "edit" })
   )
-  server.register_tool("edit", Gate.wrap("edit", UserEdits.guard(fs.edit), { resource = fs_resource, kind = "edit" }))
+  register("edit", Gate.wrap("edit", UserEdits.guard(fs.edit), { resource = fs_resource, kind = "edit" }))
   -- Discovery. The gate's resource is the search ROOT, not the files matched:
   -- gating per result would mean one prompt per file, so a deny rule on
   -- `*/secrets/*` blocks a search rooted inside it but not a cwd-rooted
@@ -75,22 +106,22 @@ function M.register_into(server)
   local search_resource = function(args)
     return search.root(args)
   end
-  server.register_tool("glob", Gate.wrap("glob", search.glob, { resource = search_resource, kind = "read" }))
-  server.register_tool("grep", Gate.wrap("grep", search.grep, { resource = search_resource, kind = "read" }))
+  register("glob", Gate.wrap("glob", search.glob, { resource = search_resource, kind = "read" }))
+  register("grep", Gate.wrap("grep", search.grep, { resource = search_resource, kind = "read" }))
   local tasks = require("weave.tools.tasks")
   local command = function(args)
     return type(args.command) == "string" and args.command or nil
   end
-  server.register_tool(
+  register(
     "task_start",
     Gate.wrap("task_start", UserEdits.guard(tasks.start), { resource = command, kind = "execute" })
   )
   -- The gate's other half: how the agent gets back in sync (and a tool any
   -- agent may call defensively — cheap when clean).
-  server.register_tool("check_user_edits", Gate.wrap("check_user_edits", UserEdits.check, { kind = "read" }))
-  server.register_tool("task_status", Gate.wrap("task_status", tasks.status, { kind = "execute" }))
-  server.register_tool("task_wait", Gate.wrap("task_wait", tasks.wait, { kind = "execute" }))
-  server.register_tool("task_kill", Gate.wrap("task_kill", tasks.kill, { kind = "execute" }))
+  register("check_user_edits", Gate.wrap("check_user_edits", UserEdits.check, { kind = "read" }))
+  register("task_status", Gate.wrap("task_status", tasks.status, { kind = "execute" }))
+  register("task_wait", Gate.wrap("task_wait", tasks.wait, { kind = "execute" }))
+  register("task_kill", Gate.wrap("task_kill", tasks.kill, { kind = "execute" }))
   -- The web. Gated on the URL, so a rule can scope by host ("https://docs.
   -- example.com/**"), and tagged with the ACP `fetch` kind so it reads like
   -- the agent's own fetch tool in the transcript. The curl subprocess is
@@ -100,20 +131,20 @@ function M.register_into(server)
   local url_resource = function(args)
     return type(args.url) == "string" and args.url ~= "" and args.url or nil
   end
-  server.register_tool("web_fetch", Gate.wrap("web_fetch", web_fetch.def, { resource = url_resource, kind = "fetch" }))
+  register("web_fetch", Gate.wrap("web_fetch", web_fetch.def, { resource = url_resource, kind = "fetch" }))
   -- Feedback ON the user's code (weave.annotations): the agent's half of
   -- inline code feedback, and its whole output channel in tutor mode. Gated on
   -- the PATH like the fs tools, so a rule can scope where the agent may leave
   -- notes; the query/edit/dismiss three carry no resource, like the task query
   -- tools, because they name an annotation id rather than a file.
   local annotate = require("weave.tools.annotate")
-  server.register_tool("annotate", Gate.wrap("annotate", annotate.annotate, { resource = fs_resource }))
-  server.register_tool("annotate_list", Gate.wrap("annotate_list", annotate.annotate_list))
-  server.register_tool("annotate_update", Gate.wrap("annotate_update", annotate.annotate_update))
-  server.register_tool("annotate_dismiss", Gate.wrap("annotate_dismiss", annotate.annotate_dismiss))
+  register("annotate", Gate.wrap("annotate", annotate.annotate, { resource = fs_resource }))
+  register("annotate_list", Gate.wrap("annotate_list", annotate.annotate_list))
+  register("annotate_update", Gate.wrap("annotate_update", annotate.annotate_update))
+  register("annotate_dismiss", Gate.wrap("annotate_dismiss", annotate.annotate_dismiss))
   -- The elevation tool goes in UNwrapped: it IS the asking mechanism (its
   -- handler always prompts), so gating it would prompt twice per question.
-  server.register_tool("request_access", require("weave.tools.access").def)
+  register("request_access", require("weave.tools.access").def)
   -- Everything else the agent can reach over this host — clankbox's own
   -- exec_lua, another plugin's tools — through the same engine, as mcp:<tool>.
   -- Without this the sandbox is decorative: exec_lua runs arbitrary Lua

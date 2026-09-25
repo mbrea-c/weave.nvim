@@ -1,9 +1,9 @@
--- The `annotate` tool suite: how the agent leaves feedback ON the user's code
+-- The `weave_annotate` tool suite: how the agent leaves feedback ON the user's code
 -- instead of only in chat. The store is weave.annotations; this is the surface
 -- the model sees.
 --
 -- Four narrow tools rather than one with an `action` parameter, because that
--- is what models actually pick correctly. `annotate` doubles as the plain
+-- is what models actually pick correctly. `weave_annotate` doubles as the plain
 -- notification channel: called with a message and no span it just says the
 -- thing, which is the shape for "you are about to hit the same bug again"
 -- where there is no one line to point at.
@@ -38,7 +38,7 @@ M.annotate = {
     .. "point at. Annotating does not modify the file.\n\n"
     .. "The user can reply to an annotation; the reply arrives in their next feedback message as "
     .. "'reply to your annotation #N' with your note quoted. Act on it through the annotation it names: "
-    .. "annotate_update to continue the thread on the code, annotate_dismiss once it is settled.",
+    .. "weave_annotate_update to continue the thread on the code, weave_annotate_dismiss once it is settled.",
   inputSchema = {
     type = "object",
     properties = {
@@ -68,7 +68,7 @@ M.annotate = {
   handler = function(args)
     args = args or {}
     if type(args.message) ~= "string" or args.message == "" then
-      return fail("annotate needs a `message`")
+      return fail("weave_annotate needs a `message`")
     end
 
     -- No span: this is the notification form.
@@ -78,7 +78,7 @@ M.annotate = {
     end
 
     if type(args.lnum) ~= "number" then
-      return fail("annotate needs `lnum` (the 1-based line) when you give a `path`")
+      return fail("weave_annotate needs `lnum` (the 1-based line) when you give a `path`")
     end
 
     local ann, err = Annotations.add({
@@ -110,7 +110,7 @@ M.annotate = {
 
 M.annotate_list = {
   description = "List the annotations you have left that the user has not dismissed, with where each one sits "
-    .. "NOW (the user keeps editing, so lines move). Use it before annotating to avoid repeating yourself.",
+    .. "NOW (the user keeps editing, so lines move). Use it before calling weave_annotate to avoid repeating yourself.",
   inputSchema = {
     type = "object",
     properties = {
@@ -145,7 +145,7 @@ M.annotate_update = {
   inputSchema = {
     type = "object",
     properties = {
-      id = { type = "integer", description = "The annotation id (from annotate or annotate_list)" },
+      id = { type = "integer", description = "The annotation id (from weave_annotate or weave_annotate_list)" },
       message = { type = "string", description = "The new message" },
       position = {
         type = "string",
@@ -158,10 +158,10 @@ M.annotate_update = {
   handler = function(args)
     args = args or {}
     if type(args.id) ~= "number" then
-      return fail("annotate_update needs an `id`")
+      return fail("weave_annotate_update needs an `id`")
     end
     if not Annotations.get(args.id) then
-      return fail(("no annotation #%d — it may have been dismissed; call annotate_list"):format(args.id))
+      return fail(("no annotation #%d; it may have been dismissed. Call weave_annotate_list"):format(args.id))
     end
     Annotations.update(args.id, { message = args.message, position = args.position })
     return ("updated #%d"):format(args.id)
@@ -187,10 +187,10 @@ M.annotate_dismiss = {
       return ("dismissed %d annotation(s)"):format(n)
     end
     if type(args.id) ~= "number" then
-      return fail("annotate_dismiss needs an `id`, or `all = true`")
+      return fail("weave_annotate_dismiss needs an `id`, or `all = true`")
     end
     if not Annotations.dismiss(args.id) then
-      return fail(("no annotation #%d — it may already be gone; call annotate_list"):format(args.id))
+      return fail(("no annotation #%d; it may already be gone. Call weave_annotate_list"):format(args.id))
     end
     return ("dismissed #%d"):format(args.id)
   end,

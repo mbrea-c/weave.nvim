@@ -632,7 +632,7 @@ describe("session sandbox steering", function()
     pump()
 
     assert.equal(2, #client.sent[1])
-    assert.truthy(client.sent[1][1].text:find("request_access", 1, true))
+    assert.truthy(client.sent[1][1].text:find("weave_request_access", 1, true))
     assert.equal("what does this project do?", client.sent[1][2].text)
     -- a separate block, so the transcript still echoes only what was typed
     assert.equal("what does this project do?", store.state.entries[1].text)
