@@ -425,6 +425,37 @@ describe("tool sandbox wrap", function()
     assert.same({ "-c", "echo hi" }, args)
   end)
 
+  it("bypasses only the tool sandbox selected by enabled", function()
+    Config.sandbox = { mode = "on" }
+    Permissions.save_preset({
+      name = "selective",
+      rules = { { tool = "*", decision = "allow" } },
+      sandbox = {
+        enabled = false,
+        tools = {
+          ["weave:task_start"] = { enabled = true },
+          ["weave:web_fetch"] = { enabled = false },
+        },
+      },
+    })
+    Permissions.set_active("selective")
+
+    -- The per-tool true overrides the global false.
+    local task_cmd = Sandbox.wrap_shell("echo hi")
+    assert.equal("bwrap", task_cmd)
+
+    -- A disabled tool is returned byte-for-byte even though the agent sandbox
+    -- mode remains on and a backend is available.
+    local fetch_cmd, fetch_args = Sandbox.wrap_for_tool("weave:web_fetch", "curl", { "https://example.test" })
+    assert.equal("curl", fetch_cmd)
+    assert.same({ "https://example.test" }, fetch_args)
+
+    -- A tool with no override inherits the global false.
+    local grep_cmd, grep_args = Sandbox.wrap_for_tool("weave:grep", "rg", { "needle" })
+    assert.equal("rg", grep_cmd)
+    assert.same({ "needle" }, grep_args)
+  end)
+
   it("wrap_shell derives the ACTIVE preset's hull per spawn", function()
     Config.sandbox = { mode = "on" }
     -- active preset "normal" has no sandbox section: default hull =

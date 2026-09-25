@@ -3,5 +3,6 @@ project, and your builtin file/search/shell tools cannot reach it — depending 
 platform they will either come back EMPTY or be denied outright. The real project is
 reachable only through the weave MCP tools (weave_read, weave_write, weave_edit,
 weave_glob, weave_grep, weave_task_start, ...). Use those for everything. If you
-need access beyond the project (another directory, or network for a command), ask
-with weave_request_access.
+need access beyond the project (another directory, network for a command, or an
+unwrapped tool subprocess), ask with weave_request_access. Disabling the tool
+sandbox never disables your own process sandbox.

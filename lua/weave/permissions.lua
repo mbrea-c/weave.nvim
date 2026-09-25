@@ -57,13 +57,15 @@ local M = {}
 --- @field path string `${project}` expands at spawn time; `~` at mount time
 --- @field mode? "rw"|"ro" Default "rw"
 
---- @class weave.permissions.SandboxSection The preset's confinement section
---- (design-agent-sandbox-v2.md): `binds`/`network` are the kernel hull
---- every TOOL invocation runs under — deliberately ORTHOGONAL to the rules:
+--- @class weave.permissions.SandboxSection The preset's tool confinement section
+--- (design-agent-sandbox-v2.md): `enabled` selects wrapping; `binds`/`network`
+--- are the kernel hull a wrapped TOOL invocation runs under — deliberately
+--- ORTHOGONAL to the rules:
 --- rules speak globs (fine-grained, per-call, can ask), binds speak
 --- directories (the coarse outer hull bounding whatever the gate allows,
 --- and bugs in the tools themselves). Neither is derived from the other;
 --- lint_preset flags the one confusing combination (a rule no bind reaches).
+--- @field enabled? boolean Whether tool subprocesses are sandboxed (default true)
 --- @field binds? weave.permissions.SandboxBind[] Tool-sandbox binds (default: the project, rw)
 --- @field network? boolean Tool sandboxes get network (default false)
 --- @field tools? table<string, weave.permissions.SandboxOverride> Per-tool overrides,
@@ -72,6 +74,7 @@ local M = {}
 --- in an override replaces the global one; keys absent inherit it.
 
 --- @class weave.permissions.SandboxOverride One tool's deviation from the hull
+--- @field enabled? boolean Replaces the global enabled flag for this tool
 --- @field binds? weave.permissions.SandboxBind[] Replaces the global binds for this tool
 --- @field network? boolean Replaces the global network flag for this tool
 
@@ -152,9 +155,9 @@ local READ_ONLY = "this preset is read-only; switch presets to write or run comm
 --
 -- Every builtin is mode-tagged, because each is written against a world: the
 -- sandboxed four assume the agent's own tools cannot reach the project, the
--- unsandboxed four assume they can. Only the sandboxed four carry a
--- `sandbox` hull — mode off disables the tool sandbox outright
--- (tool_sandboxing_on), so a hull there would document something weave never
+-- unsandboxed four assume they can. The mode-on presets carry a `sandbox`
+-- section (YOLO uses it to disable tool wrapping); mode off disables the tool
+-- sandbox outright, so a section there would document something weave never
 -- builds.
 --
 -- Three things are true of the four scoped sandboxed presets. Only the first
@@ -376,10 +379,9 @@ local BUILTIN = {
     label = "YOLO",
     source = "builtin",
     for_mode = "on",
-    -- The maximal sandboxed preset: nothing is asked and nothing is scoped.
-    -- Every other sandboxed preset treats the workspace as the world and
-    -- makes anything past it a request; this one hands the tools the whole
-    -- filesystem, read-write, with the network, and gets out of the way.
+    -- The maximal preset under agent-sandbox mode: nothing is asked and
+    -- nothing is scoped. Every other mode-on preset confines tool subprocesses
+    -- to a hull; this one disables that TOOL sandbox and gets out of the way.
     --
     -- What it does NOT do is un-sandbox the AGENT. Mode on confines the agent
     -- process invariantly — that hull is not a preset's to widen — so its
@@ -399,12 +401,11 @@ local BUILTIN = {
       { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
       { tool = "*", decision = "allow" },
     },
-    -- `/` rw is the whole filesystem writable — the backends read it as the
-    -- ROOT bind's mode rather than as one more grant (see sandbox/bwrap.lua),
-    -- so the private /dev, /proc and /tmp still land on top of it. $HOME is
-    -- listed separately because it is a tmpfs in the floor: only a bind back
-    -- over it returns the real one.
+    -- Keep the formerly permissive hull as dormant defaults: if a copied
+    -- preset re-enables confinement for one tool, doing so does not
+    -- accidentally narrow YOLO's filesystem or network access.
     sandbox = {
+      enabled = false,
       binds = { { path = "/", mode = "rw" }, { path = "~", mode = "rw" } },
       network = true,
     },
@@ -489,6 +490,8 @@ local overlay = {}
 local bind_overlay = {}
 --- @type boolean elevation grant: tool sandboxes get network this session
 local network_granted = false
+--- @type boolean elevation grant: tool subprocesses run unwrapped this session
+local tool_sandbox_disabled = false
 --- @type string|nil project root for ${project}; nil = ask the editor
 local project_root = nil
 --- @type string|nil the RUNNING session's sandbox mode; nil = ask the config
@@ -616,10 +619,15 @@ local function own(preset, source)
     if preset.sandbox.tools then
       tools = {}
       for name, o in pairs(preset.sandbox.tools) do
-        tools[name] = { binds = own_binds(o.binds), network = o.network }
+        tools[name] = { enabled = o.enabled, binds = own_binds(o.binds), network = o.network }
       end
     end
-    sandbox = { binds = own_binds(preset.sandbox.binds), network = preset.sandbox.network, tools = tools }
+    sandbox = {
+      enabled = preset.sandbox.enabled,
+      binds = own_binds(preset.sandbox.binds),
+      network = preset.sandbox.network,
+      tools = tools,
+    }
   end
   return {
     name = preset.name,
@@ -692,11 +700,14 @@ local function validate(preset)
     -- longer honours must not silently load as if it were honoured.
     if sandbox.profile ~= nil or sandbox.mode ~= nil then
       error(
-        ("weave.permissions: preset %q: sandbox `profile`/`mode` requirements were removed (sandbox v2); the section now carries `binds`/`network`"):format(
+        ("weave.permissions: preset %q: sandbox `profile`/`mode` requirements were removed (sandbox v2); the section now carries `enabled`/`binds`/`network`"):format(
           preset.name
         ),
         0
       )
+    end
+    if sandbox.enabled ~= nil and type(sandbox.enabled) ~= "boolean" then
+      error(("weave.permissions: preset %q: `sandbox.enabled` must be a boolean"):format(preset.name), 0)
     end
     if sandbox.binds ~= nil then
       validate_binds(sandbox.binds, ("preset %q: sandbox.binds"):format(preset.name))
@@ -715,6 +726,9 @@ local function validate(preset)
         end
         if type(o) ~= "table" then
           error(("weave.permissions: %s must be a table"):format(where), 0)
+        end
+        if o.enabled ~= nil and type(o.enabled) ~= "boolean" then
+          error(("weave.permissions: %s.enabled must be a boolean"):format(where), 0)
         end
         if o.binds ~= nil then
           validate_binds(o.binds, where .. ".binds")
@@ -931,8 +945,8 @@ end
 
 --- ── The tool-sandbox hull ───────────────────────────────────────────────────
 
--- What a preset without a sandbox section means: the project, read-write,
--- no network. Explicit binds REPLACE this (they do not extend it), so a
+-- What a preset without a sandbox section means: enabled, the project
+-- read-write, no network. Explicit binds REPLACE this (they do not extend it), so a
 -- preset binding only /data genuinely excludes the project.
 local DEFAULT_BINDS = { { path = PROJECT_TOKEN, mode = "rw" } }
 
@@ -954,8 +968,9 @@ local function bind_path(path)
 end
 
 --- The kernel hull TOOL invocations run under (design-agent-sandbox-v2):
---- binds with `${project}` and `~` expanded now, modes defaulted, plus the
---- network flag. Consumed by the task/tool spawn path on EVERY invocation, so an
+--- an enabled flag, binds with `${project}` and `~` expanded now, modes
+--- defaulted, plus the network flag. Consumed by the task/tool spawn path on
+--- EVERY invocation, so an
 --- active-preset switch or an elevation grant applies to the next spawn with
 --- no restart anywhere.
 ---
@@ -965,22 +980,30 @@ end
 ---      per-tool escape hatch (one tool needing the network, say, without
 ---      handing it to every task),
 ---   3. the elevation grants, which are GLOBAL by design: an agent that
----      asked for and was given /data gets it everywhere, overridden tools
----      included, since a grant answers "may we reach this at all".
+---      asked for and was given /data gets it everywhere, and an approved
+---      tool-sandbox disable forces enabled=false even over a per-tool true.
 --- @param preset? weave.permissions.Preset default: the active one
 --- @param tool? string namespaced tool name, e.g. "weave:task_start"
---- @return { binds: weave.permissions.SandboxBind[], network: boolean }
+--- @return { enabled: boolean, binds: weave.permissions.SandboxBind[], network: boolean }
 function M.tool_sandbox(preset, tool)
   preset = preset or M.active()
   local section = preset.sandbox or {}
   local override = (tool and section.tools and section.tools[tool]) or {}
+  local enabled = override.enabled
+  if enabled == nil then
+    enabled = section.enabled
+  end
+  if enabled == nil then
+    enabled = true
+  end
   local binds = {}
   for i, b in ipairs(override.binds or section.binds or DEFAULT_BINDS) do
     binds[i] = { path = bind_path(b.path), mode = b.mode or "rw" }
   end
   -- Elevation grants sit ON TOP of the preset's hull, exactly like the rule
   -- overlay sits on top of its rules: session-scoped, revocable, never
-  -- rewriting the preset.
+  -- rewriting the preset. The disable flag is applied in the returned enabled
+  -- value below; path and network grants still resolve for introspection.
   for _, b in ipairs(bind_overlay) do
     binds[#binds + 1] = { path = bind_path(b.path), mode = b.mode or "rw" }
   end
@@ -988,7 +1011,11 @@ function M.tool_sandbox(preset, tool)
   if network == nil then
     network = section.network
   end
-  return { binds = binds, network = network == true or network_granted }
+  return {
+    enabled = enabled and not tool_sandbox_disabled,
+    binds = binds,
+    network = network == true or network_granted,
+  }
 end
 
 --- Does a bind's path plausibly reach a resource glob's static prefix?
@@ -1020,8 +1047,18 @@ function M.lint_preset(preset)
   -- deliberate, not a mistake. Only a resource NO hull reaches is worth a
   -- warning.
   local hull = M.tool_sandbox(preset)
+  -- An unwrapped subprocess has no bind wall to disagree with the rule. This
+  -- lint is intentionally about kernel reachability, so disabled hulls make
+  -- every path reachable.
+  if not hull.enabled then
+    return warnings
+  end
   for name in pairs((preset.sandbox or {}).tools or {}) do
-    vim.list_extend(hull.binds, M.tool_sandbox(preset, name).binds)
+    local tool_hull = M.tool_sandbox(preset, name)
+    if not tool_hull.enabled then
+      return warnings
+    end
+    vim.list_extend(hull.binds, tool_hull.binds)
   end
   local home = vim.uv.os_homedir() or ""
   local function norm(p)
@@ -1115,12 +1152,13 @@ function M.revoke_grant(index)
 end
 
 function M.clear_overlay()
-  if #overlay == 0 and #bind_overlay == 0 and not network_granted then
+  if #overlay == 0 and #bind_overlay == 0 and not network_granted and not tool_sandbox_disabled then
     return
   end
   overlay = {}
   bind_overlay = {}
   network_granted = false
+  tool_sandbox_disabled = false
   notify()
 end
 
@@ -1173,6 +1211,22 @@ function M.set_network_granted(granted)
     return
   end
   network_granted = granted
+  notify()
+end
+
+--- @return boolean
+function M.tool_sandbox_disabled()
+  return tool_sandbox_disabled
+end
+
+--- Session-scoped elevation: disable only tool-subprocess confinement. The
+--- already-running agent process remains in its invariant sandbox.
+--- @param disabled boolean
+function M.set_tool_sandbox_disabled(disabled)
+  if tool_sandbox_disabled == disabled then
+    return
+  end
+  tool_sandbox_disabled = disabled
   notify()
 end
 
@@ -1290,6 +1344,7 @@ function M._reset()
   overlay = {}
   bind_overlay = {}
   network_granted = false
+  tool_sandbox_disabled = false
   active_name = "ask"
   project_root = nil
   current_mode = nil

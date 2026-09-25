@@ -353,8 +353,8 @@ function M.wrap_tool(command, args, hull)
   }, fs_seam())
 end
 
---- Whether tool invocations run sandboxed at all: one switch (the resolved
---- global mode) governs both the agent process and the tools.
+--- Whether tool sandboxing is available globally. A resolved preset hull's
+--- `enabled` flag is the independent, per-invocation switch applied later.
 --- @return boolean
 function M.tool_sandboxing_on()
   return M._available() and M.resolve(nil).mode == "on"
@@ -373,8 +373,8 @@ end
 
 --- The same, for a tool that spawns a BINARY rather than a shell (curl, under
 --- w:web_fetch). Same resolution — the active preset's hull for that exact
---- tool name, re-derived per spawn — and the same degradation: with tool
---- sandboxing off the argv comes back untouched.
+--- tool name, re-derived per spawn — and the same degradation: with global
+--- mode off or that hull's `enabled = false`, the argv comes back untouched.
 --- @param tool string namespaced tool name, e.g. "weave:web_fetch"
 --- @param command string
 --- @param args? string[]
@@ -386,7 +386,10 @@ function M.wrap_for_tool(tool, command, args)
     return command, args
   end
   local ok, Permissions = pcall(require, "weave.permissions")
-  local hull = ok and Permissions.tool_sandbox(nil, tool) or { binds = {}, network = false }
+  local hull = ok and Permissions.tool_sandbox(nil, tool) or { enabled = true, binds = {}, network = false }
+  if not hull.enabled then
+    return command, args
+  end
   return M.wrap_tool(command, args, hull)
 end
 

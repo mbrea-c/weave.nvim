@@ -22,16 +22,23 @@ describe("preset sandbox hull", function()
   end)
 
   describe("validation", function()
-    it("accepts a v2-only section (binds + network, no profile)", function()
+    it("accepts enabled beside binds and network", function()
       Permissions.save_preset({
         name = "hull_only",
         rules = { { tool = "*", decision = "allow" } },
-        sandbox = { binds = { { path = "${project}" }, { path = "/data", mode = "ro" } }, network = true },
+        sandbox = {
+          enabled = false,
+          binds = { { path = "${project}" }, { path = "/data", mode = "ro" } },
+          network = true,
+          tools = { ["weave:task_start"] = { enabled = true } },
+        },
       })
       local p = Permissions.get("hull_only")
+      assert.is_false(p.sandbox.enabled)
       assert.equal("/data", p.sandbox.binds[2].path)
       assert.equal("ro", p.sandbox.binds[2].mode)
       assert.is_true(p.sandbox.network)
+      assert.is_true(p.sandbox.tools["weave:task_start"].enabled)
     end)
 
     it("rejects the removed v1 requirement fields loudly", function()
@@ -54,6 +61,9 @@ describe("preset sandbox hull", function()
       assert_errors_with(function()
         Permissions.save_preset({ name = "b3", rules = {}, sandbox = { network = "yes" } })
       end, "`sandbox.network` must be a boolean")
+      assert_errors_with(function()
+        Permissions.save_preset({ name = "b4", rules = {}, sandbox = { enabled = "sometimes" } })
+      end, "`sandbox.enabled` must be a boolean")
     end)
 
     it("copies the section: caller mutations never reach the engine", function()
@@ -65,9 +75,9 @@ describe("preset sandbox hull", function()
   end)
 
   describe("tool_sandbox", function()
-    it("defaults to project-rw, network off", function()
+    it("defaults to enabled, project-rw, network off", function()
       local hull = Permissions.tool_sandbox()
-      assert.same({ binds = { { path = "/proj/demo", mode = "rw" } }, network = false }, hull)
+      assert.same({ enabled = true, binds = { { path = "/proj/demo", mode = "rw" } }, network = false }, hull)
     end)
 
     it("expands ${project} and defaults bind mode to rw", function()
@@ -78,6 +88,7 @@ describe("preset sandbox hull", function()
       })
       local hull = Permissions.tool_sandbox(Permissions.get("custom"))
       assert.same({
+        enabled = true,
         binds = { { path = "/proj/demo/sub", mode = "rw" }, { path = "/data", mode = "ro" } },
         network = true,
       }, hull)
@@ -101,6 +112,7 @@ describe("preset sandbox hull", function()
         assert.same({
           -- read_only mounts the workspace ro; the rest rw. Either way it is
           -- the workspace and nothing else, with no network.
+          enabled = true,
           binds = { { path = "/proj/demo", mode = name == "read_only" and "ro" or "rw" } },
           network = false,
         }, Permissions.tool_sandbox(preset))
@@ -145,17 +157,37 @@ describe("preset sandbox hull", function()
 
     it("a tool with no override, and the toolless call, get the global hull", function()
       local preset = Permissions.get("pertool")
-      local expected = { binds = { { path = "/proj/demo", mode = "rw" } }, network = false }
+      local expected = { enabled = true, binds = { { path = "/proj/demo", mode = "rw" } }, network = false }
       assert.same(expected, Permissions.tool_sandbox(preset, "weave:read"))
       assert.same(expected, Permissions.tool_sandbox(preset))
+    end)
+
+    it("enabled inherits globally and can be overridden for one tool", function()
+      Permissions.save_preset({
+        name = "toggles",
+        rules = {},
+        sandbox = {
+          enabled = false,
+          tools = {
+            ["weave:task_start"] = { enabled = true },
+            ["weave:web_fetch"] = { network = true },
+          },
+        },
+      })
+      local preset = Permissions.get("toggles")
+      assert.is_false(Permissions.tool_sandbox(preset, "weave:read").enabled)
+      assert.is_true(Permissions.tool_sandbox(preset, "weave:task_start").enabled)
+      assert.is_false(Permissions.tool_sandbox(preset, "weave:web_fetch").enabled)
     end)
 
     it("elevation grants apply GLOBALLY, overridden tools included", function()
       Permissions.add_bind_grant({ path = "/granted", mode = "rw" })
       Permissions.set_network_granted(true)
+      Permissions.set_tool_sandbox_disabled(true)
       local preset = Permissions.get("pertool")
       for _, tool in ipairs({ "weave:grep", "weave:task_start", "weave:read" }) do
         local hull = Permissions.tool_sandbox(preset, tool)
+        assert.is_false(hull.enabled)
         assert.is_true(hull.network)
         assert.equal("/granted", hull.binds[#hull.binds].path)
       end
@@ -176,6 +208,13 @@ describe("preset sandbox hull", function()
           sandbox = { tools = { ["weave:read"] = { network = 1 } } },
         })
       end, "network must be a boolean")
+      assert_errors_with(function()
+        Permissions.save_preset({
+          name = "bad3",
+          rules = {},
+          sandbox = { tools = { ["weave:read"] = { enabled = "nope" } } },
+        })
+      end, "enabled must be a boolean")
     end)
 
     it("lint counts a per-tool bind as reachable", function()
@@ -211,6 +250,15 @@ describe("preset sandbox hull", function()
       })
       assert.equal(1, #warnings)
       assert.truthy(warnings[1]:find("/etc/ssh/**", 1, true))
+    end)
+
+    it("does not warn about bind reachability when the tool sandbox is disabled", function()
+      local warnings = Permissions.lint_preset({
+        name = "unwrapped",
+        sandbox = { enabled = false },
+        rules = { { tool = "weave:read", resource = "/etc/ssh/**", decision = "allow" } },
+      })
+      assert.same({}, warnings)
     end)
 
     it("respects path boundaries: /a/b does not cover /a/bc", function()

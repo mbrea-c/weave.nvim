@@ -491,13 +491,15 @@ describe("permissions sandboxed builtins", function()
       assert.equal("allow", Permissions.resolve({ tool = "acp:mcp", resource = "clankbox_weave_read" }))
     end)
 
-    it("hands its tools the whole filesystem, writable, with the network", function()
+    it("disables the tool sandbox while leaving the agent sandbox on", function()
       local hull = Permissions.tool_sandbox(Permissions.get("yolo"))
+      assert.is_false(hull.enabled)
+      -- The dormant hull remains permissive if one tool overrides enabled:
+      -- YOLO never narrows reach as a side effect of re-enabling confinement.
       assert.is_true(hull.network)
       assert.same({ path = "/", mode = "rw" }, hull.binds[1])
-      -- $HOME is a tmpfs in the floor, so the writable root alone does not
-      -- bring it back — only a bind over it does
       assert.same({ path = vim.uv.os_homedir(), mode = "rw" }, hull.binds[2])
+      assert.equal("on", Permissions.get("yolo").for_mode)
     end)
 
     it("is sandbox-on only, and is not what the sandbox turning off falls back to", function()

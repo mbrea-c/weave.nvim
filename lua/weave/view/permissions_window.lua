@@ -52,9 +52,9 @@ function M.serialize(preset)
     "-- message = <shown when a deny turns the agent back, optional> }; first match wins.",
     "-- Tools: acp:<kind>, weave:<tool>, <plugin>:<tool>. ${project} expands to the root.",
     "--",
-    "-- `sandbox` is the hull TOOL subprocesses run under, orthogonal to the rules:",
-    '--   sandbox = { binds = { { path = "${project}", mode = "rw" } }, network = false,',
-    '--              tools = { ["weave:task_start"] = { network = true } } }',
+    "-- `sandbox` controls TOOL subprocesses, orthogonal to the rules:",
+    '--   sandbox = { enabled = true, binds = { { path = "${project}", mode = "rw" } },',
+    '--              network = false, tools = { ["weave:task_start"] = { enabled = false } } }',
     "-- binds REPLACE the default (project rw); per-tool entries replace the keys they",
     '-- set. `for_mode = "on"|"off"` scopes the preset to a sandbox mode (nil = both).',
   }
@@ -243,14 +243,20 @@ local function Window(ctx)
   -- Session grants: a grant the user cannot see is a grant they cannot
   -- revoke. Deliberately a separate list from the preset's rules — answering
   -- "allow for project" on a prompt must never silently redefine `normal`.
-  -- Elevation grants (binds/network, via w:request_access) list here too:
-  -- they widen the TOOL SANDBOXES, which is even more worth seeing.
+  -- Elevation grants (binds/network/tool-sandbox disable, via
+  -- w:request_access) list here too: they widen or remove TOOL confinement,
+  -- which is even more worth seeing.
   local grants = Permissions.grants()
   local bind_grants = Permissions.bind_grants()
   local network = Permissions.network_granted()
-  if #grants > 0 or #bind_grants > 0 or network then
+  local tool_sandbox_disabled = Permissions.tool_sandbox_disabled()
+  if #grants > 0 or #bind_grants > 0 or network or tool_sandbox_disabled then
     rows[#rows + 1] = blank()
-    rows[#rows + 1] = header(("Session grants (%d)"):format(#grants + #bind_grants + (network and 1 or 0)))
+    rows[#rows + 1] = header(
+      ("Session grants (%d)"):format(
+        #grants + #bind_grants + (network and 1 or 0) + (tool_sandbox_disabled and 1 or 0)
+      )
+    )
     for i, rule in ipairs(grants) do
       rows[#rows + 1] = grant_row(rule, function()
         Permissions.revoke_grant(i)
@@ -276,6 +282,18 @@ local function Window(ctx)
           { comp = ui.label, props = { text = "  network for executed tasks" } },
           bare_button("[revoke]", function()
             Permissions.set_network_granted(false)
+          end),
+        },
+      }
+    end
+    if tool_sandbox_disabled then
+      rows[#rows + 1] = {
+        comp = ui.row,
+        props = { gap = 2 },
+        children = {
+          { comp = ui.label, props = { text = "  tool sandbox disabled (agent sandbox unchanged)" } },
+          bare_button("[revoke]", function()
+            Permissions.set_tool_sandbox_disabled(false)
           end),
         },
       }

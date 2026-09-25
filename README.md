@@ -224,7 +224,7 @@ plus **YOLO** for the sandbox being on.
 | **Read-only** | reads and searches run; writes and commands are denied, and the workspace is mounted read-only | ACP reads allowed, edits/deletes/commands denied |
 | **Edit** | reads and writes run unprompted; commands still ask | ACP reads and edits allowed, the rest asks |
 | **Auto** | every tool runs unprompted inside the workspace | everything allowed |
-| **YOLO** | nothing asks and nothing is scoped: the tools get the whole filesystem read-write, with the network | — (`unsandboxed_auto` already is this) |
+| **YOLO** | nothing asks and nothing is scoped: the tool sandbox is disabled, while the agent sandbox stays on | — (`unsandboxed_auto` already is this) |
 
 Two rules hold across the four scoped sandboxed presets. `acp:*` is
 **denied** — under mode on the agent's builtin tools only reach an empty
@@ -243,13 +243,12 @@ clankbox's `exec_lua`, another plugin's tools). What it does *not* do is
 widen anyone's reach: the workspace boundary is still the workspace boundary.
 
 **YOLO** is the one that drops the boundary too. It asks nothing, scopes
-nothing, and hands every tool subprocess the whole filesystem read-write with
-the network on. The one thing it cannot hand back is the agent's *own*
-sandbox: mode on confines the agent process invariantly — that hull is not a
-preset's to widen — so its builtin tools still meet the empty project
-stand-in and `acp:*` stays denied there too. The honest summary is "your
-tools can do anything, through weave", and everything still arrives as a tool
-call in the transcript. There is no `unsandboxed_yolo`, so turning the
+nothing, and sets the tool sandbox's `enabled = false`, so tool subprocesses
+run unwrapped. The agent's *own* sandbox remains on: mode on confines that
+process invariantly — its hull is not a preset's to widen — so its builtin
+tools still meet the empty project stand-in and `acp:*` stays denied there
+too. The honest summary is "your tools can do anything, through weave", and
+everything still arrives as a tool call in the transcript. There is no `unsandboxed_yolo`, so turning the
 sandbox off from here lands on `unsandboxed_ask` rather than silently
 handing over allow-everything with no sandbox underneath.
 
@@ -969,47 +968,57 @@ project the sandbox masked. The `sandboxed_*` presets therefore `ask` on
 Presets from `setup` shadow builtins by name; presets saved in the
 configuration window (runtime) shadow both, reversibly.
 
-A preset may also carry a `sandbox` section — the kernel hull TOOL
-invocations run under, deliberately **orthogonal** to the rules:
+A preset may also carry a `sandbox` section — whether TOOL subprocesses
+are wrapped and, when they are, the kernel hull they run under. It is
+deliberately **orthogonal** to the rules:
 
 ```lua
 {
   name = "audit",
   rules = { ... },                       -- the fine-grained gate (globs, per call, can ask)
-  sandbox = {                            -- the coarse hull (directories, kernel-enforced)
+  sandbox = {                            -- tool-process confinement
+    enabled = true,                      -- default; false runs tool subprocesses unwrapped
     binds = { { path = "${project}" },   -- mode defaults to "rw"
               { path = "/data", mode = "ro" } },
     network = false,                     -- default: tool sandboxes get no network
     tools = {                            -- per-tool overrides (exact tool names, no globs)
       ["weave:task_start"] = { network = true },
+      ["weave:grep"] = { enabled = false },
     },
   },
 }
 ```
 
 Rules speak globs, binds speak directories; neither is derived from the
-other. A preset without a section means project-rw/no-network, but the
+other. A preset without a section means enabled/project-rw/no-network, but the
 sandboxed builtins spell that out rather than leaning on it, so `[edit]` on
-one hands you a working template; explicit binds REPLACE the default (a
-preset binding only `/data` really does exclude the project). The
-`for_mode` tag and the whole `sandbox` section survive a round trip through
+one hands you a working template. `enabled = false` bypasses only tool
+subprocess wrapping; it does not alter or restart the agent sandbox. Explicit
+binds REPLACE the default (a preset binding only `/data` really does exclude
+the project). The `for_mode` tag and the whole `sandbox` section survive a
+round trip through
 the config window's editor — what you save is what you wrote.
-The one confusing combination — a non-deny rule
-whose resource no bind can reach (the gate says yes, the tool then dies at
-the kernel wall) — is flagged with a warning when the preset is saved or
-loaded.
+When the tool sandbox is enabled, the one confusing combination — a non-deny
+rule whose resource no bind can reach (the gate says yes, the tool then dies
+at the kernel wall) — is flagged with a warning when the preset is saved or
+loaded. There is no bind-reachability warning for an unwrapped tool.
 
 `sandbox.tools` is the escape hatch for one tool needing something the rest
-should not have: keys present in an override replace the global value, keys
-absent inherit it (above, tasks get the network while their binds stay the
-preset's). The builtin sandboxed presets use it for exactly one tool —
+should not have: `enabled`, `binds`, and `network` replace their global
+counterparts when present and inherit them when absent (above, tasks get the
+network while their binds stay the preset's, and grep runs unwrapped). A
+global `enabled = false` can likewise be overridden with `enabled = true`
+for one tool. The builtin scoped presets use overrides for one tool —
 `weave:web_fetch` runs with `network = true, binds = {}`, since fetching is
 the one job that needs the network and no filesystem at all, and nobody should
 have to grant the whole session network access to read a doc page. Session
 **elevation grants**, which `weave_request_access` writes when you approve it,
-are deliberately global: they widen every tool's hull,
-overridden ones included, since granting access answers "may we reach this
-at all". The `sandbox` section is orthogonal to the sandbox MODE in a second
+are deliberately global: path and network grants widen every tool's hull,
+overridden ones included, since granting access answers "may we reach this at
+all". An agent may also request `tool_sandbox = false`; approval makes every
+subsequent tool subprocess run unwrapped for the editor session, is shown and
+revocable in the permissions window, and still leaves the agent sandbox
+unchanged. The `sandbox` section is orthogonal to the sandbox MODE in a second
 sense too: with the mode off, nothing is wrapped at all and the section is
 inert; the rules still gate every call.
 
@@ -1053,10 +1062,11 @@ not a policy surface; all capability lives at the tool layer:
   paths that persist. `$NVIM` (nvim's raw RPC socket, where `nvim_exec_lua`
   would be a full escape) never enters the sandbox; the broker socket speaks
   scoped MCP and nothing else.
-- **Tool invocations** (tasks, searches) each run in their own sandbox
-  derived from the active preset's `sandbox` section on EVERY
-  spawn: only the listed binds, **network off by default**. A preset switch
-  or a granted elevation applies to the very next task — no restarts.
+- **Tool invocations** (tasks, searches) are resolved from the active preset's
+  `sandbox` section on EVERY spawn. They are sandboxed by default with only
+  the listed binds and no network; `enabled = false` globally or for that
+  exact tool returns its command unwrapped. A preset switch or an approved
+  session elevation applies to the very next task — no agent restart.
 - **Agentside permission requests are denied** by the sandboxed presets
   (`acp:* deny`), not auto-approved: the tools they gate cannot reach the
   real project anyway, and a denial on the first attempt redirects the

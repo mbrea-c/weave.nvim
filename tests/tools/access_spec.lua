@@ -1,7 +1,7 @@
 -- weave_request_access (rendered as w:request_access), the elevation tool (design-agent-sandbox-v2.md phase H):
 -- an accepted grant lands in the permission engine's overlays — a bind for
--- the kernel hull AND allow rules for the gate (folder), or the network
--- flag (tasks) — and applies to the next tool spawn with no restart.
+-- the kernel hull AND allow rules for the gate (folder), the network flag, or
+-- a tool-sandbox disable — and applies to the next tool spawn with no restart.
 
 local Access = require("weave.tools.access")
 local Gate = require("weave.tools.gate")
@@ -95,12 +95,24 @@ describe("weave_request_access", function()
     assert.is_true(Permissions.tool_sandbox().network)
   end)
 
+  it("can disable only the tool sandbox for the rest of the session", function()
+    assert.is_true(Permissions.tool_sandbox().enabled)
+    local answer = request({ tool_sandbox = false, reason = "run a container" })
+    assert.truthy(queued.request.toolCall.title:find("disable the tool sandbox", 1, true))
+    assert.truthy(queued.request.toolCall.title:find("run a container", 1, true))
+    answer("allow_once")
+    assert.is_true(Permissions.tool_sandbox_disabled())
+    assert.is_false(Permissions.tool_sandbox().enabled)
+    assert.equal("on", Permissions.current_mode())
+  end)
+
   it("declining grants nothing", function()
-    local answer = request({ path = "/data", network = true })
+    local answer = request({ path = "/data", network = true, tool_sandbox = false })
     local result = answer("reject_once")
     assert.is_true(result.isError)
     assert.same({}, Permissions.bind_grants())
     assert.is_false(Permissions.network_granted())
+    assert.is_false(Permissions.tool_sandbox_disabled())
   end)
 
   it("asks for nothing = an error, no prompt", function()
@@ -110,13 +122,16 @@ describe("weave_request_access", function()
   end)
 
   it("clear_overlay revokes elevation grants too", function()
-    local answer = request({ path = "/data", network = true })
+    local answer = request({ path = "/data", network = true, tool_sandbox = false })
     answer("allow_once")
     assert.is_true(#Permissions.bind_grants() > 0)
+    assert.is_true(Permissions.tool_sandbox_disabled())
     Permissions.clear_overlay()
     assert.same({}, Permissions.bind_grants())
     assert.is_false(Permissions.network_granted())
+    assert.is_false(Permissions.tool_sandbox_disabled())
     assert.is_false(Permissions.tool_sandbox().network)
+    assert.is_true(Permissions.tool_sandbox().enabled)
   end)
 
   it("no active session to ask: an honest refusal", function()

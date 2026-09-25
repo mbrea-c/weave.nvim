@@ -205,9 +205,10 @@ describe("view.permissions_window", function()
       for_mode = "on",
       rules = { { tool = "acp:*", decision = "deny", message = "use the weave tools" } },
       sandbox = {
+        enabled = false,
         binds = { { path = "${project}", mode = "rw" }, { path = "/data", mode = "ro" } },
         network = false,
-        tools = { ["weave:task_start"] = { network = true } },
+        tools = { ["weave:task_start"] = { enabled = true, network = true } },
       },
     }
     local parsed = assert(permissions_window.parse(table.concat(permissions_window.serialize(preset), "\n")))
@@ -217,9 +218,23 @@ describe("view.permissions_window", function()
     Permissions.save_preset(parsed)
     local saved = Permissions.get("netted")
     assert.equal("on", saved.for_mode)
+    assert.is_false(saved.sandbox.enabled)
     assert.equal("/data", saved.sandbox.binds[2].path)
+    assert.is_true(saved.sandbox.tools["weave:task_start"].enabled)
     assert.is_true(saved.sandbox.tools["weave:task_start"].network)
     assert.equal("use the weave tools", saved.rules[1].message)
+  end)
+
+  it("shows and revokes a session tool-sandbox disable grant", function()
+    Permissions.set_tool_sandbox_disabled(true)
+    local app = permissions_window.open()
+    assert.truthy(text_of(app.bufnr):find("tool sandbox disabled", 1, true))
+    press_on(app, "[revoke]")
+    vim.wait(1000, function()
+      return not Permissions.tool_sandbox_disabled()
+    end, 10)
+    assert.is_false(Permissions.tool_sandbox_disabled())
+    app.unmount()
   end)
 
   it("q closes the window", function()
