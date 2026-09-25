@@ -647,6 +647,30 @@ would make them harder to find, not easier.
 | `view` | `table` | see below | Default panel geometry |
 | `keys` | `table` | see [Keybinds](#keybinds) | Key(s) per named action |
 
+### Diagnostic logs
+
+With `debug = true`, general debug output is written to
+`stdpath("cache") .. "/weave_debug.log"`.
+
+Independently of `debug`, every ACP message or notification that Weave cannot
+recognize or apply is appended as JSONL to:
+
+```
+stdpath("state") .. "/weave/acp-unrecognized.jsonl"
+```
+
+On a default Linux setup this is
+`~/.local/state/nvim/weave/acp-unrecognized.jsonl`. Each line contains a UTC
+timestamp, a reason, the provider when known, and the raw message. The file is
+owner-only (`0600`) on POSIX systems. Raw ACP payloads can include prompts,
+paths, and source text, so treat it as private diagnostic data. It is safe to
+delete or truncate; Weave recreates it when the next unrecognized message
+arrives. To print the exact path for the current Neovim:
+
+```vim
+:lua print(vim.fn.stdpath("state") .. "/weave/acp-unrecognized.jsonl")
+```
+
 `view` sets the panel's default geometry; a per-call `open`/`toggle` opt (below)
 overrides it for that panel.
 

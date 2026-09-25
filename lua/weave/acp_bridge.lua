@@ -238,6 +238,7 @@ local function apply_session_update(store, update, restoring)
     })
   else
     -- mode/model/info updates are config-plane, not transcript.
+    Logger.unrecognized_acp("unhandled_session_update", update)
     Logger.debug("acp_bridge: unhandled session update '" .. tostring(kind) .. "'")
   end
 end

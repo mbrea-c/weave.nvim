@@ -82,4 +82,85 @@ function Logger.debug_to_file(...)
   end
 end
 
+--- @return string
+function Logger.unrecognized_acp_path()
+  return vim.fs.joinpath(vim.fn.stdpath("state"), "weave", "acp-unrecognized.jsonl")
+end
+
+local reported_acp_log_failure = false
+
+--- @param path string
+--- @param err any
+local function report_acp_log_failure(path, err)
+  if reported_acp_log_failure then
+    return
+  end
+  reported_acp_log_failure = true
+  Logger.notify(
+    ("Failed to write unrecognized ACP log %s: %s"):format(path, tostring(err)),
+    vim.log.levels.WARN
+  )
+end
+
+--- Persist a wire message that Weave could not recognize or apply.
+---
+--- This log is intentionally independent of Config.debug: unknown protocol
+--- traffic is rare and is exactly the evidence needed to support a new provider
+--- or ACP extension. JSONL keeps each raw message independently parseable.
+--- @param reason string
+--- @param message any
+--- @param provider? string
+--- @return boolean ok
+--- @return string? err
+function Logger.unrecognized_acp(reason, message, provider)
+  local path = Logger.unrecognized_acp_path()
+  local record = {
+    version = 1,
+    timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    reason = reason,
+    provider = provider,
+    message = message,
+  }
+
+  local encoded_ok, encoded = pcall(vim.json.encode, record)
+  if not encoded_ok then
+    report_acp_log_failure(path, encoded)
+    return false, tostring(encoded)
+  end
+
+  local mkdir_ok, mkdir_err = pcall(vim.fn.mkdir, vim.fs.dirname(path), "p")
+  if not mkdir_ok then
+    report_acp_log_failure(path, mkdir_err)
+    return false, tostring(mkdir_err)
+  end
+
+  local file, open_err = io.open(path, "a")
+  if not file then
+    report_acp_log_failure(path, open_err)
+    return false, tostring(open_err)
+  end
+
+  -- Unknown frames can contain prompts, paths, and source text. Tighten the
+  -- file before writing the first byte rather than relying on the user's umask.
+  local uv = vim.uv or vim.loop
+  if vim.fn.has("win32") == 0 then
+    local chmod_ok, chmod_err = uv.fs_chmod(path, 384)
+    if not chmod_ok then
+      file:close()
+      report_acp_log_failure(path, chmod_err)
+      return false, tostring(chmod_err)
+    end
+  end
+
+  local wrote, write_err = file:write(encoded, "\n")
+  local closed, close_err = file:close()
+  if not wrote or not closed then
+    local err = write_err or close_err or "unknown write error"
+    report_acp_log_failure(path, err)
+    return false, tostring(err)
+  end
+
+  return true
+end
+
 return Logger

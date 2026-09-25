@@ -75,11 +75,12 @@ agent-initiated switch. Same `else` branch as above.
 ### 5. Unknown incoming REQUESTS get no error reply — robustness
 
 `_handle_notification` routes any message with a `method` (even one carrying an
-`id`, i.e. a request) and, for anything unrecognised, only `Logger.notify`s
-(`acp_client.lua` ~line 311). It should answer JSON-RPC `-32601 method not found`
-so an agent doesn't hang on an unhandled request. Latent — opencode respects our
-advertised caps, so it wasn't triggered — but any agent that sends an
-out-of-spec or newer request would stall.
+`id`, i.e. a request). For anything unrecognised it preserves the raw frame in
+the unrecognized-ACP log and calls `Logger.notify`, but it still does not reply.
+It should answer JSON-RPC `-32601 method not found` so an agent doesn't hang on
+an unhandled request. Latent: opencode respects our advertised caps, so it
+wasn't triggered, but any agent that sends an out-of-spec or newer request
+would stall.
 
 ### 6. Unused agent session capabilities — minor
 

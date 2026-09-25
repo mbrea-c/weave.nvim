@@ -20,6 +20,16 @@ local KNOWN_ACP_KINDS = {
   switch_mode = true,
 }
 
+--- @param client weave.acp.ACPClient
+--- @param reason string
+--- @param message any
+local function log_unrecognized(client, reason, message)
+  local provider = client.provider_config
+    and (client.provider_config.name or client.provider_config.command)
+    or nil
+  Logger.unrecognized_acp(reason, message, provider)
+end
+
 --- Data fields set in the constructor. Separated from the full class
 --- so LuaLS validates instance fields without requiring methods that
 --- live on the prototype via __index.
@@ -372,16 +382,18 @@ function ACPClient:_dispatch_message(message)
   -- Check if this is a notification (has method but no id, or has both method and id for notifications)
   if message.method and not message.result and not message.error then
     -- This is a notification
-    self:_handle_notification(message.id, message.method, message.params)
+    self:_handle_notification(message.id, message.method, message.params, message)
   elseif message.id and (message.result or message.error) then
     local callback = self.callbacks[message.id]
     if callback then
       self.callbacks[message.id] = nil
       callback(message.result, message.error)
     else
+      log_unrecognized(self, "unmatched_response_id", message)
       Logger.notify("No callback found for response id: " .. tostring(message.id) .. "\n\n" .. vim.inspect(message))
     end
   else
+    log_unrecognized(self, "unknown_message_type", message)
     Logger.notify("Unknown message type: " .. vim.inspect(message))
   end
 end
@@ -389,7 +401,8 @@ end
 --- @param message_id number
 --- @param method string
 --- @param params table
-function ACPClient:_handle_notification(message_id, method, params)
+--- @param raw_message? weave.acp.ResponseRaw
+function ACPClient:_handle_notification(message_id, method, params, raw_message)
   if method == "session/update" then
     self:__handle_session_update(params)
   elseif method == "session/request_permission" then
@@ -398,6 +411,11 @@ function ACPClient:_handle_notification(message_id, method, params)
   elseif method == "fs/read_text_file" or method == "fs/write_text_file" then
     Logger.debug(string.format("Received '%s' notification, ignoring it", method))
   else
+    log_unrecognized(self, "unknown_notification_method", raw_message or {
+      id = message_id,
+      method = method,
+      params = params,
+    })
     Logger.notify("Unknown notification method: " .. method)
   end
 end
@@ -409,11 +427,13 @@ function ACPClient:__handle_session_update(params)
   local update = params.update
 
   if not session_id then
+    log_unrecognized(self, "invalid_session_update", params)
     Logger.notify("Received session/update without sessionId")
     return
   end
 
   if not update then
+    log_unrecognized(self, "invalid_session_update", params)
     Logger.notify("Received session/update without update data")
     return
   end
@@ -421,15 +441,16 @@ function ACPClient:__handle_session_update(params)
   local session_update_type = update.sessionUpdate
 
   if session_update_type == "tool_call" then
-    update.kind = update.kind or "other"
-    update.status = update.status or "pending"
-
-    if not KNOWN_ACP_KINDS[update.kind] then
+    if update.kind and not KNOWN_ACP_KINDS[update.kind] then
       -- Using notify intentionally so unknown kinds from providers we don't
-      -- use daily surface loudly enough to get support added
+      -- use daily surface loudly enough to get support added. Log before adding
+      -- defaults so the diagnostic record remains the raw provider payload.
+      log_unrecognized(self, "unknown_tool_call_kind", params)
       Logger.notify("Unknown ACP tool call kind: " .. tostring(update.kind), vim.log.levels.WARN)
     end
 
+    update.kind = update.kind or "other"
+    update.status = update.status or "pending"
     self:__handle_tool_call(session_id, update)
   elseif session_update_type == "tool_call_update" then
     self:__handle_tool_call_update(session_id, update)
