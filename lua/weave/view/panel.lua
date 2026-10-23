@@ -21,7 +21,8 @@ local ui = require("fibrous.inline.components")
 local TranscriptView = require("weave.view.transcript")
 local Transcript = TranscriptView.Transcript
 local Prompt = require("weave.view.prompt").Prompt
-local Sidebar = require("weave.view.sidebar").Sidebar
+local SidebarView = require("weave.view.sidebar")
+local Sidebar = SidebarView.Sidebar
 local Config = require("weave.config")
 local Keys = require("weave.keys")
 
@@ -90,6 +91,7 @@ local function Panel(_, props)
           session = props.session,
           session_settings = props.session_settings,
           on_details = props.on_session_details,
+          on_overview = props.on_overview,
         },
       },
     },
@@ -132,6 +134,13 @@ function M.open(opts)
   local sidebar_width = math.min(opts.sidebar_width or Config.view.sidebar_width, math.floor(width / 2))
   local prompt_height = opts.prompt_height or Config.view.prompt_height
 
+  local function open_overview()
+    return SidebarView.open_overview({
+      store = store, prefs = prefs, session = opts.session,
+      session_settings = opts.session_settings, on_details = opts.on_session_details,
+    })
+  end
+
   local origin_win = vim.api.nvim_get_current_win()
 
   -- Filled by the on_create hooks during the mount's first (synchronous)
@@ -147,6 +156,7 @@ function M.open(opts)
     on_submit = on_submit,
     on_steer = on_steer,
     on_session_details = opts.on_session_details,
+    on_overview = open_overview,
     session = opts.session,
     session_settings = opts.session_settings,
     on_transcript_create = function(bufnr, winid)
@@ -157,9 +167,6 @@ function M.open(opts)
     end,
   }, {
     split = { direction = "vertical", position = "right", size = width },
-    -- render into the pane's own buffer rather than under a covering float:
-    -- one fewer window in the layout, and a resize relayouts instead of
-    -- moving a float that vim has already redrawn.
     -- render into the pane's own buffer rather than under a covering float:
     -- one fewer window in the layout (measured: 5 -> 4), and a resize
     -- relayouts the canvas instead of moving a float vim already redrew.
@@ -273,6 +280,7 @@ function M.open(opts)
     Keys.map(bufnr, "open_settings", function()
       require("weave.view.settings_window").open({ view = prefs, session = opts.session_settings })
     end)
+    Keys.map(bufnr, "open_overview", open_overview)
     Keys.map(bufnr, "cycle_permission_mode", on_cycle)
     Keys.map(bufnr, "pick_model", on_pick_model)
     Keys.map(bufnr, "pick_mode", on_pick_mode)

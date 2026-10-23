@@ -122,13 +122,30 @@ The panel is **one docked pane** with three regions:
   line-number gutter), and permission requests. It scrolls independently. It's a fibrous *container*: `<CR>` steps
   into it, `h/j/k/l` at its edges step back out, `<C-d>/<C-u>` page inside.
 - **Sidebar** — session metadata, view toggles, the active permission preset,
-  the task list, running terminal tasks, your pending flush (unsent comments
-  and edits), and any pending permission request.
+  the task list, running terminal tasks, managed MCP servers, your pending
+  flush (unsent comments and edits), and any pending permission request.
 - **Prompt** — the input box. Its border colour reflects the active permission
   preset; an animated indicator shows when the agent is working.
 
 Closing the pane (`:q` / `<C-w>q`) closes the panel but **leaves the session
 running** — reopen with `:Weave`.
+
+### Overview
+
+The **Overview** button stays at the bottom of the sidebar, even when the window
+is too short for its contents. The body above it is clipped in the same buffer,
+not independently scrollable, and hidden controls cannot receive hover or
+activation or enter Tab/jump navigation.
+
+Activate the button or press **`;;o`** in normal mode anywhere in the panel
+(including the transcript and prompt input) to open a scrollable popup containing
+every sidebar section. Its controls use the same live session and settings
+stores, including the MCP browser links. Long plans retain their full-list link.
+Scroll normally; `q`/`<Esc>` closes, and moving focus outside dismisses it.
+
+The shortcut is the named action `open_overview`; rebind or disable it through
+`keys.open_overview`. Disabling the shortcut leaves the footer button available.
+This layout requires fibrous's inline `overflow = "hidden"` support.
 
 ### Keymaps (inside the panel)
 
@@ -151,6 +168,7 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | `;;c` | `toggle_conceal` | Toggle markdown prettifying (conceal) |
 | `;;f` | `toggle_follow` | Toggle follow-streaming (auto-scroll) |
 | `;;S` | `open_settings` | Open the [settings window](#settings) |
+| `;;o` | `open_overview` | Open the scrollable [Overview popup](#overview) |
 | `;;p` | `cycle_permission_mode` | Cycle permission preset |
 | `;;m` / `;;M` | `pick_model` / `pick_mode` | Pick model / pick mode |
 | `;;1` … `;;9` | `permission_prefix` + digit | Answer a permission request with option N |

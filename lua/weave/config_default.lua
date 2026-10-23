@@ -94,6 +94,7 @@ local ConfigDefault = {
     toggle_conceal = ";;c",
     toggle_follow = ";;f",
     open_settings = ";;S",
+    open_overview = ";;o",
     cycle_permission_mode = ";;p",
     pick_model = ";;m",
     pick_mode = ";;M",

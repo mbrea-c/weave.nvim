@@ -560,21 +560,12 @@ function M.PermissionsSection(ctx, props)
   return { comp = ui.col, props = {}, children = rows }
 end
 
---- Pure composition — every section subscribes to its own store slice.
---- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.settings.Store, session?: table, session_settings?: weave.settings.Store, on_details?: fun() }
-function M.Sidebar(_, props)
+-- Shared live sections for the bounded sidebar and its scrollable overview.
+--- @param props { sidebar_width?: integer, store: weave.store.SessionStore, prefs: weave.settings.Store, session?: table, session_settings?: weave.settings.Store, on_details?: fun() }
+function M.Sections(_, props)
   return {
     comp = ui.col,
-    props = {
-      gap = 1,
-      width = props.sidebar_width,
-      style = {
-        padding = { x = 1 },
-        border = {
-          left = true,
-        },
-      },
-    },
+    props = { gap = 1 },
     children = {
       { comp = M.SessionSection, props = { store = props.store, on_details = props.on_details } },
       { comp = M.UsageSection, props = { store = props.store } },
@@ -593,6 +584,63 @@ function M.Sidebar(_, props)
       -- everything.
       { comp = Feedback.Section, props = { width = props.sidebar_width, session = props.session } },
       { comp = M.PermissionsSection, props = { store = props.store } },
+    },
+  }
+end
+
+--- Open all sidebar sections in a natively scrolling popup.
+--- @param props table The same stores and callbacks as Sidebar.
+--- @return table app
+function M.open_overview(props)
+  local width = math.min(80, math.max(1, vim.o.columns - 6))
+  local function Overview()
+    return {
+      comp = ui.col,
+      props = { gap = 1, style = { padding = { x = 1 } } },
+      children = {
+        header("Overview"),
+        { comp = M.Sections, props = vim.tbl_extend("force", props, { sidebar_width = width }) },
+      },
+    }
+  end
+  local app = require("fibrous.inline.mount").floating(Overview, {}, {
+    width = width,
+    height = math.min(32, math.max(1, vim.o.lines - 6)),
+    mode = "scroll",
+    border = "rounded",
+    backdrop = true,
+  })
+  return require("weave.view.float").chrome(app, {
+    close = app.unmount,
+    desc = "weave: close overview",
+  })
+end
+
+--- Keep the footer in normal layout while clipping the growing body above it.
+--- @param props { sidebar_width: integer, store: weave.store.SessionStore, prefs: weave.settings.Store, session?: table, session_settings?: weave.settings.Store, on_details?: fun(), on_overview?: fun() }
+function M.Sidebar(_, props)
+  return {
+    comp = ui.col,
+    props = {
+      width = props.sidebar_width,
+      style = { padding = { x = 1 }, border = { left = true } },
+    },
+    children = {
+      {
+        comp = ui.col,
+        props = { grow = 1, overflow = "hidden" },
+        children = { { comp = M.Sections, props = props } },
+      },
+      {
+        comp = ui.button,
+        props = {
+          label = "Overview",
+          height = 1,
+          theme = false,
+          style = { text_hl = "Title", _hover = { hl = "FibrousHover" } },
+          on_press = props.on_overview or function() M.open_overview(props) end,
+        },
+      },
     },
   }
 end

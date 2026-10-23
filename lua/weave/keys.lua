@@ -50,6 +50,7 @@ M.ACTIONS = {
   { name = "toggle_conceal", scope = "panel", desc = "toggle markdown conceal" },
   { name = "toggle_follow", scope = "panel", desc = "toggle follow streaming" },
   { name = "open_settings", scope = "panel", desc = "open the settings window" },
+  { name = "open_overview", scope = "panel", desc = "open the overview" },
   { name = "cycle_permission_mode", scope = "panel", desc = "cycle permission preset" },
   { name = "pick_model", scope = "panel", desc = "pick model" },
   { name = "pick_mode", scope = "panel", desc = "pick mode" },
