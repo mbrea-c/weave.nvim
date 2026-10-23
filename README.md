@@ -122,7 +122,7 @@ The panel is **one docked pane** with three regions:
   line-number gutter), and permission requests. It scrolls independently. It's a fibrous *container*: `<CR>` steps
   into it, `h/j/k/l` at its edges step back out, `<C-d>/<C-u>` page inside.
 - **Sidebar** — session metadata, view toggles, the active permission preset,
-  the task list, running terminal tasks, managed MCP servers, your pending
+  the task list, running terminal tasks, MCP servers, your pending
   flush (unsent comments and edits), and any pending permission request.
 - **Prompt** — the input box. Its border colour reflects the active permission
   preset; an animated indicator shows when the agent is working.
@@ -329,11 +329,23 @@ conversation in the panel.
 ### MCP servers
 
 The sidebar's **MCP** section shows the editor-hosted clankbox server alongside
-external MCP servers managed by Weave. Activate its header to open the full list,
-then select a server to inspect its tools. Selecting a sidebar server opens its
-page directly. Tool details include descriptions, input/output schemas,
-annotations, and other advertised fields. Use **Back to MCP list** to return to
-the list.
+external MCP servers managed by Weave. Each compact row has a colored status
+indicator and a short status label; long names are shortened with an ellipsis.
+Activate its header to open the full list, or select a sidebar server to open its
+page directly.
+
+The browser separates the server list, each server's connections and tool
+catalogues, and individual tool details. Select a tool to read its description,
+input/output schemas, and annotations. Schemas are indented, syntax-highlighted
+when a JSON parser is available, and wrapped so long values remain readable.
+**Full definition** expands the complete advertised payload, including extension
+fields. Long catalogue previews are shortened, not the definitions themselves.
+
+Use **Tab** / **Shift-Tab** to navigate and **Enter** to select. **Backspace** or
+the **Back** control returns to the previous page, restoring your scroll and
+cursor position. The popup fits short pages, grows for longer ones, and stays
+within the editor when resized. Scroll normally; the standard popup close keys
+and dismiss-on-blur behavior apply.
 
 The internal **clankbox** entry is marked **editor-hosted**. It lists the live
 shared registry, including Weave's tools and tools contributed by other plugins.
@@ -342,8 +354,10 @@ control. Only an already-loaded host is inspected; browsing does not load
 clankbox, create a broker listener, or execute any tools. Scoped agent connections
 may expose only a subset of this registry.
 
-External server pages also show their process instances, status, PID, and elapsed
-runtime.
+External server pages group tools and controls by connection, with process status,
+PID, and human-readable uptime or final runtime. Failed connections and errors
+are highlighted. **Kill** is shown only for running or starting processes;
+stopped connections can still be restarted.
 
 **Kill** stops one process instance. **Restart** starts a replacement and
 repeats MCP initialization over the existing agent connection. Pending requests
