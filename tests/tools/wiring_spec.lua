@@ -108,6 +108,61 @@ describe("tools wiring", function()
     return capture
   end
 
+  it("inspects an already loaded editor host without creating a broker or tool calls", function()
+    local requests = {}
+    local definitions = {
+      { name = "weave_read", description = "Read a live buffer",
+        inputSchema = { type = "object", properties = { path = { type = "string" } } } },
+      { name = "plugin_tool", description = "Another plugin",
+        inputSchema = { type = "object" }, annotations = { readOnlyHint = true } },
+    }
+    package.loaded.clankbox = {
+      handle = function(request)
+        requests[#requests + 1] = request
+        return { jsonrpc = "2.0", id = request.id, result = { tools = definitions } }
+      end,
+    }
+    local info = Tools.hosted_server()
+    assert.equal("clankbox", info.name)
+    assert.equal("internal", info.kind)
+    assert.same(definitions, info.tools)
+    assert.is_nil(info.instances)
+    assert.is_nil(info.command)
+    assert.is_nil(info.pid)
+    assert.equal(1, #requests)
+    assert.equal("tools/list", requests[1].method)
+  end)
+
+  it("does not load or fabricate a clankbox host just to inspect it", function()
+    package.loaded.clankbox = nil
+    local loads = 0
+    package.preload.clankbox = function() loads = loads + 1; return fake_clankbox() end
+    assert.is_nil(Tools.hosted_server())
+    assert.equal(0, loads)
+  end)
+
+  it("keeps a hosted entry visible if reading its tool list fails", function()
+    package.loaded.clankbox = { handle = function() error("discovery failed") end }
+    local info = Tools.hosted_server()
+    assert.equal("internal", info.kind)
+    assert.same({}, info.tools)
+    assert.truthy(info.error:find("discovery failed", 1, true))
+  end)
+
+  it("notifies observers when the internal suite is registered, and unsubscribes", function()
+    package.loaded.clankbox = nil
+    package.preload.clankbox = function() return fake_clankbox() end
+    local changes = 0
+    local unsubscribe = Tools.subscribe(function() changes = changes + 1 end)
+    Tools.ensure_registered()
+    Tools.ensure_registered()
+    unsubscribe()
+    assert.equal(1, changes)
+    Tools._reset()
+    Tools.ensure_registered()
+    assert.equal(1, changes)
+  end)
+
   it("register_into namespaces every weave tool and exposes no bare aliases", function()
     local server = fake_clankbox()
     Tools.register_into(server)

@@ -328,12 +328,22 @@ conversation in the panel.
 
 ### MCP servers
 
-The sidebar's **MCP** section shows external MCP servers managed by Weave.
-Activate its header to open the full list, then select a server to inspect its
-process instances and discovered tools. Selecting a sidebar server opens its
-page directly. Pages include process status, PID, elapsed runtime, and each
-tool's description, input/output schemas, annotations, and other advertised
-fields. Use **Back to MCP list** to return to the list.
+The sidebar's **MCP** section shows the editor-hosted clankbox server alongside
+external MCP servers managed by Weave. Activate its header to open the full list,
+then select a server to inspect its tools. Selecting a sidebar server opens its
+page directly. Tool details include descriptions, input/output schemas,
+annotations, and other advertised fields. Use **Back to MCP list** to return to
+the list.
+
+The internal **clankbox** entry is marked **editor-hosted**. It lists the live
+shared registry, including Weave's tools and tools contributed by other plugins.
+It has no standalone process, so there is no PID, runtime, Kill, or Restart
+control. Only an already-loaded host is inspected; browsing does not load
+clankbox, create a broker listener, or execute any tools. Scoped agent connections
+may expose only a subset of this registry.
+
+External server pages also show their process instances, status, PID, and elapsed
+runtime.
 
 **Kill** stops one process instance. **Restart** starts a replacement and
 repeats MCP initialization over the existing agent connection. Pending requests
@@ -341,12 +351,12 @@ fail when their process is stopped, including calls still awaiting approval;
 their permission prompts are removed. Initialization has a ten-second timeout.
 Each agent connection has its own process instance and controls.
 
-Servers appear after Weave creates their proxy listener; tool definitions
-appear after the agent requests MCP tool discovery. Stopped instances retain
-their last discovered definitions. Disconnected instances are read-only.
-This list covers configured external servers routed through Weave's proxy.
-The editor-hosted clankbox suite and servers started privately by a provider
-do not have managed subprocesses here.
+External servers appear after Weave creates their proxy listener; their tool
+definitions appear after the agent requests MCP tool discovery. Stopped instances
+retain their last discovered definitions. Disconnected instances are read-only.
+The internal entry appears when clankbox is loaded and also refreshes when Weave
+registers its suite after the panel opens. Servers started privately by a provider
+are not tracked here.
 
 ### Session details
 

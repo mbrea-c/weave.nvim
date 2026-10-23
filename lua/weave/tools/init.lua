@@ -10,6 +10,21 @@ local Config = require("weave.config")
 local M = {}
 
 local registered = false
+local subscribers = {}
+
+--- Observe successful registration without starting the shared host.
+function M.subscribe(fn)
+  subscribers[#subscribers + 1] = fn
+  return function()
+    for i, value in ipairs(subscribers) do
+      if value == fn then table.remove(subscribers, i); break end
+    end
+  end
+end
+
+local function notify()
+  for _, fn in ipairs({ unpack(subscribers) }) do fn() end
+end
 
 --- Public MCP names are prefixed because some agents flatten MCP tools and
 --- their builtins into one namespace. Keep the short name as weave's internal
@@ -170,7 +185,31 @@ function M.ensure_registered()
   end
   M.register_into(clankbox)
   registered = true
+  notify()
   return true
+end
+
+--- Inspect the loaded editor-hosted registry. Do not require clankbox or
+--- create a broker just to display it. This is the host's full registry;
+--- individual scoped agent connections may expose only a subset of its tools.
+--- @return table|nil info
+function M.hosted_server()
+  local host = package.loaded.clankbox
+  if type(host) ~= "table" or type(host.handle) ~= "function" then return nil end
+  local info = { key = "internal:clankbox", name = "clankbox", kind = "internal", tools = {} }
+  local ok, response = pcall(host.handle, {
+    jsonrpc = "2.0", id = "weave-mcp-inspector", method = "tools/list",
+  })
+  if not ok then
+    info.error = tostring(response)
+  elseif type(response) ~= "table" or type(response.result) ~= "table"
+    or type(response.result.tools) ~= "table" then
+    info.error = type(response) == "table" and response.error
+      and vim.inspect(response.error) or "Unable to read the editor-hosted tool registry"
+  else
+    info.tools = response.result.tools
+  end
+  return info
 end
 
 local listener = nil
