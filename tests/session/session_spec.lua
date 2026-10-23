@@ -136,6 +136,68 @@ describe("session start", function()
     assert.equal("m1", session:get_store().state.meta.model)
   end)
 
+  it("recaptures agent-side config_option_update changes", function()
+    local session, client = started({
+      sessionId = "s1",
+      configOptions = {
+        {
+          id = "model-opt",
+          category = "model",
+          name = "Model",
+          currentValue = "m1",
+          options = {
+            { value = "m1", name = "One" },
+            { value = "m2", name = "Two" },
+          },
+        },
+        {
+          id = "effort-opt",
+          category = "thought_level",
+          name = "Thinking effort",
+          currentValue = "low",
+          options = {
+            { value = "low", name = "Low" },
+            { value = "high", name = "High" },
+          },
+        },
+      },
+    })
+
+    client.handlers.on_session_update({
+      sessionUpdate = "config_option_update",
+      configOptions = {
+        {
+          id = "model-opt",
+          category = "model",
+          name = "Model",
+          currentValue = "m2",
+          options = {
+            { value = "m1", name = "One" },
+            { value = "m2", name = "Two" },
+          },
+        },
+        {
+          id = "effort-opt",
+          category = "thought_level",
+          name = "Thinking effort",
+          currentValue = "high",
+          options = {
+            { value = "low", name = "Low" },
+            { value = "high", name = "High" },
+          },
+        },
+      },
+    })
+
+    local kinds = session:config_kinds()
+    assert.equal(2, #kinds)
+    assert.equal("model", kinds[1].key)
+    assert.equal("m2", kinds[1].current)
+    assert.equal("thought_level", kinds[2].key)
+    assert.equal("high", kinds[2].current)
+    assert.equal("m2", session:get_store().state.meta.model)
+  end)
+
   it("survives a config option that omits category (keys on id)", function()
     -- Some agents send configOptions without the spec's `category` field. That
     -- used to nil-index config[key] inside the scheduled create_session

@@ -70,6 +70,7 @@ describe("view.session_modal", function()
     local b = Registry.add({ provider = "prov-b", get_instance = get_instance })
     pump()
     a.session:submit("fix the panel bug please")
+    b.session:get_store():set_meta({ title = "Agent-provided title" })
     Registry.select(a.key)
 
     local handle = SessionModal.open({ on_select = function() end })
@@ -77,7 +78,8 @@ describe("view.session_modal", function()
     assert.truthy(text:find("prov%-a"))
     assert.truthy(text:find("prov%-b"))
     assert.truthy(text:find("fix the panel bug please", 1, true))
-    assert.truthy(text:find("(no messages yet)", 1, true))
+    assert.truthy(text:find("Agent-provided title", 1, true))
+    assert.falsy(text:find("(no messages yet)", 1, true))
 
     -- the ● marker sits on the selected session's row, and only there
     local marked_row = locate(handle.bufnr, "●")

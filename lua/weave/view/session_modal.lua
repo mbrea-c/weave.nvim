@@ -25,11 +25,14 @@ local TITLE_CHARS = 32
 local function row_label(entry)
   local state = entry.session:get_store().state
   local provider = state.meta.provider or entry.provider
-  local title = "(no messages yet)"
-  for _, e in ipairs(state.entries) do
-    if e.kind == "user" then
-      title = (e.text:gsub("%s+", " "))
-      break
+  local title = state.meta.title
+  if not title or title == "" then
+    title = "(no messages yet)"
+    for _, e in ipairs(state.entries) do
+      if e.kind == "user" then
+        title = (e.text:gsub("%s+", " "))
+        break
+      end
     end
   end
   if vim.fn.strchars(title) > TITLE_CHARS then

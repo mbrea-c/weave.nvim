@@ -62,7 +62,13 @@ end
 function M.SessionSection(ctx, props)
   local state = use_store(ctx, props.store)
   local lines = {}
-  local labels = { { "provider", "Provider" }, { "agent", "Agent" }, { "model", "Model" }, { "mode", "Mode" } }
+  local labels = {
+    { "title", "Title" },
+    { "provider", "Provider" },
+    { "agent", "Agent" },
+    { "model", "Model" },
+    { "mode", "Mode" },
+  }
   for _, pair in ipairs(labels) do
     local value = state.meta[pair[1]]
     if value then
@@ -165,9 +171,19 @@ function M.UsageSection(ctx, props)
   local usage = state.usage
   local rows = { header("Usage") }
   if usage then
+    local fraction, figure, pct
     if usage.used and usage.size and usage.size > 0 then
-      local fraction = usage.used / usage.size
-      local pct = math.floor(fraction * 100 + 0.5)
+      fraction = usage.used / usage.size
+      pct = math.floor(fraction * 100 + 0.5)
+      figure = string.format("%s / %s (%d%%)", commas(usage.used), commas(usage.size), pct)
+    elseif type(usage.percentage) == "number" then
+      local percentage = math.min(math.max(usage.percentage, 0), 100)
+      fraction = percentage / 100
+      pct = math.floor(percentage + 0.5)
+      figure = string.format("%g%% context", percentage)
+    end
+
+    if fraction then
       local fill_hl = bar_hl(pct)
       -- the fill bar, stretched to the section width by `fill` (re-sized on
       -- resize with no re-render, like the water indicator). Every cell — lit,
@@ -185,7 +201,7 @@ function M.UsageSection(ctx, props)
       rows[#rows + 1] = {
         comp = ui.label,
         props = {
-          text = string.format("%s / %s (%d%%)", commas(usage.used), commas(usage.size), pct),
+          text = figure,
           align_self = "center",
         },
       }

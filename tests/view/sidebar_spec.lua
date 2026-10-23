@@ -216,9 +216,15 @@ describe("view.sidebar", function()
     assert.equal(bg(Theme.USAGE_TRACK_HL), bg(Theme.USAGE_BAR_HL.low))
     assert.equal(bg(Theme.USAGE_TRACK_HL), bg(Theme.USAGE_BAR_HL.high))
 
-    -- only a window size gives a bar; a raw token count stays a plain line
-    store:set_usage({ used = 1234 })
+    -- Kiro reports a percentage without token totals; it still gets the bar.
+    store:set_usage({ percentage = 12.5 })
     local t = text_of(handle.bufnr)
+    assert.truthy(t:find("12.5% context", 1, true))
+    assert.truthy(t:find("█", 1, true))
+
+    -- only a window size gives the standard bar; a raw token count stays a plain line
+    store:set_usage({ used = 1234 })
+    t = text_of(handle.bufnr)
     assert.truthy(t:find("Tokens: 1,234", 1, true))
     assert.falsy(t:find("█", 1, true))
 
@@ -232,8 +238,15 @@ describe("view.sidebar", function()
     local store = SessionStore:new()
     local handle = mount_sidebar(store)
 
-    store:set_meta({ provider = "Kiro ACP", agent = "kiro 1.0", model = "sonnet", mode = "dev" })
+    store:set_meta({
+      title = "Implement ACP updates",
+      provider = "Kiro ACP",
+      agent = "kiro 1.0",
+      model = "sonnet",
+      mode = "dev",
+    })
     local text = text_of(handle.bufnr)
+    assert.truthy(text:find("Title: Implement ACP updates", 1, true))
     assert.truthy(text:find("Provider: Kiro ACP", 1, true))
     assert.truthy(text:find("Agent: kiro 1.0", 1, true))
     assert.truthy(text:find("Model: sonnet", 1, true))

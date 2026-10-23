@@ -200,7 +200,8 @@ end
 --- @param store weave.store.SessionStore
 --- @param update weave.acp.SessionUpdateMessage
 --- @param restoring boolean
-local function apply_session_update(store, update, restoring)
+--- @param on_config_options_update? fun(config_options: weave.acp.ConfigOption[])
+local function apply_session_update(store, update, restoring, on_config_options_update)
   local kind = update.sessionUpdate
 
   if kind == "agent_message_chunk" then
@@ -236,8 +237,47 @@ local function apply_session_update(store, update, restoring)
       size = tonumber(update.size),
       cost = type(update.cost) == "table" and update.cost or nil,
     })
+  elseif kind == "session_info_update" then
+    -- Standard session metadata is sparse: merge only the fields this update
+    -- actually carries. Kiro additionally reports context pressure under its
+    -- namespaced metadata instead of ACP's usage_update.
+    local meta = {}
+    if type(update.title) == "string" then
+      meta.title = update.title
+    end
+    if type(update.updatedAt) == "string" then
+      meta.updated_at = update.updatedAt
+    end
+    if next(meta) then
+      store:set_meta(meta)
+    end
+
+    local update_meta = type(update._meta) == "table" and update._meta or nil
+    local kiro = update_meta and type(update_meta.kiro) == "table" and update_meta.kiro or nil
+    local context_usage = kiro and type(kiro.context_usage) == "table" and kiro.context_usage or nil
+    if not context_usage and kiro and kiro.type == "context_usage" and type(kiro.payload) == "table" then
+      context_usage = kiro.payload
+    end
+    if context_usage and type(context_usage.payload) == "table" then
+      context_usage = context_usage.payload
+    end
+    if context_usage then
+      local nested = type(context_usage.contextUsage) == "table" and context_usage.contextUsage or nil
+      local percentage = tonumber(context_usage.usagePercentage)
+        or (nested and tonumber(nested.usagePercentage) or nil)
+      local breakdown = type(context_usage.breakdown) == "table" and vim.deepcopy(context_usage.breakdown) or nil
+      if percentage ~= nil or breakdown ~= nil then
+        store:set_usage({ percentage = percentage, breakdown = breakdown })
+      end
+    end
+  elseif kind == "config_option_update" then
+    -- The agent may change model/mode/effort itself. Session owns the live
+    -- ConfigKind objects and republishes their model/mode summary into the
+    -- store; the bridge only recognizes and routes this config-plane update.
+    if type(update.configOptions) == "table" and on_config_options_update then
+      on_config_options_update(update.configOptions)
+    end
   else
-    -- mode/model/info updates are config-plane, not transcript.
     Logger.unrecognized_acp("unhandled_session_update", update)
     Logger.debug("acp_bridge: unhandled session update '" .. tostring(kind) .. "'")
   end
@@ -245,9 +285,10 @@ end
 
 --- Build the ACP client handlers backed by a session store.
 --- @param store weave.store.SessionStore
---- @param opts? { is_restoring?: fun(): boolean }
+--- @param opts? { is_restoring?: fun(): boolean, on_config_options_update?: fun(config_options: weave.acp.ConfigOption[]) }
 ---  is_restoring: predicate read per-update; when it returns true
 ---  (load_session replay in flight) status mutations are skipped.
+---  on_config_options_update: lets Session recapture agent-side config changes.
 --- @return weave.acp.ClientHandlers handlers
 function AcpBridge.build_handlers(store, opts)
   opts = opts or {}
@@ -258,7 +299,7 @@ function AcpBridge.build_handlers(store, opts)
   --- @type weave.acp.ClientHandlers
   local handlers = {
     on_session_update = function(update)
-      apply_session_update(store, update, is_restoring())
+      apply_session_update(store, update, is_restoring(), opts.on_config_options_update)
     end,
 
     on_tool_call = function(tool_call)

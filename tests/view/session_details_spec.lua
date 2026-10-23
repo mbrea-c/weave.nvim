@@ -115,14 +115,18 @@ end
 describe("view.session_details", function()
   it("shows the session metadata and a dropdown per config kind", function()
     local session = started()
+    session:get_store():set_meta({ title = "Implement ACP updates" })
+    session:get_store():set_usage({ percentage = 12.5 })
     local handle = SessionDetails.open({ session = session })
 
     local text = buffer_text(handle.bufnr)
     assert.truthy(text:find("Session details", 1, true))
+    assert.truthy(text:find("Title: Implement ACP updates", 1, true))
     assert.truthy(text:find("test-agent", 1, true))
     assert.truthy(text:find("fake-agent v2.0", 1, true))
     assert.truthy(text:find("sess-42", 1, true))
     assert.truthy(text:find("Status:", 1, true))
+    assert.truthy(text:find("Context: 12.5%", 1, true))
     assert.truthy(text:find("Model", 1, true))
     assert.truthy(text:find("Thinking effort", 1, true))
 

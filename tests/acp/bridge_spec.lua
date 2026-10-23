@@ -254,6 +254,70 @@ describe("acp_bridge session updates", function()
     assert.same({}, store.state.entries)
   end)
 
+  it("routes session_info_update title and Kiro context usage", function()
+    local store, handlers = setup()
+    local breakdown = {
+      yourPrompts = { tokens = 4709, percent = 0.5 },
+      sessionFiles = { tokens = 0, percent = 0, items = {} },
+      contextFiles = {
+        percent = 0.3,
+        items = {
+          {
+            uri = "file:///home/me/.kiro/steering/global-context.md",
+            name = "~/.kiro/steering/global-context.md",
+            tokens = 400,
+            percent = 0,
+            matched = true,
+            progressivelyLoaded = false,
+          },
+        },
+      },
+      tools = {
+        tokens = 6506,
+        percent = 0.7,
+        builtin = { tokens = 6506, percent = 0.7 },
+        mcp = { tokens = 0, percent = 0 },
+      },
+    }
+    handlers.on_session_update({
+      sessionUpdate = "session_info_update",
+      title = "Implement ACP updates",
+      updatedAt = "2026-09-29T10:00:00Z",
+      _meta = {
+        kiro = {
+          type = "context_usage",
+          payload = {
+            usagePercentage = 12.5,
+            contextUsage = { usagePercentage = 11.5 },
+            breakdown = breakdown,
+          },
+        },
+      },
+    })
+
+    assert.equal("Implement ACP updates", store.state.meta.title)
+    assert.equal("2026-09-29T10:00:00Z", store.state.meta.updated_at)
+    assert.equal(12.5, store.state.usage.percentage)
+    assert.same(breakdown, store.state.usage.breakdown)
+    assert.is_false(rawequal(breakdown, store.state.usage.breakdown))
+    assert.same({}, store.state.entries)
+  end)
+
+  it("falls back to Kiro's nested context usage percentage", function()
+    local store, handlers = setup()
+    handlers.on_session_update({
+      sessionUpdate = "session_info_update",
+      _meta = {
+        kiro = {
+          context_usage = {
+            contextUsage = { usagePercentage = 8.25 },
+          },
+        },
+      },
+    })
+    assert.equal(8.25, store.state.usage.percentage)
+  end)
+
   it("ignores unknown update kinds without error", function()
     local store, handlers = setup()
     assert.has_no_error(function()

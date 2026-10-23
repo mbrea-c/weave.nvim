@@ -426,6 +426,10 @@ function Session:_build_handlers()
     is_restoring = function()
       return self._restoring
     end,
+    on_config_options_update = function(config_options)
+      self:_capture_config({ configOptions = config_options })
+      self:_publish_meta()
+    end,
   })
 end
 

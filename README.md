@@ -311,10 +311,14 @@ conversation in the panel.
 
 Activating the sidebar's **Session** section (`<CR>` on the metadata block),
 or a row's `ⓘ` in the session modal, opens the **session details window**:
-the full metadata (provider, agent, session id, status, permission preset,
-context usage) plus a dropdown for every config the agent lets you change —
-model, mode, thinking effort, whatever the provider advertises (ACP
-`configOptions`, or the legacy models/modes shape). Dropdowns filter as you
+the full metadata (agent-provided title, provider, agent, session id, status,
+permission preset, context usage) plus a dropdown for every config the agent
+lets you change: model, mode, thinking effort, whatever the provider
+advertises (ACP `configOptions`, or the legacy models/modes shape). Standard
+`session_info_update` and `config_option_update` notifications refresh the
+stored metadata and configuration state. Kiro's context percentage is shown
+even when it provides no token totals.
+Dropdowns filter as you
 type; `<C-n>`/`<C-p>` move the selection, `<CR>`/`<C-y>` apply it. Opened
 from the modal for a session that is not the tab's current one, an **Open in
 panel** button makes it the tab's selection. `q`/`<Esc>` closes.
@@ -1293,8 +1297,9 @@ end)
 The snapshot's main fields: `entries` (the transcript timeline), `tool_calls`
 (by id), `status` (`"idle" | "busy" | …`), `plan` (the task list), `queued` +
 `history` (prompt queue and sent prompts), `permission` (the pending request's
-head), `usage` (context tokens), `meta` (provider / agent / model / mode /
-session id), `commands` (advertised slash commands). The permission preset is
+head), `usage` (context tokens or percentage, plus provider breakdown), `meta`
+(session title / provider / agent / model / mode / session id), `commands`
+(advertised slash commands). The permission preset is
 NOT store state — it lives in the editor-global engine,
 `require("weave.permissions")` (`active()`, `set_active(name)`, `cycle()`,
 `resolve(action)`, `save_preset(p)`, `subscribe(fn)`). Snapshots

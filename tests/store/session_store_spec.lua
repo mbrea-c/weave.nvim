@@ -311,13 +311,25 @@ describe("session_store kiro task commands", function()
 end)
 
 describe("session_store status and meta", function()
-  it("set_status replaces, set_meta merges", function()
+  it("set_status replaces, set_meta merges, and reset drops conversation metadata", function()
     local store = SessionStore:new()
     store:set_status("generating")
     assert.equal("generating", store.state.status)
-    store:set_meta({ provider = "Claude Agent ACP" })
+    store:set_meta({
+      provider = "Claude Agent ACP",
+      title = "Old conversation",
+      updated_at = "2026-09-29T10:00:00Z",
+    })
     store:set_meta({ model = "claude-fable-5" })
-    assert.same({ provider = "Claude Agent ACP", model = "claude-fable-5" }, store.state.meta)
+    assert.equal("Claude Agent ACP", store.state.meta.provider)
+    assert.equal("claude-fable-5", store.state.meta.model)
+    assert.equal("Old conversation", store.state.meta.title)
+
+    store:reset()
+    assert.equal("Claude Agent ACP", store.state.meta.provider)
+    assert.equal("claude-fable-5", store.state.meta.model)
+    assert.is_nil(store.state.meta.title)
+    assert.is_nil(store.state.meta.updated_at)
   end)
 
   it("set_usage replaces the usage snapshot; reset clears it", function()

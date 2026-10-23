@@ -85,6 +85,7 @@ local function Details(ctx, props)
     blank(),
   }
   local facts = {
+    { "Title", meta.title },
     { "Provider", meta.provider },
     { "Agent", meta.agent },
     { "Session", meta.session_id },
@@ -100,6 +101,11 @@ local function Details(ctx, props)
   if usage and usage.used then
     local line = "Context: " .. usage.used .. (usage.size and (" / " .. usage.size) or "") .. " tokens"
     rows[#rows + 1] = { comp = ui.label, props = { text = line } }
+  elseif usage and type(usage.percentage) == "number" then
+    rows[#rows + 1] = {
+      comp = ui.label,
+      props = { text = string.format("Context: %g%%", usage.percentage) },
+    }
   end
 
   rows[#rows + 1] = blank()

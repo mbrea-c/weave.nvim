@@ -255,6 +255,7 @@
 --- @field sessionUpdate "session_info_update"
 --- @field title? string
 --- @field updatedAt? string
+--- @field _meta? table<string, any> Provider-specific metadata (Kiro reports context_usage here)
 
 --- @class weave.acp.ConfigOptionsUpdate
 --- @field sessionUpdate "config_option_update"

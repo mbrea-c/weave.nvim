@@ -47,6 +47,8 @@
 --- @field usage weave.store.Usage|nil Session usage (context tokens + cost) from usage_update; nil until first reported
 
 --- @class weave.store.SessionMeta
+--- @field title? string Agent-provided session title
+--- @field updated_at? string Agent-provided session update timestamp
 --- @field provider? string Provider display name (e.g. "Kiro ACP")
 --- @field agent? string Agent name + version
 --- @field model? string Current model id
@@ -56,6 +58,8 @@
 --- @class weave.store.Usage
 --- @field used? integer Context tokens used
 --- @field size? integer Context window size (total tokens)
+--- @field percentage? number Context window percentage when token totals are unavailable
+--- @field breakdown? table Provider-specific context composition details
 --- @field cost? { amount: number, currency: string } Session cost so far, when the agent reports it
 
 --- @class weave.store.PendingPermission
@@ -752,8 +756,8 @@ function SessionStore:clear_queue()
 end
 
 --- Clear all session state back to the initial snapshot (e.g. on /new).
---- meta persists across reset: it belongs to the client, not the session,
---- and is re-applied when a new session is created.
+--- Provider/agent/config meta persists because it belongs to the client and is
+--- re-applied on session creation; title/timestamp belong to one conversation.
 function SessionStore:reset()
   self._plan_source = nil -- forget which source owned the plan
   self._kiro_tasks = nil -- forget remembered Kiro task-list state
@@ -765,6 +769,13 @@ function SessionStore:reset()
     draft.plan = {}
     draft.status = "idle"
     draft.queued = {}
+    local meta = {}
+    for key, value in pairs(draft.meta) do
+      if key ~= "title" and key ~= "updated_at" then
+        meta[key] = value
+      end
+    end
+    draft.meta = meta
     draft.history = {} -- prompt-recall history is per-conversation
     -- a fresh session re-announces its commands; back to just /new meanwhile
     draft.commands = to_completion_items({})
