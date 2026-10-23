@@ -799,6 +799,12 @@ their builtins into one namespace cannot confuse the two:
   `buffers = "off"` for pure disk. Needs `rg` on Neovim's `PATH` or
   `tools.ripgrep_path` set; without it `weave_grep` errors and `weave_glob`
   falls back to a slower `vim.fn.glob` walk.
+- `weave_task_list` lists managed tasks, newest first, with `status` set to
+  `running` (default), `all`, `failed`, or `successful`. `failed` includes killed
+  tasks; `successful` means exited with code 0. `limit` sets the maximum number
+  returned (positive integer, default 10), applied after filtering. Summaries
+  include task IDs, state, command, and working directory; use
+  `weave_task_status` for output.
 - `weave_task_start`/`weave_task_status`/`weave_task_wait`/`weave_task_kill`,
   a lifecycle over managed shell tasks (surfaced in the sidebar's *Terminal
   tasks* section).

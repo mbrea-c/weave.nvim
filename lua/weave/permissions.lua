@@ -194,6 +194,7 @@ local BUILTIN = {
       ALLOW_BROKERED,
       ALLOW_ATTACHMENTS,
       { tool = "acp:*", decision = "deny", message = USE_CLIENT_TOOLS },
+      { tool = "weave:task_list", decision = "allow" },
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
@@ -252,6 +253,7 @@ local BUILTIN = {
       { tool = "weave:read", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
       { tool = "weave:glob", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
       { tool = "weave:grep", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:task_list", decision = "allow" },
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
@@ -300,6 +302,7 @@ local BUILTIN = {
       { tool = "weave:grep", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
       { tool = "weave:write", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
       { tool = "weave:edit", resource = PROJECT_TOKEN .. "/**", decision = "allow" },
+      { tool = "weave:task_list", decision = "allow" },
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },
@@ -339,6 +342,7 @@ local BUILTIN = {
       -- this hold today; the rule states the policy where a reader looks for
       -- it, and keeps holding if the tool is ever put behind the gate.
       { tool = "weave:request_access", decision = "ask" },
+      { tool = "weave:task_list", decision = "allow" },
       { tool = "weave:task_status", decision = "allow" },
       { tool = "weave:task_wait", decision = "allow" },
       { tool = "weave:task_kill", decision = "allow" },

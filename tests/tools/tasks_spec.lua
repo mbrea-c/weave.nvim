@@ -193,6 +193,42 @@ describe("task tools", function()
     end, box
   end
 
+  it("task_list filters outcomes, orders newest first, and limits after filtering", function()
+    local original = TaskStore.list
+    local tasks = {}
+    for id = 1, 12 do
+      tasks[id] = { id = id, command = "command " .. id, cwd = "/project", pid = id,
+        status = "running" }
+    end
+    tasks[11].status, tasks[11].exit_code = "exited", 0
+    tasks[10].status, tasks[10].exit_code = "exited", 3
+    tasks[9].status, tasks[9].signal = "killed", 15
+    TaskStore.list = function() return tasks end
+    local ok, err = pcall(function()
+      local function ids(args)
+        local result = {}
+        for id in Tools.list.handler(args):gmatch("task (%d+):") do
+          result[#result + 1] = tonumber(id)
+        end
+        return result
+      end
+      assert.same({ 12, 8, 7, 6, 5, 4, 3, 2, 1 }, ids({}))
+      assert.same({ 12, 11, 10, 9, 8, 7, 6, 5, 4, 3 }, ids({ status = "all" }))
+      assert.same({ 12, 11 }, ids({ status = "all", limit = 2 }))
+      assert.same({ 10, 9 }, ids({ status = "failed" }))
+      assert.same({ 11 }, ids({ status = "successful" }))
+      assert.truthy(Tools.list.handler({}):find("cwd: /project", 1, true))
+      for _, limit in ipairs({ 0, -1, 1.5, "2" }) do
+        assert.has_error(function() Tools.list.handler({ limit = limit }) end)
+      end
+      assert.has_error(function() Tools.list.handler({ status = "unknown" }) end)
+      TaskStore.list = function() return {} end
+      assert.truthy(Tools.list.handler({}):find("No matching tasks", 1, true))
+    end)
+    TaskStore.list = original
+    if not ok then error(err) end
+  end)
+
   it("task_start returns the id immediately without blocking", function()
     assert.is_true(Tools.start.async)
     local respond, box = capture()

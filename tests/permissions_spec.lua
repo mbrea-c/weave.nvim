@@ -409,6 +409,7 @@ describe("permissions sandboxed builtins", function()
   it("the resourceless task query tools are allowed, not caught by a catch-all", function()
     for _, preset in ipairs(SANDBOXED) do
       Permissions.set_active(preset)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:task_list" }), preset)
       assert.equal("allow", Permissions.resolve({ tool = "weave:task_status" }), preset)
       assert.equal("allow", Permissions.resolve({ tool = "weave:task_wait" }), preset)
       assert.equal("allow", Permissions.resolve({ tool = "weave:task_kill" }), preset)

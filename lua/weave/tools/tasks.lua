@@ -180,4 +180,57 @@ M.kill = {
   end,
 }
 
+-- Compact task summaries; output remains available through task_status.
+M.list = {
+  description = "List managed tasks, newest first. Defaults to running tasks and at most 10 results. "
+    .. "Use status=all for every state, failed for non-zero exits or killed tasks, "
+    .. "or successful for tasks that exited with code 0. Output is available via weave_task_status.",
+  inputSchema = {
+    type = "object",
+    properties = {
+      status = {
+        type = "string",
+        enum = { "running", "all", "failed", "successful" },
+        default = "running",
+        description = "Task outcome filter (default running); failed includes killed tasks.",
+      },
+      limit = {
+        type = "integer",
+        minimum = 1,
+        default = 10,
+        description = "Maximum matching tasks returned (default 10), newest first.",
+      },
+    },
+  },
+  handler = function(args)
+    local status = args.status or "running"
+    if status ~= "running" and status ~= "all" and status ~= "failed" and status ~= "successful" then
+      error("status must be running, all, failed, or successful", 0)
+    end
+    local limit = args.limit == nil and 10 or args.limit
+    if type(limit) ~= "number" or limit ~= limit or limit == math.huge or limit < 1 or limit % 1 ~= 0 then
+      error("limit must be a positive integer", 0)
+    end
+    local tasks, rows, matched = TaskStore.list(), {}, 0
+    for i = #tasks, 1, -1 do
+      local task = tasks[i]
+      local successful = task.status == "exited" and task.exit_code == 0
+      local failed = task.status == "killed"
+        or (task.status == "exited" and task.exit_code ~= nil and task.exit_code ~= 0)
+      if status == "all" or (status == "running" and task.status == "running")
+        or (status == "successful" and successful) or (status == "failed" and failed) then
+        matched = matched + 1
+        if #rows < limit then
+          rows[#rows + 1] = status_line(task) .. "\ncommand: " .. task.command .. "\ncwd: " .. task.cwd
+        end
+      end
+    end
+    if matched == 0 then
+      return "No matching tasks (status: " .. status .. ")."
+    end
+    return ("Showing %d of %d matching tasks (status: %s, newest first)\n\n"):format(#rows, matched, status)
+      .. table.concat(rows, "\n\n")
+  end,
+}
+
 return M

@@ -118,6 +118,7 @@ describe("tools wiring", function()
       "glob",
       "grep",
       "task_start",
+      "task_list",
       "task_status",
       "task_wait",
       "task_kill",

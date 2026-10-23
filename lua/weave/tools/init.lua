@@ -24,6 +24,7 @@ local SHORT_NAMES = {
   "glob",
   "grep",
   "task_start",
+  "task_list",
   "task_status",
   "task_wait",
   "task_kill",
@@ -119,6 +120,7 @@ function M.register_into(server)
   -- The gate's other half: how the agent gets back in sync (and a tool any
   -- agent may call defensively — cheap when clean).
   register("check_user_edits", Gate.wrap("check_user_edits", UserEdits.check, { kind = "read" }))
+  register("task_list", Gate.wrap("task_list", tasks.list, { kind = "read" }))
   register("task_status", Gate.wrap("task_status", tasks.status, { kind = "execute" }))
   register("task_wait", Gate.wrap("task_wait", tasks.wait, { kind = "execute" }))
   register("task_kill", Gate.wrap("task_kill", tasks.kill, { kind = "execute" }))
