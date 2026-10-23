@@ -23,6 +23,7 @@
 local Permissions = require("weave.permissions")
 
 local M = {}
+local next_permission = 0
 
 --- The store that surfaces "ask" prompts: the current tab's session, else
 --- the first active one. MCP calls arrive over clankbox with no session
@@ -81,6 +82,7 @@ end
 --- @param kind string|nil ACP ToolKind
 --- @param run fun()
 --- @param respond fun(ret: string|table)
+--- @return function|nil cancel Remove a pending approval without answering it.
 function M.mediate(action, title, kind, run, respond)
   local decision, rule = Permissions.resolve(action)
 
@@ -113,6 +115,9 @@ function M.mediate(action, title, kind, run, respond)
       )
     )
   end
+  next_permission = next_permission + 1
+  local id = "weave-gate:" .. next_permission
+  local finished = false
   store:enqueue_permission({
     -- Raised by weave rather than the agent, which is what makes the two
     -- "always" answers below consequential: they write into OUR permission
@@ -120,7 +125,7 @@ function M.mediate(action, title, kind, run, respond)
     -- sidebar.permission_option_hl.
     client_side = true,
     request = {
-      toolCall = { title = title, kind = kind },
+      toolCall = { toolCallId = id, title = title, kind = kind },
       -- Four options, in ACP's own `kind` vocabulary so the sidebar
       -- renderer and the ;;1..;;9 answer keys need no changes. The
       -- "always" pair writes a grant into the permission overlay rather
@@ -138,6 +143,8 @@ function M.mediate(action, title, kind, run, respond)
       },
     },
     respond = function(option_id)
+      if finished then return end
+      finished = true
       if option_id == "allow_always" then
         Permissions.add_grant(Permissions.grant_rule(action, "allow"))
       elseif option_id == "reject_always" then
@@ -154,6 +161,11 @@ function M.mediate(action, title, kind, run, respond)
       end
     end,
   })
+  return function()
+    if finished then return end
+    finished = true
+    store:remove_permission_for_tool_call(id)
+  end
 end
 
 --- Gate the tools weave does NOT own: clankbox's own built-ins and other

@@ -307,6 +307,28 @@ Open the **session modal** with `;;s` or `:Weave sessions`:
 `;;r` instead restores a saved session *in place*, over the current
 conversation in the panel.
 
+### MCP servers
+
+The sidebar's **MCP** section shows external MCP servers managed by Weave.
+Activate its header to open the full list, then select a server to inspect its
+process instances and discovered tools. Selecting a sidebar server opens its
+page directly. Pages include process status, PID, elapsed runtime, and each
+tool's description, input/output schemas, annotations, and other advertised
+fields. Use **Back to MCP list** to return to the list.
+
+**Kill** stops one process instance. **Restart** starts a replacement and
+repeats MCP initialization over the existing agent connection. Pending requests
+fail when their process is stopped, including calls still awaiting approval;
+their permission prompts are removed. Initialization has a ten-second timeout.
+Each agent connection has its own process instance and controls.
+
+Servers appear after Weave creates their proxy listener; tool definitions
+appear after the agent requests MCP tool discovery. Stopped instances retain
+their last discovered definitions. Disconnected instances are read-only.
+This list covers configured external servers routed through Weave's proxy.
+The editor-hosted clankbox suite and servers started privately by a provider
+do not have managed subprocesses here.
+
 ### Session details
 
 Activating the sidebar's **Session** section (`<CR>` on the metadata block),
@@ -535,7 +557,7 @@ Sends appear in the transcript as a single quiet line (`⇅ sent 2 files you
 changed`) rather than as prose you appear to have written; `K` on it shows the
 diff that went out. They do not join your `<C-Up>` prompt history either.
 
-**Only your edits are sent.** Anything weave's own `w:write`/`w:edit` tools do
+**Only your edits are sent.** Anything weave's own `weave_write`/`weave_edit` tools do
 is excluded, and so is a reload from disk. The one gap is a shell command the
 agent runs itself — a formatter, a codemod — which weave cannot see the writes
 of; the shipped tutor prompt tells the agent that a hunk may be its own work.
@@ -997,8 +1019,9 @@ through `require("weave.permissions").resolve`.
 
 The `mcp:*` rules are what keep the sandbox meaningful: `exec_lua` runs
 arbitrary Lua in the **unsandboxed** editor, so left ungated it can read the
-project the sandbox masked. The `sandboxed_*` presets therefore `ask` on
-`mcp:*`; set it to `deny` if you would rather it not be offered at all.
+project the sandbox masked. The sandboxed Ask, Read-only, and Edit presets therefore `ask` on
+`mcp:*`; Auto and YOLO allow these calls. Set `mcp:*` to `deny` in a custom
+preset if you would rather they not be offered at all.
 Presets from `setup` shadow builtins by name; presets saved in the
 configuration window (runtime) shadow both, reversibly.
 

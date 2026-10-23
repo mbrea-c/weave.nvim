@@ -11,9 +11,10 @@
 -- clientside handling as weave's own — as mcp:<tool> rules.
 --
 -- One REAL server process per agent connection: MCP stdio servers are
--- single-client, and per-connection processes keep the relay a pure
--- passthrough (no id remapping, no multiplexing). The connection closing
--- takes its server down; a server dying closes its connection.
+-- single-client. Normal requests retain their IDs and are never multiplexed.
+-- Initialization is replayed and its response consumed after restart. The connection closing
+-- takes its server down. Stopped servers retain their connection so the UI
+-- can restart them and replay the MCP initialization handshake.
 --
 -- Sandboxing the real server is OPTIONAL, per server: an McpServer entry
 -- may carry `sandbox = { binds?, network? }` (the tool-hull vocabulary),
@@ -21,10 +22,9 @@
 -- there is no project-bind default — a server that needs nothing gets
 -- nothing.
 --
--- Only tools/call is mediated. Everything else — initialize, tools/list,
--- notifications, cancellations, and every server->agent frame — passes
--- through untouched: the gate decides what may HAPPEN, not what may be
--- seen to exist.
+-- Only tools/call is permission-mediated. Initialization and tools/list
+-- responses are observed for the inspector; normal frames pass through.
+-- Process controls fail pending requests and retain the agent connection.
 
 local M = {}
 
@@ -96,108 +96,253 @@ end
 --- Wire one agent connection to one fresh real-server process.
 --- @param conn userdata accepted uv pipe
 --- @param cfg table McpServer entry ({ name, command, args, env, sandbox? })
-local function attach(conn, cfg)
-  local stdin_p = uv.new_pipe(false)
-  local stdout_p = uv.new_pipe(false)
-  local stderr_p = uv.new_pipe(false)
-
-  local cmd, args = cfg.command, cfg.args or {}
-  if cfg.sandbox then
-    local Permissions = require("weave.permissions")
-    local binds = {}
-    for i, b in ipairs(cfg.sandbox.binds or {}) do
-      binds[i] = { path = (b.path:gsub("%${project}", (Permissions.project_root():gsub("%%", "%%%%")))), mode = b.mode }
-    end
-    cmd, args = require("weave.sandbox").wrap_tool(cfg.command, cfg.args, {
-      binds = binds,
-      network = cfg.sandbox.network == true,
-    })
-  end
-
-  local closed = false
-  local proc
-  local function teardown()
-    if closed then
-      return
-    end
-    closed = true
-    for _, h in ipairs({ stdin_p, stdout_p, stderr_p, conn }) do
-      if h and not h:is_closing() then
-        h:close()
-      end
-    end
-    if proc and not proc:is_closing() then
-      proc:kill("sigterm")
-      proc:close()
-    end
-  end
-
-  proc = M._spawn(cmd, {
-    args = args,
-    stdio = { stdin_p, stdout_p, stderr_p },
-    env = env_list(cfg.env),
-  }, function()
-    vim.schedule(teardown)
+local subscribers, next_instance = {}, 0
+local function notify()
+  vim.schedule(function()
+    for _, fn in ipairs({ unpack(subscribers) }) do fn() end
   end)
-  if not proc then
-    vim.schedule(function()
-      require("weave.utils.logger").notify(
-        ("weave: cannot spawn MCP server %q (%s)"):format(cfg.name, tostring(cmd)),
-        vim.log.levels.ERROR
-      )
-      teardown()
-    end)
-    return
-  end
+end
 
-  local function to_agent(line)
+function M.subscribe(fn)
+  subscribers[#subscribers + 1] = fn
+  return function()
+    for i, value in ipairs(subscribers) do
+      if value == fn then table.remove(subscribers, i); break end
+    end
+  end
+end
+
+function M.list()
+  local result = {}
+  for name, proxy in pairs(M._proxies) do
+    result[#result + 1] = { name = name, command = proxy.cfg.command, instances = proxy.instances or {} }
+  end
+  table.sort(result, function(a, b) return a.name < b.name end)
+  return result
+end
+
+local function instance_for(id)
+  for _, proxy in pairs(M._proxies) do
+    for _, instance in ipairs(proxy.instances or {}) do
+      if instance.id == id then return instance end
+    end
+  end
+end
+
+function M.kill(id)
+  local instance = instance_for(id)
+  if not instance or instance.status == "disconnected" then return false end
+  instance.stop()
+  return true
+end
+
+function M.restart(id)
+  local instance = instance_for(id)
+  if not instance or instance.status == "disconnected" then return false end
+  instance.start()
+  return true
+end
+
+local function attach(conn, cfg)
+  next_instance = next_instance + 1
+  local instance = { id = next_instance, status = "starting", tools = {} }
+  local proxy = M._proxies[cfg.name]
+  proxy.instances = proxy.instances or {}
+  proxy.instances[#proxy.instances + 1] = instance
+  local generation, last_start, pipes, proc = 0, 0, {}, nil
+  local bootstrap_timer
+  local pending, init_frame, initialized, bootstrap = {}, nil, nil, false
+  local closed = false
+
+  local function to_agent(frame)
     if not closed and not conn:is_closing() then
-      conn:write(line .. "\n")
-    end
-  end
-  local function to_server(line)
-    if not closed and not stdin_p:is_closing() then
-      stdin_p:write(line .. "\n")
+      conn:write(type(frame) == "string" and (frame .. "\n") or (vim.json.encode(frame) .. "\n"))
     end
   end
 
-  -- agent -> server: tools/call requests pass the gate first; everything
-  -- else forwards verbatim. Handled on the main loop (the gate may open an
-  -- interactive prompt).
-  local function handle_agent_frame(line)
-    local ok, frame = pcall(vim.json.decode, line)
-    if not ok or type(frame) ~= "table" or frame.method ~= "tools/call" or frame.id == nil then
-      to_server(line)
+  local function fail_pending()
+    local requests = pending
+    pending = {}
+    for id, request in pairs(requests) do
+      if request.cancel then request.cancel() end
+      to_agent({ jsonrpc = "2.0", id = id, error = { code = -32000, message = "MCP server stopped" } })
+    end
+  end
+
+  local function stop(status)
+    generation = generation + 1
+    if bootstrap_timer then
+      bootstrap_timer:stop()
+      bootstrap_timer:close()
+      bootstrap_timer = nil
+    end
+    fail_pending()
+    for _, pipe in ipairs(pipes) do
+      if not pipe:is_closing() then pipe:close() end
+    end
+    pipes = {}
+    if proc and not proc:is_closing() then
+      -- SIGKILL makes the UI operation deterministic, including servers that
+      -- ignore SIGTERM. The exit callback owns closing the process handle.
+      proc:kill("sigkill")
+    end
+    proc = nil
+    instance.status = status or "stopped"
+    instance.finished_at = os.time()
+    notify()
+  end
+  instance.stop = function() stop("stopped") end
+
+  local function to_server(line)
+    if pipes[1] and not pipes[1]:is_closing() then pipes[1]:write(line .. "\n") end
+  end
+
+  instance.start = function()
+    stop("starting")
+    local epoch = generation
+    last_start = epoch
+    local cmd, args = cfg.command, cfg.args or {}
+    if cfg.sandbox then
+      local Permissions = require("weave.permissions")
+      local binds = {}
+      for i, b in ipairs(cfg.sandbox.binds or {}) do
+        binds[i] = { path = (b.path:gsub("%${project}", (Permissions.project_root():gsub("%%", "%%%%")))), mode = b.mode }
+      end
+      cmd, args = require("weave.sandbox").wrap_tool(cfg.command, cfg.args, {
+        binds = binds, network = cfg.sandbox.network == true,
+      })
+    end
+    pipes = { uv.new_pipe(false), uv.new_pipe(false), uv.new_pipe(false) }
+    local spawned
+    local pid
+    spawned, pid = M._spawn(cmd, { args = args, stdio = pipes, env = env_list(cfg.env) }, function(code, signal)
+      vim.schedule(function()
+        if spawned and not spawned:is_closing() then spawned:close() end
+        if epoch ~= last_start then return end
+        if epoch == generation then stop("exited") end
+        instance.exit_code, instance.signal = code, signal
+        notify()
+      end)
+    end)
+    proc = spawned
+    if not spawned then
+      stop("failed")
+      instance.error = tostring(pid or ("cannot spawn " .. cmd))
+      require("weave.utils.logger").notify(
+        ("weave: cannot spawn MCP server %q (%s)"):format(cfg.name, tostring(cmd)), vim.log.levels.ERROR)
       return
     end
-    local name = frame.params and frame.params.name or "?"
-    local Gate = require("weave.tools.gate")
-    Gate.mediate({ tool = "mcp:" .. name }, ("MCP tool %s (%s)"):format(name, cfg.name), "other", function()
-      to_server(line)
-    end, function(ret)
-      -- refused (or errored) clientside: the real server never sees the
-      -- call; answer the agent in the request's own id
-      to_agent(vim.json.encode({ jsonrpc = "2.0", id = frame.id, result = to_result(ret) }))
-    end)
+    instance.pid, instance.started_at = pid, os.time()
+    instance.finished_at, instance.error, instance.exit_code, instance.signal = nil, nil, nil, nil
+    bootstrap = init_frame ~= nil
+    instance.status = bootstrap and "starting" or "running"
+    pipes[2]:read_start(line_reader(function(line)
+      vim.schedule(function()
+        if epoch ~= generation then return end
+        local ok, frame = pcall(vim.json.decode, line)
+        if ok and type(frame) == "table" then
+          if bootstrap and frame.method == nil and frame.id == init_frame.id then
+            bootstrap = false
+            if bootstrap_timer then
+              bootstrap_timer:stop()
+              bootstrap_timer:close()
+              bootstrap_timer = nil
+            end
+            if frame.error then
+              stop("failed")
+              instance.error = vim.inspect(frame.error)
+              return
+            end
+            if initialized then to_server(vim.json.encode(initialized)) end
+            instance.status = "running"
+            notify()
+            return
+          end
+          local request = frame.method == nil and frame.id ~= nil and pending[frame.id] or nil
+          if request then
+            pending[frame.id] = nil
+            if request.method == "initialize" and type(frame.result) == "table" then
+              instance.server_info = frame.result.serverInfo
+            elseif request.method == "tools/list" and type(frame.result) == "table" then
+              if not request.params or not request.params.cursor then instance.tools = {} end
+              for _, tool in ipairs(frame.result.tools or {}) do
+                instance.tools[#instance.tools + 1] = tool
+              end
+              notify()
+            end
+          end
+        end
+        to_agent(line)
+      end)
+    end, function()
+      vim.schedule(function() if epoch == generation then stop("exited") end end)
+    end))
+    pipes[3]:read_start(function() end)
+    if bootstrap then
+      bootstrap_timer = uv.new_timer()
+      bootstrap_timer:start(10000, 0, vim.schedule_wrap(function()
+        if epoch ~= generation then return end
+        stop("failed")
+        instance.error = "MCP initialization timed out after restart"
+      end))
+      to_server(vim.json.encode(init_frame))
+    end
+    notify()
   end
 
   conn:read_start(line_reader(function(line)
     vim.schedule(function()
-      if not closed then
-        handle_agent_frame(line)
+      if closed then return end
+      local ok, frame = pcall(vim.json.decode, line)
+      if not ok or type(frame) ~= "table" then return end
+      if frame.method == "initialize" then init_frame = frame end
+      if frame.method == "notifications/initialized" then initialized = frame end
+      if instance.status ~= "running" then
+        if frame.method and frame.id ~= nil then
+          to_agent({ jsonrpc = "2.0", id = frame.id, error = { code = -32000, message = "MCP server unavailable" } })
+        end
+        return
+      end
+      local epoch = generation
+      -- Only requests originating at the agent need a response. The agent can
+      -- also reply to server-originated requests using the same ID namespace.
+      local request
+      if frame.method and frame.id ~= nil then
+        request = { method = frame.method, params = frame.params }
+        pending[frame.id] = request
+      end
+      local function active()
+        return not closed and epoch == generation and instance.status == "running"
+          and (not request or pending[frame.id] == request)
+      end
+      local function forward()
+        if active() then to_server(line) end
+      end
+      if frame.method == "tools/call" and frame.id ~= nil then
+        local name = frame.params and frame.params.name or "?"
+        request.cancel = require("weave.tools.gate").mediate({ tool = "mcp:" .. name },
+          ("MCP tool %s (%s)"):format(name, cfg.name), "other", forward, function(ret)
+            if not active() then return end
+            pending[frame.id] = nil
+            to_agent({ jsonrpc = "2.0", id = frame.id, result = to_result(ret) })
+          end)
+      else
+        forward()
       end
     end)
   end, function()
-    vim.schedule(teardown)
+    vim.schedule(function()
+      closed = true
+      stop("disconnected")
+      if not conn:is_closing() then conn:close() end
+    end)
   end))
-
-  -- server -> agent: verbatim, but line-buffered — our locally answered
-  -- frames interleave on the same connection and must never land inside a
-  -- half-written server line.
-  stdout_p:read_start(line_reader(to_agent, function()
-    vim.schedule(teardown)
-  end))
-  stderr_p:read_start(function() end) -- drain; MCP servers log here freely
+  instance.close = function()
+    closed = true
+    stop("disconnected")
+    if not conn:is_closing() then conn:close() end
+  end
+  instance.start()
 end
 
 --- The proxy socket for a configured server entry: one listener per server
@@ -231,7 +376,7 @@ function M.listener_for(cfg)
     local conn = uv.new_pipe(false)
     server:accept(conn)
     vim.schedule(function()
-      attach(conn, cfg)
+      if M._proxies[cfg.name] then attach(conn, cfg) else conn:close() end
     end)
   end)
   if not ok then
@@ -240,8 +385,9 @@ function M.listener_for(cfg)
     return nil
   end
 
-  local proxy = { path = path, server = server, cfg = cfg }
+  local proxy = { path = path, server = server, cfg = cfg, instances = {} }
   M._proxies[cfg.name] = proxy
+  notify()
   return proxy
 end
 
@@ -268,10 +414,10 @@ function M.entry_for(cfg)
   }
 end
 
--- test hook: drop every listener (running per-connection servers die with
--- their connections)
+-- Test hook: close listeners, agent connections, and their managed processes.
 function M._reset()
   for name, proxy in pairs(M._proxies) do
+    for _, instance in ipairs(proxy.instances or {}) do instance.close() end
     if proxy.server and not proxy.server:is_closing() then
       proxy.server:close()
     end

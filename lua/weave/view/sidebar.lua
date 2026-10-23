@@ -586,6 +586,7 @@ function M.Sidebar(_, props)
       { comp = M.TasksSection, props = { store = props.store, width = props.sidebar_width } },
       -- terminal tasks sit ABOVE permissions (design-agent-sandbox.md, 0c)
       { comp = TerminalTasks.Section, props = { width = props.sidebar_width } },
+      { comp = require("weave.view.mcp").Section, props = {} },
       -- the Pending-flush section sits below terminal tasks: comments and
       -- unsent edits are a draft the user is composing, not agent activity,
       -- so it reads as the last thing before a permission prompt interrupts

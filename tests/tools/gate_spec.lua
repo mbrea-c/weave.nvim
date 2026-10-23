@@ -66,6 +66,32 @@ describe("tools permission gate", function()
     TaskStore._reset()
   end)
 
+  it("cancels only its own approval without running, responding, or granting access", function()
+    local store = SessionStore:new()
+    Gate._ask_store = function() return store end
+    Permissions.save_preset({ name = "ask-cancel", rules = { { tool = "*", decision = "ask" } } })
+    Permissions.set_active("ask-cancel")
+    local calls, replies = 0, 0
+    local function ask()
+      return Gate.mediate({ tool = "mcp:example" }, "example", "other",
+        function() calls = calls + 1 end,
+        function() replies = replies + 1 end)
+    end
+    local cancel = ask()
+    local stale = store:get_permission()
+    ask()
+    cancel()
+    cancel()
+    assert.equal(1, store.state.permission_count)
+    assert.is_true(store:get_permission() ~= stale)
+    stale.respond("allow_always")
+    assert.equal(0, calls)
+    assert.equal(0, replies)
+    assert.equal(0, #Permissions.grants())
+    store:pop_permission().respond("allow_once")
+    assert.equal(1, calls)
+  end)
+
   it("wraps every tool async while keeping its schema and description", function()
     local raw = require("weave.tools.fs").read
     local tools = wrapped_tools()

@@ -6,6 +6,8 @@
 
 local McpProxy = require("weave.mcp_proxy")
 local Permissions = require("weave.permissions")
+local Gate = require("weave.tools.gate")
+local SessionStore = require("weave.session_store")
 
 local uv = vim.uv
 
@@ -40,7 +42,17 @@ while true do
     local frame = vim.json.decode(table.remove(queue, 1))
     if frame.id ~= nil and frame.method == "initialize" then
       reply({ jsonrpc = "2.0", id = frame.id, result = { serverInfo = { name = "fake-real-server" } } })
-    elseif frame.id ~= nil and frame.method == "tools/call" then
+    elseif frame.id ~= nil and frame.method == "tools/list" then
+      reply({ jsonrpc = "2.0", id = frame.id, result = { tools = {
+        { name = "echo_tool", description = "Echo a value", inputSchema = { type = "object" } },
+      } } })
+    elseif frame.method == "test/exit" then
+      os.exit(7)
+    elseif frame.method == "test/server_request" then
+      reply({ jsonrpc = "2.0", id = 81, method = "roots/list" })
+    elseif frame.method == nil and frame.id == 81 then
+      reply({ jsonrpc = "2.0", method = "test/accepted" })
+    elseif frame.id ~= nil and frame.method == "tools/call" and frame.params.name ~= "hang" then
       reply({
         jsonrpc = "2.0",
         id = frame.id,
@@ -101,9 +113,131 @@ local function wait_frames(frames, n)
 end
 
 describe("mcp proxy", function()
+  local saved_ask_store, saved_spawn
+  before_each(function()
+    saved_ask_store, saved_spawn = Gate._ask_store, McpProxy._spawn
+    Permissions.save_preset({ name = "proxy_test", rules = { { tool = "*", decision = "allow" } } })
+    Permissions.set_active("proxy_test")
+  end)
+
   after_each(function()
+    Gate._ask_store, McpProxy._spawn = saved_ask_store, saved_spawn
     McpProxy._reset()
     Permissions._reset()
+  end)
+
+  it("tracks metadata and restarts a stopped process on the same agent connection", function()
+    local proxy = assert(McpProxy.listener_for(fake_server_cfg()))
+    local frames = {}
+    local sock = connect(proxy.path, frames)
+    send(sock, { jsonrpc = "2.0", id = 1, method = "initialize", params = {} })
+    wait_frames(frames, 1)
+    send(sock, { jsonrpc = "2.0", method = "notifications/initialized" })
+    send(sock, { jsonrpc = "2.0", id = 2, method = "tools/list" })
+    wait_frames(frames, 2)
+    local server = McpProxy.list()[1]
+    assert.equal("fake", server.name)
+    local instance = server.instances[1]
+    assert.equal("running", instance.status)
+    assert.is_not_nil(instance.pid)
+    assert.is_not_nil(instance.started_at)
+    assert.equal("echo_tool", instance.tools[1].name)
+    assert.equal("object", instance.tools[1].inputSchema.type)
+    local old_pid = instance.pid
+    assert.is_true(McpProxy.kill(instance.id))
+    assert.equal("stopped", instance.status)
+    send(sock, { jsonrpc = "2.0", id = 3, method = "tools/call", params = { name = "echo_tool" } })
+    wait_frames(frames, 3)
+    assert.is_not_nil(frames[3].error)
+    assert.is_true(McpProxy.restart(instance.id))
+    vim.wait(8000, function() return instance.status == "running" end, 10)
+    assert.equal("running", instance.status)
+    assert.is_true(instance.pid ~= old_pid)
+    send(sock, { jsonrpc = "2.0", id = 4, method = "tools/call", params = { name = "echo_tool" } })
+    wait_frames(frames, 4)
+    assert.equal("real:echo_tool", frames[4].result.content[1].text)
+    sock:close()
+  end)
+
+  it("fails pending requests on kill without stopping another instance", function()
+    local proxy = assert(McpProxy.listener_for(fake_server_cfg()))
+    local frames, other_frames = {}, {}
+    local sock = connect(proxy.path, frames)
+    local other = connect(proxy.path, other_frames)
+    vim.wait(3000, function() return #McpProxy.list()[1].instances == 2 end, 10)
+    local instances = McpProxy.list()[1].instances
+    send(sock, { jsonrpc = "2.0", id = 10, method = "tools/call", params = { name = "hang" } })
+    vim.wait(100, function() return false end, 10)
+    assert.is_true(McpProxy.kill(instances[1].id))
+    wait_frames(frames, 1)
+    assert.equal(10, frames[1].id)
+    assert.is_not_nil(frames[1].error)
+    assert.equal("running", instances[2].status)
+    send(other, { jsonrpc = "2.0", id = 20, method = "tools/call", params = { name = "echo_tool" } })
+    wait_frames(other_frames, 1)
+    assert.equal("real:echo_tool", other_frames[1].result.content[1].text)
+    sock:close()
+    other:close()
+  end)
+
+  it("retains the exit result when stdout closes before the exit callback", function()
+    McpProxy._spawn = function(cmd, opts, on_exit)
+      return saved_spawn(cmd, opts, function(code, signal)
+        vim.defer_fn(function() on_exit(code, signal) end, 30)
+      end)
+    end
+    local proxy = assert(McpProxy.listener_for(fake_server_cfg()))
+    local frames = {}
+    local sock = connect(proxy.path, frames)
+    send(sock, { jsonrpc = "2.0", method = "test/exit" })
+    vim.wait(2000, function()
+      local instance = McpProxy.list()[1].instances[1]
+      return instance and instance.exit_code ~= nil
+    end, 10)
+    local instance = McpProxy.list()[1].instances[1]
+    sock:close()
+    assert.equal("exited", instance.status)
+    assert.equal(7, instance.exit_code)
+  end)
+
+  it("does not treat replies to server requests as pending client requests", function()
+    local proxy = assert(McpProxy.listener_for(fake_server_cfg()))
+    local frames = {}
+    local sock = connect(proxy.path, frames)
+    send(sock, { jsonrpc = "2.0", method = "test/server_request" })
+    wait_frames(frames, 1)
+    assert.equal("roots/list", frames[1].method)
+    send(sock, { jsonrpc = "2.0", id = 81, result = { roots = {} } })
+    wait_frames(frames, 2)
+    assert.equal("test/accepted", frames[2].method)
+    McpProxy.kill(McpProxy.list()[1].instances[1].id)
+    vim.wait(100, function() return #frames > 2 end, 10)
+    sock:close()
+    assert.equal(2, #frames)
+  end)
+
+  it("fails calls awaiting approval on kill and cancels their permission prompts", function()
+    local store = SessionStore:new()
+    Gate._ask_store = function() return store end
+    Permissions.save_preset({ name = "proxy_ask", rules = { { tool = "*", decision = "ask" } } })
+    Permissions.set_active("proxy_ask")
+    local proxy = assert(McpProxy.listener_for(fake_server_cfg()))
+    local frames = {}
+    local sock = connect(proxy.path, frames)
+    send(sock, { jsonrpc = "2.0", id = 55, method = "tools/call", params = { name = "echo_tool" } })
+    vim.wait(2000, function() return store:get_permission() ~= nil end, 10)
+    local permission = assert(store:get_permission())
+    McpProxy.kill(McpProxy.list()[1].instances[1].id)
+    vim.wait(1000, function() return #frames > 0 end, 10)
+    sock:close()
+    assert.equal(1, #frames)
+    assert.equal(55, frames[1].id)
+    assert.is_not_nil(frames[1].error)
+    assert.is_nil(store:get_permission())
+    permission.respond("allow_always")
+    permission.respond("reject_once")
+    assert.equal(0, #Permissions.grants())
+    assert.equal(1, #frames)
   end)
 
   it("relays a REAL clientside server: initialize and allowed calls pass", function()
