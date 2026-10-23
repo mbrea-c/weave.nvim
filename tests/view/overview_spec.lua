@@ -43,6 +43,34 @@ describe("sidebar overview", function()
       session_settings = Settings.for_session({}), sidebar_width = 30 }
   end
 
+  it("centers a themed button chip in the footer at different sidebar widths", function()
+    for _, width in ipairs({ 24, 30, 42 }) do
+      local p = props()
+      p.sidebar_width = width
+      local app = mount.floating(Sidebar.Sidebar, p, { width = width, height = 2 })
+      apps[#apps + 1] = app
+      local line = vim.api.nvim_buf_get_lines(app.bufnr, 1, 2, false)[1]
+      local first, last = line:find("[ Overview ]", 1, true)
+      assert.is_not_nil(first)
+      local cell = vim.api.nvim_strwidth(line:sub(1, first - 1))
+      -- A left border plus padding on each side leaves width - 3 cells.
+      assert.equal(2 + math.floor((width - 3 - 12) / 2), cell)
+      local function has_highlight(group)
+        for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(app.bufnr, -1, 0, -1, { details = true })) do
+          if mark[2] == 1 and mark[4].hl_group == group
+            and mark[3] <= first - 1 and mark[4].end_col >= last then return true end
+        end
+        return false
+      end
+      assert.is_true(has_highlight("FibrousButton"))
+      vim.api.nvim_set_current_win(app.winid)
+      vim.api.nvim_win_set_cursor(app.winid, { 2, first + 1 })
+      vim.api.nvim_exec_autocmds("CursorMoved", { buffer = app.bufnr })
+      assert.is_true(has_highlight("FibrousButtonHover"))
+      app.unmount()
+    end
+  end)
+
   it("pins Overview to the last row when content grows, even at one row high", function()
     for _, height in ipairs({ 1, 8, 16 }) do
       local p = props()

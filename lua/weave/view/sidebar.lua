@@ -636,8 +636,7 @@ function M.Sidebar(_, props)
         props = {
           label = "Overview",
           height = 1,
-          theme = false,
-          style = { text_hl = "Title", _hover = { hl = "FibrousHover" } },
+          align_self = "center",
           on_press = props.on_overview or function() M.open_overview(props) end,
         },
       },

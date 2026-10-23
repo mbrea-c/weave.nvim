@@ -70,7 +70,9 @@ describe("overview terminal rendering", function()
     vim.fn.delete(result_path)
     assert.equal(3, #result.footers)
     for i, footer in ipairs(result.footers) do
-      if not footer:find("Overview", 1, true) then error("footer " .. i .. ": " .. vim.inspect(result)) end
+      local first = footer:find("[ Overview ]", 1, true)
+      if not first then error("footer " .. i .. ": " .. vim.inspect(result)) end
+      assert.equal(2 + math.floor((26 - 3 - 12) / 2), vim.api.nvim_strwidth(footer:sub(1, first - 1)))
     end
     assert.is_true(result.scrollable)
     assert.equal("Permissions", result.permissions)

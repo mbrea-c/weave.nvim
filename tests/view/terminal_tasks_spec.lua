@@ -236,7 +236,8 @@ describe("view.terminal_tasks", function()
     assert.truthy(text:find("(… 6 earlier lines omitted)", 1, true))
     assert.truthy(text:find("17", 1, true))
     assert.truthy(text:find("19", 1, true))
-    assert.is_nil(text:find("12", 1, true))
+    -- Match the omitted output line, not digits in the displayed cwd/store hash.
+    assert.is_nil(text:find("\n12\n", 1, true))
     -- an untouched stream reads (empty); a finished view has no kill button
     assert.truthy(text:find("(empty)", 1, true))
     assert.is_nil(text:find("kill task", 1, true))

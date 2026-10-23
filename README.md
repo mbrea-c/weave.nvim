@@ -132,8 +132,9 @@ running** — reopen with `:Weave`.
 
 ### Overview
 
-The **Overview** button stays at the bottom of the sidebar, even when the window
-is too short for its contents. The body above it is clipped in the same buffer,
+The centered **Overview** button uses fibrous's themed `[ Overview ]` button
+style and stays at the bottom of the sidebar, even when the window is too short
+for its contents. The body above it is clipped in the same buffer,
 not independently scrollable, and hidden controls cannot receive hover or
 activation or enter Tab/jump navigation.
 
