@@ -37,9 +37,9 @@ local function mount_transcript(store)
   )
 end
 
-local function header(status, kind, title, expanded)
+local function header(_status, kind, title, expanded)
   local chevron = expanded and Theme.CHEVRON.expanded or Theme.CHEVRON.collapsed
-  return chevron .. " " .. Theme.STATUS_ICON[status] .. " " .. Theme.KIND_ICON[kind] .. "[" .. kind .. "] " .. title
+  return " " .. chevron .. " " .. Theme.KIND_ICON[kind] .. "[" .. kind .. "] " .. title
 end
 
 --- A subrenderer/renderer that emits one identifiable line.

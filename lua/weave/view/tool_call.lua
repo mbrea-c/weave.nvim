@@ -4,7 +4,7 @@
 -- `Entry` is the default rendering, split into three subrenderers it takes as
 -- optional props:
 --
---   render_header    the chevron/status/tag/title row that toggles expansion
+--   render_header    the [+]/[-] control (toggles expansion), tag, and title
 --                    (the tag is the ACP kind, or `w:<tool>` for a call that
 --                    went through weave's own clankbox suite — see M.tool_tag;
 --                    a weave tool's title is its meaningful argument — path,
@@ -329,44 +329,47 @@ end
 
 -- ── Default subrenderers ────────────────────────────────────────────────────
 
---- The header row: chevron, status glyph, kind glyph + tag, title. The tag is
---- the ACP kind, or `w:<tool>` when the call is one of weave's own clankbox
---- tools (M.tool_tag). Pressing it (<CR>/click) toggles expansion.
+--- The header row: a status-colored [+]/[-] control, kind glyph + tag,
+--- and title. Only the control toggles expansion (<CR>/click); the rest is
+--- plain text. The tag is the ACP kind or `w:<tool>` for Weave's own tools.
 --- @param props weave.view.ToolCallProps
 function M.Header(_, props)
   local tc = props.block
   local effective_status = props.awaiting and "awaiting_permission" or (tc.status or "pending")
-  local status_icon = Theme.STATUS_ICON[effective_status] or "○"
   local kind_icon = Theme.KIND_ICON[tc.kind or "other"] or Theme.KIND_ICON.other
-  local chevron = props.expanded and Theme.CHEVRON.expanded or Theme.CHEVRON.collapsed
+  local disclosure = props.expanded and Theme.CHEVRON.expanded or Theme.CHEVRON.collapsed
   -- Header + [kind] tag share the status colour; the tag is bold so the tool
   -- type stays emphasized while the whole header signals state at a glance.
   local header_hl = Theme.HEADER_HL[effective_status] or "Function"
   local tag_hl = Theme.KIND_TAG_HL[effective_status] or "Function"
 
   return {
-    comp = ui.button,
-    props = {
-      theme = false, -- bare header, no button chrome
-      -- The header WRAPS. A tool call's title is its meaningful argument — a
-      -- command line, a path, a search pattern — and those are routinely wider
-      -- than the panel; clipped at the edge, the header showed the start of a
-      -- command and hid what it actually did.
-      --
-      -- Character wrap, not word wrap: the chevron/status/kind glyphs are
-      -- positioned by exact spacing, and word wrap tokenizes on %S+ — it
-      -- rebuilt the prefix with single spaces and moved the icons.
-      wrap = "char",
-      label = {
-        { chevron .. " ", hl = "@comment" },
-        { status_icon .. " ", hl = header_hl },
-        { kind_icon, hl = header_hl },
-        { "[" .. M.tool_tag(tc) .. "] ", hl = tag_hl },
-        { one_line(M.tool_title(tc)), hl = header_hl },
+    comp = ui.row,
+    props = { gap = 1, style = { padding = { left = 1 } } },
+    children = {
+      {
+        comp = ui.button,
+        props = {
+          theme = false, label = disclosure, width = vim.api.nvim_strwidth(disclosure), height = 1,
+          style = { text_hl = header_hl, _hover = { text_hl = tag_hl } },
+          on_press = function()
+            props.store:toggle_tool_call(tc.tool_call_id)
+          end,
+        },
       },
-      on_press = function()
-        props.store:toggle_tool_call(tc.tool_call_id)
-      end,
+      {
+        comp = ui.text,
+        props = {
+          -- A separate, one-row button keeps title continuations inert and
+          -- gives Tab/jump navigation exactly one disclosure target.
+          grow = 1, wrap = "char",
+          text = {
+            { kind_icon, hl = header_hl },
+            { "[" .. M.tool_tag(tc) .. "] ", hl = tag_hl },
+            { one_line(M.tool_title(tc)), hl = header_hl },
+          },
+        },
+      },
     },
   }
 end

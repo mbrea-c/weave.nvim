@@ -33,7 +33,7 @@ M.KIND_ICON = {
 }
 
 -- Collapsed/expanded affordance drawn at the head of every tool-call row.
-M.CHEVRON = { collapsed = "", expanded = "" }
+M.CHEVRON = { collapsed = "[+]", expanded = "[-]" }
 
 -- Default foreground per tool-call status. These seed the standalone
 -- WeaveToolHeader*/WeaveToolKindTag* groups below; they are NOT derived

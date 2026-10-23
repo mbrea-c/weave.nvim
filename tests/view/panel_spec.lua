@@ -188,7 +188,7 @@ describe("view.panel shell", function()
     handle.close()
   end)
 
-  it("<CR> on a tool-call header toggles it, through the container's interaction layer", function()
+  it("<CR> on a tool-call disclosure toggles it, through the container's interaction layer", function()
     local handle, store = open_panel()
     store:upsert_tool_call({ tool_call_id = "t1", kind = "execute", argument = "ls -la", status = "pending" })
 

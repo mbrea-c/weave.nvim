@@ -161,7 +161,7 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | `<C-c>` | `cancel` | Cancel the running turn — **keeps** the queue (moves straight on to the next queued prompt) |
 | `<C-Up>` | `recall_older` | In the prompt: recall previous prompt. Walks up through queued prompts (edit them in place) then sent history (recalled as a fresh copy); your draft is preserved |
 | `<C-Down>` | `recall_newer` | In the prompt: back down towards your draft |
-| `za` | `toggle_tool_call` | On a tool-call header: expand/collapse it (same as `<CR>` activation) |
+| `za` | `toggle_tool_call` | On a tool-call `[+]` / `[-]` control: expand/collapse it (same as `<CR>` activation) |
 | `zR` / `zM` | `expand_all` / `collapse_all` | Expand / collapse all tool calls |
 | `K` | `peek` | Over a transcript entry: its raw source in a scrollable float (yank/search-friendly). Over a **tool call**: the whole call as indented JSON. Dismissed with `q`/`<Esc>` — or by focusing anything else |
 | `;;t` | `toggle_thoughts` | Toggle thinking blocks |
@@ -900,9 +900,14 @@ which is parameterized by three subrenderers you can swap individually:
 
 | prop | what it draws |
 | --- | --- |
-| `render_header` | the chevron / status glyph / tag / title row; pressing it toggles expansion |
+| `render_header` | the status-colored `[+]` / `[-]` control, tag, and title; only the control toggles expansion |
 | `render_body` | directly under the header, **always visible** — the call's primary display (the builtin draws the edit diff here) |
 | `render_metadata` | the `<CR>`-toggleable detail: kind, file, status, raw input/output, content body |
+
+`[+]` means collapsed; `[-]` means expanded. Click any of the control's three
+characters, or reach it with **Tab** and press **Enter** (`za` also activates it
+inside the panel). The tag, title, surrounding padding, and wrapped title lines
+do not toggle expansion. Status colors are retained on the control and header.
 
 The header's bracketed tag is normally the ACP **kind** (`[edit]`, `[execute]`,
 …), but a call that went through weave's **own** clankbox tool suite is tagged

@@ -83,9 +83,9 @@ local function wait_float(needle, exclude)
   return win, buf
 end
 
-local function tool_header(status, kind, title, expanded)
+local function tool_header(_status, kind, title, expanded)
   local chevron = expanded and Theme.CHEVRON.expanded or Theme.CHEVRON.collapsed
-  return chevron .. " " .. Theme.STATUS_ICON[status] .. " " .. Theme.KIND_ICON[kind] .. "[" .. kind .. "] " .. title
+  return " " .. chevron .. " " .. Theme.KIND_ICON[kind] .. "[" .. kind .. "] " .. title
 end
 
 describe("view.transcript entries", function()
@@ -429,12 +429,12 @@ describe("view.transcript tool calls", function()
     handle.unmount()
   end)
 
-  it("<CR> on the header toggles expansion", function()
+  it("<CR> on the disclosure control toggles expansion", function()
     local store = SessionStore:new()
     store:upsert_tool_call({ tool_call_id = "t1", kind = "read", argument = "a.txt", status = "completed" })
     local handle = mount_transcript(store)
 
-    move_cursor(handle, 1, 0)
+    move_cursor(handle, 1, 2)
     press(handle, "<CR>")
     assert.is_true(store.state.expanded.t1)
     local lines = trimmed(handle.bufnr)
@@ -507,7 +507,7 @@ describe("view.transcript tool calls", function()
     handle.unmount()
   end)
 
-  it("a pending permission overrides the targeted call's status glyph", function()
+  it("a pending permission overrides the targeted call's disclosure color", function()
     local store = SessionStore:new()
     store:upsert_tool_call({ tool_call_id = "t1", kind = "execute", argument = "rm -rf", status = "in_progress" })
     store:enqueue_permission({
@@ -516,7 +516,8 @@ describe("view.transcript tool calls", function()
     })
     local handle = mount_transcript(store)
     local header = trimmed(handle.bufnr)[1]
-    assert.truthy(header:find(Theme.STATUS_ICON.awaiting_permission, 1, true))
+    assert.truthy(header:find(Theme.CHEVRON.collapsed, 1, true))
+    assert.is_true(#marks_with(handle.bufnr, Theme.HEADER_HL.awaiting_permission) > 0)
     handle.unmount()
   end)
 end)

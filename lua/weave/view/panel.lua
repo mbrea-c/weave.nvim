@@ -298,7 +298,7 @@ function M.open(opts)
   apply_maps(app.bufnr)
   if transcript.bufnr then
     apply_maps(transcript.bufnr)
-    -- za on a tool-call header = the familiar fold key, re-bound to the same
+    -- za on a tool-call disclosure = the familiar fold key, bound to the same
     -- activation <CR> performs (tool-call folds are store state, not folds).
     Keys.map(transcript.bufnr, "toggle_tool_call", "<CR>", { remap = true })
   end
