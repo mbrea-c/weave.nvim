@@ -31,7 +31,8 @@ local function fake_client()
     agent_info = { name = "fake-agent", version = "2.0" },
     calls = { set_config = {} },
   }
-  function client:create_session(_handlers, callback, _mcp)
+  function client:create_session(handlers, callback, _mcp)
+    self.handlers = handlers
     callback({
       sessionId = "sess-42",
       configOptions = {
@@ -173,7 +174,7 @@ describe("view.session_details", function()
       return session:get_store().state.meta.model == "Two"
     end))
     -- the field committed the new label
-    assert.same({ "Two" }, vim.api.nvim_buf_get_lines(input.buf, 0, -1, false))
+    assert.is_not_nil(inputs_of(handle)["Two"])
 
     handle.close()
   end)
@@ -203,5 +204,53 @@ describe("view.session_details", function()
     press("q")
     assert.is_false(handle.is_open())
     assert.is_false(vim.api.nvim_win_is_valid(handle.winid))
+  end)
+
+  it("refreshes visible config values, available options and fields after provider updates", function()
+    local session, client = started()
+    local handle = SessionDetails.open({ session = session })
+    client.handlers.on_session_update({
+      sessionUpdate = "config_option_update",
+      configOptions = {
+        { id = "opt-model", category = "model", name = "Model", currentValue = "m2",
+          options = { { value = "m2", name = "Two" }, { value = "m3", name = "Three" } } },
+        { id = "opt-late", name = "Late setting", currentValue = "yes",
+          options = { { value = "yes", name = "Yes" }, { value = "no", name = "No" } } },
+      },
+    })
+    pump()
+    local inputs = inputs_of(handle)
+    assert.is_not_nil(inputs["Two"])
+    assert.is_not_nil(inputs["Yes"])
+    assert.is_nil(inputs["High"])
+    assert.truthy(buffer_text(handle.bufnr):find("Late setting", 1, true))
+    vim.api.nvim_set_current_win(inputs["Two"].win)
+    press("<C-n>")
+    press("<CR>")
+    pump()
+    assert.same({ { "opt-model", "m3" } }, client.calls.set_config)
+    handle.close()
+  end)
+
+  it("shows an automatic default applied after the details window is opened", function()
+    local Config = require("weave.config")
+    local saved = Config.acp_providers["test-agent"]
+    Config.acp_providers["test-agent"] = { session_defaults = { ["opt-model"] = "m2" } }
+    local client = fake_client()
+    function client:set_config_option(_sid, _key, _value, cb) self.finish_default = cb end
+    local session = Session:new({ provider = "test-agent", get_instance = function(_, ready)
+      ready(client)
+      return client
+    end })
+    session:start()
+    pump()
+    Config.acp_providers["test-agent"] = saved
+    local handle = SessionDetails.open({ session = session })
+    assert.is_not_nil(inputs_of(handle)["One"])
+    client.finish_default({}, nil)
+    pump()
+    assert.is_not_nil(inputs_of(handle)["Two"])
+    handle.close()
+    session:stop()
   end)
 end)

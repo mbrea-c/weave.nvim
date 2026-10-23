@@ -9,6 +9,7 @@
 --- @field args? string[]
 --- @field env? table<string, string>
 --- @field mcpServers? weave.acp.McpServer[] Per-provider override of `mcp_servers`
+--- @field session_defaults? table<string, string> Provider config field ids to default value ids, applied to new ACP conversations until manually chosen
 --- @field sandbox? weave.SandboxConfig Per-provider override of the global `sandbox` (scalars win, path lists add)
 
 --- @class weave.ViewConfig Default panel geometry; a per-open opts value overrides.

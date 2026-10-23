@@ -6,9 +6,8 @@
 -- sessions list; opened for a session that is not the tab's current one it
 -- offers "Open in panel" (the caller supplies what opening means).
 --
--- The read-only rows are live store projections (use_store); the dropdowns
--- own their field state, so a successful set needs no re-render — the commit
--- already shows in the field, and the meta row updates through the store.
+-- Metadata and config fields track the store live. Native dropdowns are keyed
+-- by their provider value and options so late fields and defaults are visible.
 
 local mount = require("fibrous.inline.mount")
 local ui = require("fibrous.inline.components")
@@ -49,6 +48,7 @@ local function kind_row(kind, label_w, on_set)
   end
   return {
     comp = ui.row,
+    key = kind.id,
     props = { gap = 1 },
     children = {
       {
@@ -57,6 +57,7 @@ local function kind_row(kind, label_w, on_set)
       },
       {
         comp = ui.dropdown,
+        key = vim.json.encode({ kind.current or "", kind.available }),
         props = {
           options = options,
           value = current_label or "",
@@ -74,9 +75,10 @@ local function kind_row(kind, label_w, on_set)
 end
 
 --- @param ctx table
---- @param props { store: weave.store.SessionStore, kinds: weave.session.ConfigKind[], on_set: fun(key: string, id: string), on_open?: fun() }
+--- @param props { store: weave.store.SessionStore, get_kinds: fun(): weave.session.ConfigKind[], on_set: fun(key: string, id: string), on_open?: fun() }
 local function Details(ctx, props)
   local state = use_store(ctx, props.store)
+  local kinds = props.get_kinds()
   local preset = use_permissions(ctx)
   local meta = state.meta
 
@@ -109,14 +111,14 @@ local function Details(ctx, props)
   end
 
   rows[#rows + 1] = blank()
-  if #props.kinds == 0 then
+  if #kinds == 0 then
     rows[#rows + 1] = dim("(nothing configurable for this session)")
   else
     local label_w = 0
-    for _, kind in ipairs(props.kinds) do
+    for _, kind in ipairs(kinds) do
       label_w = math.max(label_w, vim.api.nvim_strwidth(kind.label))
     end
-    for _, kind in ipairs(props.kinds) do
+    for _, kind in ipairs(kinds) do
       rows[#rows + 1] = kind_row(kind, label_w, props.on_set)
     end
   end
@@ -161,7 +163,7 @@ function M.open(opts)
   local height = 8 + math.max(#kinds, 1) + (opts.on_open and 2 or 0) + 2
   app = mount.floating(Details, {
     store = store,
-    kinds = kinds,
+    get_kinds = function() return session:config_kinds() end,
     on_set = function(key, id)
       session:set_config(key, id)
     end,

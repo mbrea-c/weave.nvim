@@ -19,6 +19,7 @@ local AgentInstance = require("weave.acp.agent_instance")
 local Config = require("weave.config")
 local FileSystem = require("weave.utils.file_system")
 local Logger = require("weave.utils.logger")
+local SessionConfig = require("weave.session_config")
 local SessionSource = require("weave.session_source")
 local SessionStore = require("weave.session_store")
 
@@ -33,11 +34,13 @@ local SessionStore = require("weave.session_store")
 --- thought_level, ...). `set(id)` knows whether to call set_model/set_mode
 --- (Kiro) or set_config_option (ACP).
 --- @class weave.session.ConfigKind
---- @field key string category key ("model", "mode", "thought_level", ...)
+--- @field id string Provider field id (legacy: "model" or "mode")
+--- @field category? string ACP category, used to order dependent defaults
+--- @field key string UI key: unique category or provider field id
 --- @field label string human label for the kind ("Model", "Thinking effort")
 --- @field current? string
 --- @field available weave.session.Option[]
---- @field set fun(id: string, cb: fun(ok: boolean)): nil
+--- @field set fun(id: string, cb: fun(ok: boolean, response?: table)): nil
 
 --- @class weave.Session
 --- @field _store weave.store.SessionStore
@@ -162,11 +165,12 @@ end
 --- @param opts { restore?: string }|nil restore = saved ACP session id
 function Session:start(opts)
   local restore = opts and opts.restore
+  local config = self:_reset_config_session(not restore)
   self._store:set_status("busy")
 
   local client = self._get_instance(self._provider_name, function(c)
     vim.schedule(function()
-      self:_on_client_ready(c, restore)
+      if self._config_session == config and not config.closed then self:_on_client_ready(c, restore) end
     end)
   end)
 
@@ -201,8 +205,10 @@ function Session:_on_client_ready(client, restore)
     return self:restore(restore)
   end
 
+  local config = self._config_session
   client:create_session(self:_build_handlers(), function(response, err)
     vim.schedule(function()
+      if self._config_session ~= config or config.closed then return end
       self._store:set_status("idle")
 
       if err or not response then
@@ -215,8 +221,9 @@ function Session:_on_client_ready(client, restore)
 
       self._session_id = response.sessionId
       Logger.debug("session ready " .. response.sessionId)
-      self:_capture_config(response)
+      self:_adopt_config(response)
       self:_publish_meta()
+      config:activate()
       self:_conversation_ready()
     end)
   end, self:_resolve_mcp_servers())
@@ -266,37 +273,66 @@ function Session:config_kinds()
   return out
 end
 
---- Apply a config choice: validate it against the captured options, send it
---- through the kind's `set` closure, and on success track `current` and
---- mirror the option's label into the sidebar meta.
---- @param key string category key ("model", "mode", "thought_level", ...)
+--- Apply a manual choice through the conversation's serialized config queue.
+--- @param key string UI key or provider field id
 --- @param id string option id to select
 --- @param cb? fun(ok: boolean)
 function Session:set_config(key, id, cb)
-  cb = cb or function() end
-  local cfg = self._config[key]
-  local option
-  for _, o in ipairs(cfg and cfg.available or {}) do
-    if o.id == id then
-      option = o
-    end
-  end
-  if not option then
-    cb(false)
+  local cfg = self._config[key] or self._config_by_id and self._config_by_id[key]
+  if not cfg or not self._config_session then
+    if cb then cb(false) end
     return
   end
-  cfg.set(id, function(ok)
-    vim.schedule(function()
-      if not ok then
-        Logger.notify("Failed to set " .. cfg.label .. ".", vim.log.levels.ERROR)
-        cb(false)
-        return
-      end
-      cfg.current = id
-      self._store:set_meta({ [key] = option.label })
-      cb(true)
-    end)
-  end)
+  self._config_session:set(cfg.id, id, cb)
+end
+
+--- Reset intent and pending config writes at an ACP conversation boundary.
+--- @private
+function Session:_reset_config_session(defaults_enabled)
+  if self._config_session then self._config_session:close() end
+  self._config, self._config_order, self._config_by_id = {}, {}, {}
+  self._config_snapshot, self._early_config_options = {}, nil
+  local provider = Config.acp_providers[self._provider_name] or {}
+  local config = SessionConfig.new({
+    defaults = vim.deepcopy(provider.session_defaults or {}),
+    enabled = defaults_enabled,
+    on_snapshot = function(response)
+      self:_capture_config(response)
+      self:_publish_meta()
+    end,
+    on_applied = function(kind, selected)
+      self:_remember_config_value(kind)
+      self._store:set_meta({ [kind.key] = selected.label })
+    end,
+    on_error = function(kind, automatic)
+      local message = "Failed to set " .. kind.label .. (automatic and " default." or ".")
+      Logger.notify(message, vim.log.levels.ERROR)
+    end,
+  })
+  self._config_session = config
+  return config
+end
+
+--- Keep cached partial snapshots consistent with acknowledged writes.
+--- @private
+function Session:_remember_config_value(kind)
+  local snapshot = self._config_snapshot
+  for _, opt in ipairs(snapshot.configOptions or {}) do
+    if opt.id == kind.id then opt.currentValue = kind.current end
+  end
+  if kind.id == "model" and snapshot.models then snapshot.models.currentModelId = kind.current end
+  if kind.id == "mode" and snapshot.modes then snapshot.modes.currentModeId = kind.current end
+end
+
+--- Initial responses can be followed by notifications before our scheduled
+--- creation callback runs. The latest notification wins over that response.
+--- @private
+function Session:_adopt_config(response)
+  self:_capture_config(response)
+  if self._early_config_options then
+    self:_capture_config({ configOptions = self._early_config_options })
+    self._early_config_options = nil
+  end
 end
 
 --- Show a picker for a config kind ("model" | "mode") and apply the choice
@@ -323,110 +359,95 @@ function Session:show_config_picker(kind)
   end)
 end
 
---- Capture the selectable config kinds from a session-creation response,
---- normalising the two provider shapes:
----   * Kiro legacy: response.models / response.modes (availableX + currentX),
----     changed via set_model / set_mode.
----   * ACP standard: response.configOptions[] — EVERY category (model, mode,
----     thought_level, ...), changed via set_config_option.
---- Each kind's `set(id, cb)` closure reads self._session_id at CALL time —
---- config is process-level and may outlive the session it was captured from.
+--- Capture provider config snapshots. Standard updates replace their field
+--- list, while legacy model/mode data survives unrelated standard updates.
 --- @private
---- @param response table SessionCreationResponse
 function Session:_capture_config(response)
-  local config, order = {}, {}
-
+  local snapshot = self._config_snapshot
+  for _, key in ipairs({ "models", "modes", "configOptions" }) do
+    if response[key] ~= nil then snapshot[key] = vim.deepcopy(response[key]) end
+  end
+  local config, order, by_id = {}, {}, {}
   local function capture(key, kind)
-    if not config[key] then
-      order[#order + 1] = key
-    end
+    if not config[key] then order[#order + 1] = key end
     kind.key = key
-    config[key] = kind
+    config[key], by_id[kind.id] = kind, kind
   end
 
-  if response.models then
+  if snapshot.models then
     local available = {}
-    for _, m in ipairs(response.models.availableModels or {}) do
+    for _, m in ipairs(snapshot.models.availableModels or {}) do
       available[#available + 1] = { id = m.modelId, label = m.name }
     end
     capture("model", {
-      label = "Model",
-      current = response.models.currentModelId,
-      available = available,
+      id = "model", category = "model", label = "Model",
+      current = snapshot.models.currentModelId, available = available,
       set = function(id, cb)
-        self._client:set_model(self._session_id, id, function(_r, err)
-          cb(not err)
-        end)
+        self._client:set_model(self._session_id, id, function(result, err) cb(not err, result) end)
       end,
     })
   end
-
-  if response.modes then
+  if snapshot.modes then
     local available = {}
-    for _, m in ipairs(response.modes.availableModes or {}) do
+    for _, m in ipairs(snapshot.modes.availableModes or {}) do
       available[#available + 1] = { id = m.id, label = m.name }
     end
     capture("mode", {
-      label = "Mode",
-      current = response.modes.currentModeId,
-      available = available,
+      id = "mode", category = "mode", label = "Mode",
+      current = snapshot.modes.currentModeId, available = available,
       set = function(id, cb)
-        self._client:set_mode(self._session_id, id, function(_r, err)
-          cb(not err)
-        end)
+        self._client:set_mode(self._session_id, id, function(result, err) cb(not err, result) end)
       end,
     })
   end
 
-  for _, opt in ipairs(response.configOptions or {}) do
+  local counts, ids = {}, {}
+  for _, opt in ipairs(snapshot.configOptions or {}) do
+    if opt.id then ids[opt.id] = true end
+    if opt.category then counts[opt.category] = (counts[opt.category] or 0) + 1 end
+  end
+  for _, opt in ipairs(snapshot.configOptions or {}) do
     local config_id = opt.id
-    -- Spec-compliant agents send `category` (the config kind: "model", "mode",
-    -- "thought_level"); some agents omit it and only send `id`. Key on category
-    -- when present so _publish_meta / show_config_picker resolve "model"/"mode",
-    -- else fall back to the id. An option with NEITHER can't be applied
-    -- (set_config_option needs an id) and would nil-index config[key] — skip it
-    -- rather than crash the whole config capture and strand the session.
-    local key = opt.category or config_id
-    if key == nil then
-      Logger.debug("skipping config option with no category or id")
+    if type(config_id) ~= "string" then
+      Logger.debug("skipping config option with no id")
     else
+      -- Keep convenient category keys for model/mode pickers, but never
+      -- collapse multiple independent fields that share a category.
+      local key = opt.category
+      if not key or key == "other" or counts[key] > 1 or (ids[key] and key ~= config_id) then key = config_id end
       local available = {}
       for _, o in ipairs(opt.options or {}) do
         available[#available + 1] = { id = o.value, label = o.name }
       end
-      -- opt.name is the agent's own label; fall back to a title-cased category
-      -- key ("thought_level" → "Thought level"), else the raw key
       local label = opt.name
       if not label and type(opt.category) == "string" then
         label = opt.category:sub(1, 1):upper() .. opt.category:sub(2):gsub("_", " ")
       end
       capture(key, {
-        label = label or key,
-        current = opt.currentValue,
-        available = available,
+        id = config_id, category = opt.category, label = label or key,
+        current = opt.currentValue, available = available,
         set = function(id, cb)
-          self._client:set_config_option(self._session_id, config_id, id, function(_r, err)
-            cb(not err)
-          end)
+          self._client:set_config_option(self._session_id, config_id, id, function(result, err) cb(not err, result) end)
         end,
       })
     end
   end
-
-  self._config = config
-  self._config_order = order
+  self._config, self._config_order, self._config_by_id = config, order, by_id
+  self._config_session:update(self:config_kinds())
 end
 
 --- @private
 --- @return table handlers weave.acp.ClientHandlers
 function Session:_build_handlers()
+  local config = self._config_session
   return AcpBridge.build_handlers(self._store, {
-    -- Read per-update: during a session/load replay the bridge appends the
-    -- historical text but skips the generating/thinking status flaps.
-    is_restoring = function()
-      return self._restoring
-    end,
+    is_restoring = function() return self._restoring end,
     on_config_options_update = function(config_options)
+      if self._config_session ~= config or config.closed then return end
+      if not self._session_id then
+        self._early_config_options = config_options
+        return
+      end
       self:_capture_config({ configOptions = config_options })
       self:_publish_meta()
     end,
@@ -879,6 +900,7 @@ end
 
 --- Stop the conversation: cancel the ACP session. Does NOT touch views.
 function Session:stop()
+  if self._config_session then self._config_session:close() end
   if self._client and self._session_id then
     self._client:cancel_session(self._session_id)
   end
@@ -902,10 +924,12 @@ function Session:new_conversation()
   self:_drop_steered()
   self._cancelling = false
   self._store:reset()
+  local config = self:_reset_config_session(true)
   self._store:set_status("busy")
 
   self._client:create_session(self:_build_handlers(), function(response, err)
     vim.schedule(function()
+      if self._config_session ~= config or config.closed then return end
       self._store:set_status("idle")
       if err or not response then
         self._store:append_entry({
@@ -915,8 +939,9 @@ function Session:new_conversation()
         return
       end
       self._session_id = response.sessionId
-      self:_capture_config(response)
+      self:_adopt_config(response)
       self._store:set_meta({ session_id = response.sessionId })
+      config:activate()
       self:_conversation_ready()
     end)
   end, self:_resolve_mcp_servers())
@@ -942,6 +967,7 @@ function Session:restore(session_id)
   self:_drop_steered()
   self._cancelling = false
   self._store:reset()
+  local config = self:_reset_config_session(false)
   self._store:set_status("busy")
   self._restoring = true
 
@@ -952,6 +978,7 @@ function Session:restore(session_id)
     self:_build_handlers(),
     function(err, result)
       vim.schedule(function()
+        if self._config_session ~= config or config.closed then return end
         self._restoring = false
         self._store:set_status("idle")
 
@@ -967,8 +994,9 @@ function Session:restore(session_id)
         -- session/new does — recapture so the pickers track the restored
         -- session, and republish the sidebar meta.
         self._session_id = session_id
-        self:_capture_config(result or {})
+        self:_adopt_config(result or {})
         self:_publish_meta()
+        config:activate()
         self:_conversation_ready()
       end)
     end

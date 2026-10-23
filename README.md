@@ -829,6 +829,10 @@ require("weave").setup({
       args = { "--acp" },             -- optional
       env = { API_KEY = "…" },        -- optional
       -- mcpServers = { … },          -- optional per-provider MCP override
+      session_defaults = {           -- optional; IDs depend on your provider
+        ["model-option-id"] = "preferred-model-value-id",
+        ["effort-option-id"] = "high",
+      },
     },
   },
 })
@@ -839,6 +843,38 @@ Built-in provider keys (you still need the corresponding binary on `PATH`):
 `cursor-acp`, `copilot-acp`, `auggie-acp`, `mistral-vibe-acp`, `cline-acp`,
 `goose-acp`, `kiro-acp`, `pi-acp`. See `lua/weave/config_default.lua` for
 their exact commands.
+
+#### Provider session defaults
+
+A provider's `session_defaults` maps ACP config **field IDs** (`configOptions[].id`)
+to **value IDs** (`options[].value`), not display labels or category names. The
+example above uses placeholder IDs; use those advertised by your provider.
+For older providers exposing only `models`/`modes`, use `model`/`mode` as
+the field IDs and their model/mode IDs as values. Omit the map for no automatic
+defaults.
+
+Defaults are reconciled at session creation and whenever the provider updates
+its available config. A missing field or unavailable value stays pending until
+it becomes valid. Model defaults run before mode and other dependent defaults,
+and each response's updated options are checked before the next write. The
+session-details window tracks those fields and values while open.
+
+A manual selection overrides that field's default for the rest of that ACP
+conversation, even if the field later disappears and returns. Explicitly
+reselecting the current value through the model/mode picker also counts.
+Automatic defaults do not count as manual selections. Config writes run one at
+a time, with manual choices ahead of pending defaults. If a default is already
+in flight, the manual choice follows it; prompts and tools are not queued here.
+
+Repeated identical notifications do not repeatedly retry a rejected or
+unconfirmed default. A changed value, available value set, or relevant
+model/mode configuration allows reconsideration. Failed writes are reported
+through the usual notification.
+
+Defaults and manual-choice tracking are per conversation, not per provider
+process. `/new` resets them and applies defaults again. Restored conversations
+keep their saved configuration: automatic defaults are disabled there,
+including for fields discovered later; manual changes still work.
 
 ### MCP servers
 
