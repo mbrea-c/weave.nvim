@@ -134,7 +134,8 @@ end
 --- cwd, and activate the pick into a FRESH registry entry (unlike ;;r, which
 --- restores in place over the current conversation).
 --- @param get_instance function|nil spec injection; defaults to AgentInstance
-local function load_saved_flow(get_instance)
+--- @param config_defaults? table<string, string>
+local function load_saved_flow(get_instance, config_defaults)
   pick_provider(function(provider)
     local get = get_instance or AgentInstance.get_instance
     get(provider, function(client)
@@ -168,6 +169,7 @@ local function load_saved_flow(get_instance)
               select_session(Registry.add({
                 provider = provider,
                 restore = choice.session_id,
+                config_defaults = config_defaults,
                 get_instance = get_instance,
               }))
             end)
@@ -384,11 +386,29 @@ function M.is_open()
   return tab_panel() ~= nil
 end
 
+--- Create, register and asynchronously start a Session. Background by default:
+--- no selection, panel or provider picker. With open=true, select it for this
+--- tab and open/rebind its panel. Closing the panel does not stop the session.
+--- @param opts { provider?: string, config_defaults?: table<string, string>, restore?: string, open?: boolean, get_instance?: function }|nil
+--- @return weave.Session session
+function M.new_session(opts)
+  opts = opts or {}
+  injected_get_instance = opts.get_instance or injected_get_instance
+  local entry = Registry.add({
+    provider = opts.provider,
+    config_defaults = opts.config_defaults,
+    get_instance = opts.get_instance,
+    restore = opts.restore,
+  })
+  if opts.open then select_session(entry) end
+  return entry.session
+end
+
 --- Open the panel for the current tab's selected session (starting and
 --- selecting a new one when the tab has none); focuses the prompt if already
 --- open.
---- @param opts { provider?: string, get_instance?: function, width?: integer, sidebar_width?: integer, prompt_height?: integer }|nil
----   provider/get_instance apply only when a session is (re)created.
+--- @param opts { provider?: string, config_defaults?: table<string, string>, get_instance?: function, width?: integer, sidebar_width?: integer, prompt_height?: integer }|nil
+---   provider/config_defaults/get_instance apply only when a session is created.
 function M.open(opts)
   opts = opts or {}
   local p = tab_panel()
@@ -401,7 +421,9 @@ function M.open(opts)
 
   local entry = Registry.selected()
   if not entry then
-    entry = Registry.add({ provider = opts.provider, get_instance = opts.get_instance })
+    entry = Registry.add({
+      provider = opts.provider, config_defaults = opts.config_defaults, get_instance = opts.get_instance,
+    })
     Registry.select(entry.key)
   end
   open_panel(entry, opts)
@@ -427,7 +449,7 @@ end
 
 --- Open the session modal for the current tab: every active session, this
 --- tab's selection, per-row close, and the new/load-saved flows.
---- @param opts { get_instance?: function }|nil get_instance is spec injection
+--- @param opts { config_defaults?: table<string, string>, get_instance?: function }|nil get_instance is spec injection
 ---   for the new-session and load-saved flows.
 --- @return weave.view.SessionModalHandle handle
 function M.sessions(opts)
@@ -449,12 +471,14 @@ function M.sessions(opts)
       pick_provider(function(provider)
         pick_mode(provider, function(mode)
           AgentInstance.set_mode_override(provider, mode)
-          select_session(Registry.add({ provider = provider, get_instance = get_instance }))
+          M.new_session({
+            provider = provider, config_defaults = opts.config_defaults, get_instance = get_instance, open = true,
+          })
         end)
       end)
     end,
     on_load_saved = function()
-      load_saved_flow(get_instance)
+      load_saved_flow(get_instance, opts.config_defaults)
     end,
   })
 end

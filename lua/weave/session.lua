@@ -47,6 +47,7 @@ local SessionStore = require("weave.session_store")
 --- @field _client? table ACPClient (or an injected double)
 --- @field _session_id? string
 --- @field _provider_name string
+--- @field _config_defaults table<string, string> Per-session overrides of provider session_defaults
 --- @field _get_instance fun(provider: string, on_ready: fun(client: table)): table|nil
 --- @field _turn_active boolean Whether a prompt turn is currently in flight
 --- @field _steer_queue weave.session.Message[] Messages to send once a steered turn ends as cancelled, in arrival order (never a scalar slot: two interruptions can land on one dying turn)
@@ -58,7 +59,7 @@ local SessionStore = require("weave.session_store")
 local Session = {}
 Session.__index = Session
 
---- @param opts { provider?: string, get_instance?: fun(provider: string, on_ready: fun(client: table)): table|nil }|nil
+--- @param opts { provider?: string, config_defaults?: table<string, string>, get_instance?: fun(provider: string, on_ready: fun(client: table)): table|nil }|nil
 ---   get_instance is injectable so specs can script the client; defaults to
 ---   AgentInstance.get_instance (spawn or reuse the provider process).
 --- @return weave.Session session
@@ -69,6 +70,7 @@ function Session:new(opts)
     _client = nil,
     _session_id = nil,
     _provider_name = opts.provider or Config.provider,
+    _config_defaults = vim.deepcopy(opts.config_defaults or {}),
     _get_instance = opts.get_instance or AgentInstance.get_instance,
     _turn_active = false,
     _steer_queue = {},
@@ -294,7 +296,7 @@ function Session:_reset_config_session(defaults_enabled)
   self._config_snapshot, self._early_config_options = {}, nil
   local provider = Config.acp_providers[self._provider_name] or {}
   local config = SessionConfig.new({
-    defaults = vim.deepcopy(provider.session_defaults or {}),
+    defaults = vim.tbl_extend("force", provider.session_defaults or {}, self._config_defaults),
     enabled = defaults_enabled,
     on_snapshot = function(response)
       self:_capture_config(response)

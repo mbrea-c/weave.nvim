@@ -853,6 +853,15 @@ For older providers exposing only `models`/`modes`, use `model`/`mode` as
 the field IDs and their model/mode IDs as values. Omit the map for no automatic
 defaults.
 
+For one Session, pass `config_defaults = { [field_id] = value_id }` to
+`weave.new_session(opts)`, or to `weave.open(opts)` / `weave.toggle(opts)`
+when creating a session. Fields in this map override the provider's
+`session_defaults`; omitted fields still inherit their provider defaults.
+An invalid override waits until it becomes available instead of falling back
+to the provider's value. The map is copied at creation, so caller mutations
+and other sessions cannot change its overrides. The internal registry's
+`add(opts)` and `Session:new(opts)` accept the same option.
+
 Defaults are reconciled at session creation and whenever the provider updates
 its available config. A missing field or unavailable value stays pending until
 it becomes valid. Model defaults run before mode and other dependent defaults,
@@ -872,9 +881,11 @@ model/mode configuration allows reconsideration. Failed writes are reported
 through the usual notification.
 
 Defaults and manual-choice tracking are per conversation, not per provider
-process. `/new` resets them and applies defaults again. Restored conversations
-keep their saved configuration: automatic defaults are disabled there,
-including for fields discovered later; manual changes still work.
+process. `/new` resets manual-choice tracking and reapplies defaults, retaining
+that Session's copied `config_defaults` overrides. Restored conversations keep
+their saved configuration: automatic defaults (including per-session overrides)
+are disabled there, including for fields discovered later; manual changes still
+work. A subsequent `/new` enables defaults again.
 
 ### MCP servers
 
@@ -1348,6 +1359,7 @@ weave.open(opts)       -- open (or focus the prompt if already open)
 weave.close()          -- close the panel; the session keeps running
 weave.is_open()        -- boolean: does the current tab have a panel?
 
+weave.new_session(opts) -- create + start a managed Session; returns it
 weave.sessions(opts)   -- open the session modal; returns its handle
 weave.get_session()    -- the current tab's selected Session (or nil)
 weave.stop()           -- close every session (and all their panels)
@@ -1359,9 +1371,37 @@ weave.dismiss_annotation()   -- drop the agent's annotation under the cursor
 weave.dismiss_annotations()  -- drop them all ({ buffer = true } for this file only)
 ```
 
-`open`/`toggle` accept `{ provider?, width?, sidebar_width?, prompt_height? }`
-— `provider` chooses the agent when a session is created; the others size the
-panel.
+`new_session(opts)` always creates a new managed Session, even if another is
+selected. It accepts `provider` (default: the configured provider),
+`config_defaults`, optional `restore` (a saved ACP session ID), and `open`
+(default `false`). With `open = true`, it selects the new session for the
+current tab and opens its panel, or rebinds an existing panel at the same
+geometry. By default it does neither: existing selections, panels, and focus
+stay untouched. The session appears in the sessions list either way.
+
+```lua
+local session = require("weave").new_session({
+  provider = "kiro-acp",
+  config_defaults = {
+    ["model-option-id"] = "preferred-model-value-id", -- provider-specific IDs
+  },
+  open = true, -- omit for a background session
+})
+```
+
+Startup is asynchronous: the returned Session may not be ready yet. Check
+`session:is_ready()` before submitting prompts. Readiness means the ACP
+session exists; automatic config defaults can still be reconciling. Closing
+its panel leaves it running; the sessions modal can select or close it, and
+`weave.stop()` shuts down all managed sessions.
+
+`open`/`toggle` accept
+`{ provider?, config_defaults?, width?, sidebar_width?, prompt_height? }`.
+`provider` and `config_defaults` apply only when they create a session, not
+when focusing or reopening an existing one. The other options size the panel.
+`sessions({ config_defaults = ... })` passes defaults to its new/load-saved
+flows; restored conversations still preserve their saved config as described
+under [Provider session defaults](#provider-session-defaults).
 
 ### The Session
 

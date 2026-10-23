@@ -33,14 +33,16 @@ local next_key = 0
 --- Create + start a session and register it. With `restore`, the new session
 --- activates a saved conversation (session/load) instead of creating a fresh
 --- one. Does NOT select it anywhere — callers pair add() with select().
---- @param opts { provider?: string, get_instance?: function, restore?: string }|nil
+--- @param opts { provider?: string, config_defaults?: table<string, string>, get_instance?: function, restore?: string }|nil
 --- @return weave.registry.Entry entry
 function M.add(opts)
   opts = opts or {}
   next_key = next_key + 1
   local entry = {
     key = next_key,
-    session = Session:new({ provider = opts.provider, get_instance = opts.get_instance }),
+    session = Session:new({
+      provider = opts.provider, config_defaults = opts.config_defaults, get_instance = opts.get_instance,
+    }),
     prefs = Settings.new_view(),
     provider = opts.provider or Config.provider,
   }
