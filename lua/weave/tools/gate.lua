@@ -206,7 +206,7 @@ end
 --- @param name string Stable short identity ("read", "task_start", ...),
 ---   without the public `weave_` prefix
 --- @param def table The raw def (sync or async)
---- @param opts { resource?: fun(args: table): string|nil, kind?: string }
+--- @param opts { resource?: fun(args: table, ctx?: table): string|nil, kind?: string }
 ---   resource extracts the action's resource from the call arguments; kind is
 ---   the ACP ToolKind shown for ask prompts (read/edit/execute/other).
 --- @return table wrapped Always-async def with the same schema/description
@@ -215,6 +215,7 @@ function M.wrap(name, def, opts)
   return {
     description = def.description,
     inputSchema = def.inputSchema,
+    annotations = def.annotations,
     async = true,
     handler = function(args, respond, ctx)
       -- nil context is the trusted, direct Lua test/API path. A protocol call
@@ -227,13 +228,18 @@ function M.wrap(name, def, opts)
       -- itself carries no tool name). See weave.tool_ident. Recorded before the
       -- permission decision so even a denied call is still tagged as ours.
       require("weave.tool_ident").record(name, args)
-      local action = { tool = "weave:" .. name, resource = opts.resource and opts.resource(args) or nil }
+      local action = { tool = "weave:" .. name, resource = opts.resource and opts.resource(args, ctx) or nil }
       local title = ("weave tool %s%s"):format(name, action.resource and (": " .. action.resource) or "")
       local function reply(ret)
         if not M.valid(ctx) then return respond(refusal("permission denied: stale session context")) end
         return respond(ret)
       end
       M.mediate(action, title, opts.kind, function()
+        -- Buffer ids can acquire a different filename while an approval is
+        -- pending. An approval for the old resource must not authorize it.
+        if opts.resource and opts.resource(args, ctx) ~= action.resource then
+          return reply(refusal("permission not granted: target changed during approval; retry the tool call"))
+        end
         if def.async then
           def.handler(args, reply, ctx)
         else

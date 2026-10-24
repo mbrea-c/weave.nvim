@@ -38,6 +38,7 @@ local SHORT_NAMES = {
   "edit",
   "glob",
   "grep",
+  "diagnostics", "document_symbols", "workspace_symbols", "definition", "references", "hover",
   "task_start",
   "task_list",
   "task_status",
@@ -127,6 +128,15 @@ function M.register_into(server)
   end
   register("glob", Gate.wrap("glob", search.glob, { resource = search_resource, kind = "read" }))
   register("grep", Gate.wrap("grep", search.grep, { resource = search_resource, kind = "read" }))
+  -- Resolve buffer ids before gating; explicitly requested background loading
+  -- happens only after authorization. Authorize every returned file as a read.
+  local lsp = require("weave.tools.lsp")
+  require("weave.tools.lsp_runtime").setup()
+  for _, name in ipairs(lsp.names) do
+    register(name, Gate.wrap(name, lsp[name], {
+      resource = function(args, ctx) return lsp.resource(name, args, ctx) end, kind = "read",
+    }))
+  end
   local tasks = require("weave.tools.tasks")
   local command = function(args)
     return type(args.command) == "string" and args.command or nil

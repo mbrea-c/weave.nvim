@@ -998,6 +998,10 @@ their builtins into one namespace cannot confuse the two:
   `buffers = "off"` for pure disk. Needs `rg` on Neovim's `PATH` or
   `tools.ripgrep_path` set; without it `weave_grep` errors and `weave_glob`
   falls back to a slower `vim.fn.glob` walk.
+- `weave_diagnostics`, `weave_document_symbols`, `weave_workspace_symbols`,
+  `weave_definition`, `weave_references`, and `weave_hover` expose cached
+  diagnostics and already-attached language servers. See
+  [Editor language tools](#editor-language-tools).
 - `weave_task_list` lists managed tasks, newest first, with `status` set to
   `running` (default), `all`, `failed`, or `successful`. `failed` includes killed
   tasks; `successful` means exited with code 0. `limit` sets the maximum number
@@ -1029,6 +1033,190 @@ search **root**, not the files matched: a deny rule on `*/secrets/*` blocks a
 search rooted inside that directory, but not a cwd-rooted search that surfaces
 content from within it. Gating per result would mean one prompt per file;
 content-level exclusion belongs in rg's own filters.
+
+### Editor language tools
+
+These tools query Neovim diagnostics and language servers without navigating,
+saving, or applying edits. They are registered with the normal MCP suite; no
+extra LSP plugin is required.
+
+| Tool | Input and behavior |
+| --- | --- |
+| `weave_diagnostics` | `path` **or** `buffer` for one target, or neither for workspace cache aggregation; optional aggregate `root`. Exact `severity` and `source` filters |
+| `weave_document_symbols` | `path` **or** `buffer`; flattened symbols with `container`, full `range`, and `selection_range` |
+| `weave_workspace_symbols` | Required `query` (empty allowed), optional `root`; uses clients with readable loaded buffers in that root |
+| `weave_definition` | `path` **or** `buffer`, `line`, `column`; normalized locations/LocationLinks, including `target_range` |
+| `weave_references` | Same position inputs, plus `include_declaration` (default `true`) |
+| `weave_hover` | Same position inputs, plus `max_chars` (default 16000, maximum 64000 Unicode characters across returned texts) |
+
+#### Explicit background loading
+
+Every file-targeted tool, **including diagnostics**, rejects an unloaded target
+unless the agent explicitly passes `load = true`. The structured error has
+`status = "buffer_not_loaded"`, no successful empty result, and a
+`next_action` showing the flag needed.
+
+With `load = true`, Weave first authorizes the file, then loads an existing
+regular file without opening a visible window or changing focus itself.
+New buffers are unlisted; existing buffers retain their listing state.
+Normal read/filetype autocmds and the user's configured LSP setup may run,
+including starting configured servers. This is why loading is opt-in.
+Weave does not invent server commands, create missing files, or request a save.
+The buffer remains loaded after the call so attached LSPs can keep working.
+`target.loaded_by_tool` says whether **this call** loaded it.
+
+A loading/setup failure can leave a buffer loaded and is reported explicitly.
+Redirected/renamed targets are refused rather than queried under an old
+permission. Source paths are also rechecked after a pending approval.
+
+Workspace queries never bulk-load files. To prepare a file, first use a
+file-targeted tool with the flag:
+
+```json
+{
+  "path": "src/Main.java",
+  "load": true,
+  "startup_timeout_ms": 120000,
+  "diagnostic_timeout_ms": 120000
+}
+```
+
+That object is suitable for `weave_diagnostics`. Position tools also need
+`line` and `column`; only diagnostics accepts `diagnostic_timeout_ms`.
+
+#### Client readiness and deadlines
+
+Responses separate **protocol initialization**, **operation support**, and
+**diagnostic reporting** for every observed client. Unsupported and initializing
+clients are listed, not silently discarded.
+
+| Field | Meaning |
+| --- | --- |
+| `clients[].state` | `initializing`, `ready`, `unsupported`, `stopped`, or `detached` |
+| `initialized`, `attached` | Independent protocol/attachment facts |
+| `supports_method` | Whether the initialized client supports the requested LSP operation; null before initialization or for push-diagnostic/cache queries |
+| `status` | Request outcome: `ok`, `error`, `timeout`, `unavailable`, or `not_requested` |
+| `indexing` | `"unknown"`: initialized does **not** mean fully indexed |
+| `analysis_complete` | Always `false`; these tools cannot prove complete analysis |
+
+`startup_timeout_ms` is a separate asynchronous attachment/initialization
+budget, maximum 300000 ms. Its default is 120000 ms after `load = true` or
+when clients are initializing, otherwise 0. Set 0 for an immediate state
+snapshot. At the deadline, ready clients can still answer, with initializing
+clients retained and `partial = true`. No usable client produces an
+`isError` result whose JSON distinguishes `no_server`, `initializing`,
+`unsupported`, or a stopped/detached server. `startup` includes state,
+elapsed time, budget, and whether waiting timed out.
+
+The actual LSP `timeout_ms` starts **after startup waiting**, defaults to
+3000 ms, maximum 30000. Pending requests are cancelled at the deadline;
+late/duplicate callbacks cannot answer twice. Per-client request failures
+produce partial results, including when every request failed. Raw server
+errors are omitted because they may contain unauthorized paths or text.
+`next_action` suggests how to retry when appropriate.
+
+Both startup and request waits are non-blocking. Session reset/close/cancel
+stops them. Changed, renamed, or unloaded source/anchor buffers are refused;
+revoked permissions are rechecked and detached/stopped clients cannot disclose
+late results. A source edit during a long startup requires a new query.
+
+#### Diagnostics: reporting is not initialization
+
+Diagnostics include the editor cache across **all namespaces**, including
+non-LSP linters. A response always says `coverage = "cached"`,
+`fresh = false`, and `can_conclude_clean = false`. Even an empty list is
+**not proof that the file is clean or that indexing/checking finished**.
+
+Each client's `diagnostics` object identifies its anchor `buffer` and reports:
+
+- `state = "not_received"`: no attributable diagnostic publication observed.
+- `"version_unknown"`: a report arrived, possibly empty, without a confirmed
+  document version.
+- `"stale"`: the report belongs to an earlier version/changed buffer.
+- `"current_version"`: a report was observed for this buffer's current version.
+- `report_received`, `report_count` (including **0**), `report_version`,
+  `current_version`, and `current_version_confirmed`.
+
+Weave observes standard push/pull diagnostic handlers without replacing their
+behavior and records publications only when the handler actually updates the
+diagnostic cache. Empty publications count as reports. Client-specific custom
+handlers, preexisting reports, and non-LSP cache updates may not be attributable;
+their coverage remains unknown rather than inferred from cached contents.
+
+Push diagnostics have no standard server capability advertising their support.
+`push_support` is therefore `"unknown"` until a push report is observed;
+`pull_support` reports the standard pull-diagnostic capability. A formatting
+capability or a client's name is never used to infer absence of diagnostics.
+
+For example, ready **none-ls** and initializing **jdtls** produce separate client
+states, `status = "diagnostics_pending"`, and incomplete coverage. An empty
+none-ls report cannot satisfy jdtls's pending report. Even after jdtls publishes
+an empty current-version report, unconfirmed clients remain listed. Weave never
+guesses which initialized clients are formatting-only.
+
+For a specific file, `diagnostic_timeout_ms` waits for current-version reports
+from **each observed client**, discovering new clients during the wait.
+Default: 30000 ms after `load = true`, otherwise 0 for an immediate cache
+snapshot; maximum 120000. Unknown providers can keep coverage pending until the
+deadline. This does not launch an arbitrary check or prove full indexing.
+Cached results remain available on timeout, with `partial = true`,
+`diagnostic_wait.timed_out = true`, and per-client report states.
+Diagnostics use `status = "diagnostics_pending"`,
+`"diagnostics_unconfirmed"`, or `"ok"`; even `ok` only means the observed
+clients supplied current-version reports, not that the file is clean.
+
+Workspace diagnostics are explicitly `diagnostic_scope = "workspace_cache"`
+and incomplete. Readiness of an anchor buffer cannot establish coverage of all
+files. Positive `diagnostic_timeout_ms` requires a specific file/buffer.
+Aggregate cache queries do not create buffers, wait for each file, or infer
+whole-workspace analysis from one client's report.
+
+#### Coordinates, limits, and permissions
+
+A buffer reference is an existing numeric ID, exact name, or unambiguous suffix.
+Named buffers are authorized by resolved file paths, not IDs/suffixes; ambiguous
+errors never enumerate other buffers. Unnamed/non-file buffers require rules for
+their `buffer:<id>` resource for both the query and `weave:read`; scoped
+builtins do not implicitly grant editor-global scratch buffers.
+
+Relative paths and default roots use the **calling Session's** project,
+independently of tab selection/editor cwd. Pass `path` or `buffer`, not
+both; neither combines with `root`. There is no implicit current buffer.
+
+Positions use **1-based lines and UTF-8 byte columns**, exclusive range ends,
+and input columns must be at character boundaries. Weave converts each
+client's UTF-8/UTF-16/UTF-32 encoding and merges duplicate locations/symbols,
+retaining `client_ids`. Unsaved buffers win over disk, and Neovim flushes
+pending document changes before LSP requests.
+
+JSON results contain `items`, `total`, `offset`, `limit`,
+`next_offset` (null on the last page), `truncated`, and `filtered`.
+Limits follow permission filtering/sorting/deduplication: default 100, maximum
+1000; zero-based `offset` defaults to 0. Each page is a new live query.
+Diagnostic messages are capped at 4096 Unicode characters; symbol names at
+1024 and details at 2048; truncation of messages/hover text is flagged.
+Normalization scans at most 10000 entries.
+
+Authorized unopened **result locations** may be read from disk to convert
+columns, without loading their buffers or starting their LSPs. Reads are cached
+per query, limited to 8 MiB/100000 lines overall. Unreadable/out-of-budget or
+unconvertible locations are omitted and mark `truncated`. Only local file
+URIs are returned. Unresolved workspace symbols may have null `range` and
+`range_available = false`.
+
+Permission actions use short names, e.g. `weave:diagnostics`.
+Read-only/Edit allow all six inside the workspace; Ask prompts normally;
+Auto/YOLO retain their usual scope. Every source/result is additionally checked
+against `weave:read`, including canonical symlinks. Workspace aggregates stay
+inside their requested root even under YOLO. Tool-specific allows never defeat
+a separate read deny. Ask-once approval covers its rule only within the approved
+scope; different ask/deny rules omit results with `filtered = true`, without
+leaking paths or prompting per discovered file. Cross-file results outside that
+scope require existing allows/grants. This is stricter than the root-only
+`weave_glob`/`weave_grep` gate.
+
+Rename, workspace-edit application, and arbitrary LSP execute-command remain
+outside this suite.
 
 ### Session introspection
 
@@ -1742,7 +1930,9 @@ mode](#tutor-mode) for the whole picture.
     lua/weave/tools/     the MCP tool suite hosted by clankbox: fs
                            (weave_read/weave_write/weave_edit, buffer-aware),
                            search (weave_glob/weave_grep over ripgrep,
-                           buffer-aware), tasks (weave_task_* lifecycle),
+                           buffer-aware), lsp (cached diagnostics, symbols,
+                           definitions/references/hover from attached servers),
+                           tasks (weave_task_* lifecycle),
                            weave_annotate (feedback on the user's code), gate
                            (the permission wrap over every def), user_edits
                            (the edit gate + weave_check_user_edits)

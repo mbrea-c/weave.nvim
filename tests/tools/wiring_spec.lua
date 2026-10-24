@@ -188,6 +188,7 @@ describe("tools wiring", function()
       "edit",
       "glob",
       "grep",
+      "diagnostics", "document_symbols", "workspace_symbols", "definition", "references", "hover",
       "task_start",
       "task_list",
       "task_status",
