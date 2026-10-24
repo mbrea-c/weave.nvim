@@ -79,7 +79,8 @@ end
 --- must not depend on which one this provider picked:
 ---
 ---   1. what THIS frame names, through weave.acp.mcp_ident — codex's
----      { server, tool, arguments } envelope, or the endpoint title
+---      { server, tool, arguments } or Kiro's qualified tool_id envelope,
+---      or the endpoint title
 ---   2. what an EARLIER frame named. A provider may announce the call in
 ---      full and then ask permission with little more than its id; the
 ---      client normalizes every frame into the store, so the merged block is
@@ -87,8 +88,8 @@ end
 ---   3. the loose substring, for providers that name the server with no shape
 ---      to key on (opencode: "clankbox_weave_read")
 ---
---- Loose on purpose: a false positive costs a redundant approval of an
---- already-gated call, a false negative breaks the sandbox's only way out.
+--- The loose fallback applies only when no explicit server was found.
+--- A title must not override a structured envelope naming a different server.
 --- @param tc table toolCall
 --- @param store weave.store.SessionStore|nil
 --- @return boolean brokered
@@ -106,7 +107,7 @@ local function brokered_call(tc, store)
     if named and named.server == name then
       return true, ("%s.%s"):format(name, named.tool)
     end
-    if title and title ~= name and title:find(name, 1, true) then
+    if (not named or not named.server) and title and title ~= name and title:find(name, 1, true) then
       return true, title
     end
   end

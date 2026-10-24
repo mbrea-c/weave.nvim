@@ -504,10 +504,10 @@ function ACPClient:__build_tool_call_message(update)
   -- the agent's call VERBATIM — the tool's own arguments and nothing else —
   -- which is what everything downstream assumes: renderers duck-type on
   -- argument shape, and weave.tool_ident correlates a block back to the weave
-  -- tool that made it by hashing those arguments. Codex sends an ENVELOPE
-  -- instead, { server, tool, arguments }, so every argument-shaped match
-  -- missed and weave's own calls rendered as generic rows titled
-  -- "mcp.clankbox.weave_grep".
+  -- tool that made it by hashing those arguments. Codex sends an envelope
+  -- { server, tool, arguments }; Kiro sends { tool_id = "server::tool",
+  -- arguments }. Without unwrapping, argument-shaped matches miss and Weave's
+  -- own calls render as generic MCP endpoint rows.
   --
   -- Unwrapping it here, at the provider boundary, is what keeps that
   -- disagreement from leaking into the UI: downstream sees one shape. And the
@@ -523,9 +523,9 @@ function ACPClient:__build_tool_call_message(update)
     end
   end
   -- The other channel a provider names an MCP tool through: the title IS the
-  -- endpoint name (claude, codex). See weave.acp.mcp_ident — the permission
-  -- path reads the same module, and the two MUST agree about what a provider
-  -- just named, or a call weave renders as its own gets denied as the agent's.
+  -- endpoint name (Claude, Codex, Kiro). The shared weave.acp.mcp_ident parser
+  -- serves both rendering and permissions; they must agree about what a
+  -- provider named or a call rendered as Weave's own can be denied as a builtin.
   if not message.mcp then
     message.mcp = McpIdent.from_title(update.title)
   end
@@ -534,11 +534,9 @@ function ACPClient:__build_tool_call_message(update)
     message.output = update.rawOutput
   end
 
-  -- ACP's extension slot. Carried through because it is the only place a
-  -- provider could ever put a real TOOL NAME — the wire format has none, so
-  -- tool-renderer matchers (weave.view.tool_renderers) are stuck duck-typing
-  -- rawInput today. Free to preserve, and it's the hook that makes a proper
-  -- name-based match possible the day a provider populates it.
+  -- Preserve provider extensions alongside normalized arguments and identity.
+  -- Kiro's server metadata is useful for inspection, but not proof on its own
+  -- that a builtin call should be treated as brokered MCP.
   if type(update._meta) == "table" then
     message.meta = update._meta
   end

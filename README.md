@@ -1295,11 +1295,26 @@ do not toggle expansion. Status colors are retained on the control and header.
 The header's bracketed tag is normally the ACP **kind** (`[edit]`, `[execute]`,
 …), but a call that went through weave's **own** clankbox tool suite is tagged
 `[w:<tool>]` instead — `[w:edit]`, `[w:grep]`, `[w:task_start]` — so weave's
-tools read apart from the agent's builtins at a glance. ACP tool calls carry no
-tool name, so weave recognises its own by the call arguments: the gate records
-`args → tool` (`weave.tool_ident`) when it mediates a call, and the header looks
-the block up by the same key. Builtin agent tools never reach the gate, so they
-are never tagged.
+tools read apart from the agent's builtins at a glance. ACP has no standard
+tool-name field, so Weave normalizes provider-specific MCP identities:
+
+- Codex: `rawInput = { server, tool, arguments }`.
+- Kiro: `rawInput = { tool_id = "server::tool", arguments = { ... } }`,
+  or an exact `@server/tool` title.
+- Claude and Codex endpoint titles: `mcp__server__tool` and `mcp.server.tool`.
+
+Recognized envelopes become the tool's own arguments in `block.input`, with
+the identity retained as `block.mcp = { server, tool }`. This lets the same
+headers, edit diffs, and other argument-based renderers work across providers.
+Kiro's `_meta` is preserved as `block.meta`, but server metadata alone does
+not establish MCP identity. Structured envelopes take precedence over titles,
+including in ACP permission routing; an explicitly named foreign server cannot
+be treated as brokered merely because its title mentions clankbox.
+
+When no identity is available, the gate records arguments against the tool name
+in `weave.tool_ident`, and the header looks the block up by the same key.
+A reported MCP identity gets a `w:` tag only for a registered Weave tool on
+clankbox; foreign and unknown tools keep their own server/tool tags.
 
 The header **title** beside the tag follows the same recognition. Weave's tools
 arrive over MCP, so their agent-supplied title is only the bare endpoint name
@@ -1360,8 +1375,9 @@ the wire fields are `toolCallId`, `title`, `kind`, `status`, `content`,
 `locations`, `rawInput`, `rawOutput`. `kind` is a coarse enum shared by every
 tool of that shape and `title` is agent-authored prose that providers word
 differently, so neither is a stable key. Matchers get the whole block and
-duck-type it, usually on `rawInput` shape. ACP's `_meta` extension slot is
-carried through as `block.meta` for the day a provider puts a real name there.
+duck-type it, usually on the normalized `block.input` shape. When available,
+`block.mcp` provides the provider-reported server/tool identity. ACP's `_meta`
+extension slot is carried through as `block.meta`.
 
 **Precedence is priority-first, highest wins, ties broken by most recently
 registered.** Priority exists because registration order is decided by plugin

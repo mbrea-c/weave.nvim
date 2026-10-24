@@ -8,6 +8,8 @@
 --     place of the arguments other providers report verbatim
 --   * codex and claude also spell the endpoint in the TITLE, as
 --     `mcp.<server>.<tool>` and `mcp__<server>__<tool>` respectively
+--   * kiro wraps arguments with tool_id = "server::tool", and also names the
+--     endpoint in its title as "@server/tool"
 --   * opencode names it loosely, with no shape to key on ("clankbox_weave_read")
 --
 -- This module exists because TWO paths need that answer and they must agree.
@@ -28,30 +30,35 @@ local M = {}
 --- @field server string|nil The MCP server, when the provider named it
 --- @field tool string The tool on that server
 
---- Codex's envelope: the call wrapped in { server, tool, arguments } rather
---- than reported as its own arguments.
+--- Provider envelopes: Codex sends { server, tool, arguments }; Kiro sends
+--- { tool_id = "server::tool", arguments }. Downstream needs the arguments.
 ---
---- Duck-typed tightly, because a tool's own arguments could perfectly well
---- include a key called `tool`: a bare `tool` string is not enough, it must
---- come with an `arguments` TABLE or a `server` name beside it. Guessing wrong
---- here would gut a real call's arguments.
+--- A bare tool or unqualified tool_id can be a tool's own argument, so require
+--- the provider's envelope shape. Never discard malformed Kiro arguments or
+--- infer an MCP server from Kiro metadata alone.
 --- @param raw any A tool call's rawInput
 --- @return { server: string|nil, tool: string, arguments: table }|nil
 function M.envelope(raw)
   if type(raw) ~= "table" then
     return nil
   end
-  if type(raw.tool) ~= "string" or raw.tool == "" then
+  if type(raw.tool) == "string" and raw.tool ~= ""
+    and (type(raw.arguments) == "table" or type(raw.server) == "string") then
+    return {
+      server = type(raw.server) == "string" and raw.server or nil,
+      tool = raw.tool,
+      arguments = type(raw.arguments) == "table" and raw.arguments or {},
+    }
+  end
+  if type(raw.tool_id) ~= "string"
+    or (raw.arguments ~= nil and type(raw.arguments) ~= "table") then
     return nil
   end
-  if type(raw.arguments) ~= "table" and type(raw.server) ~= "string" then
+  local server, tool = raw.tool_id:match("^([^:%s/]+)::([^:%s/]+)$")
+  if not server then
     return nil
   end
-  return {
-    server = type(raw.server) == "string" and raw.server or nil,
-    tool = raw.tool,
-    arguments = type(raw.arguments) == "table" and raw.arguments or {},
-  }
+  return { server = server, tool = tool, arguments = raw.arguments or {} }
 end
 
 --- The other channel: the title IS the endpoint name.
@@ -70,6 +77,9 @@ function M.from_title(title)
   local server, tool = title:match("^mcp__(.-)__(.+)$")
   if not server then
     server, tool = title:match("^mcp%.(.-)%.(.+)$")
+  end
+  if not server then
+    server, tool = title:match("^@([^/%s]+)/([^/%s]+)$")
   end
   if server and server ~= "" and tool and tool ~= "" then
     return { server = server, tool = tool }
