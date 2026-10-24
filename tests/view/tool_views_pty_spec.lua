@@ -93,6 +93,12 @@ describe("expanded tool views in a real terminal", function()
               result.live_later = text()
             elseif i == 7 then
               result.terminal = text()
+              for _, candidate in ipairs(vim.api.nvim_list_bufs()) do
+                local name = vim.api.nvim_buf_is_valid(candidate) and vim.b[candidate].weave_task_stream
+                if name == "stdout" or name == "stderr" then
+                  result[name] = table.concat(vim.api.nvim_buf_get_lines(candidate, 0, -1, false), "\n")
+                end
+              end
               local old, new = {}, {}
               for n = 1, 100 do old[n] = "old_" .. n; new[n] = "new_" .. n end
               new[100] = "LAST_HUNK"
@@ -147,11 +153,13 @@ describe("expanded tool views in a real terminal", function()
       assert.truthy(compact(result.terminal):find("Shellcommand(bash)", 1, true))
       assert.truthy(compact(result.terminal):find("COMMAND_END", 1, true))
       assert.truthy(result.terminal:find("│", 1, true))
-      assert.truthy(result.terminal:match("\n    %[%a+%]"))
-      assert.is_true(result.terminal:find("Shell command", 1, true) < result.terminal:find("[out]", 1, true))
-      assert.truthy(compact(result.live .. result.live_later):find("[out]out-marker", 1, true))
-      assert.truthy(compact(result.terminal):find("[err]err-marker", 1, true))
-      assert.truthy(compact(result.terminal):find("[out]final-marker", 1, true))
+      assert.truthy(result.terminal:find("╭", 1, true))
+      assert.is_true(result.terminal:find("Shell command", 1, true) < result.terminal:find("stdout", 1, true))
+      assert.truthy(compact(result.live .. result.live_later):find("out-marker", 1, true))
+      assert.truthy(compact(result.terminal):find("stderr", 1, true))
+      assert.falsy(result.terminal:find("[out]", 1, true))
+      assert.equal("out-markerfinal-marker", result.stdout)
+      assert.equal("err-marker", result.stderr)
       assert.falsy(result.diff_collapsed:find("LAST_HUNK", 1, true))
       assert.truthy(result.diff_expanded:find("LAST_HUNK", 1, true))
       assert.truthy(compact(result.symbols):find("slow-server:initializing", 1, true))

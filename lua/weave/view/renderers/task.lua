@@ -5,6 +5,7 @@ local TaskStore = require("weave.task_store")
 local TerminalTasks = require("weave.view.terminal_tasks")
 local ToolCall = require("weave.view.tool_call")
 local C = require("weave.view.renderers.common")
+local TaskOutput = require("weave.view.task_output")
 local M = { PREVIEW_LINES = 8 }
 local supported = { task_start = true, task_status = true, task_wait = true, task_kill = true, task_list = true }
 
@@ -107,6 +108,27 @@ local function runtime(task)
   return math.max(0, (task.finished_at or os.time()) - task.started_at) .. "s"
 end
 
+function M.Recorded(ctx, props)
+  local data = C.cached(ctx, props.block, function(block)
+    local explicit = C.output.json(block, function(value)
+      return type(value.stdout) == "string" or type(value.stderr) == "string"
+    end)
+    if explicit then
+      return { stdout = type(explicit.stdout) == "string" and { explicit.stdout } or nil,
+        stderr = type(explicit.stderr) == "string" and { explicit.stderr } or nil }
+    end
+    local text = C.output.text(block)
+    return text and { ["recorded result"] = { (text:gsub(" %[%s*weave task: [%w%-]+%]", "")) } } or {}
+  end)
+  local panes = {}
+  for _, name in ipairs({ "stdout", "stderr", "recorded result" }) do
+    if data[name] and data[name][1] ~= "" then
+      panes[#panes + 1] = { comp = TaskOutput.Pane, key = name, props = { stream = name, chunks = data[name], block = props.block } }
+    end
+  end
+  return { comp = ui.col, props = { gap = 1 }, children = panes }
+end
+
 function M.Body(ctx, props)
   if ToolCall.weave_tool(props.block) == "task_list" then return M.List({}, props) end
   local task = use_task(ctx, props)
@@ -117,25 +139,20 @@ function M.Body(ctx, props)
       or "Waiting for reported task ID; live output is not yet associated.")
       or "Recorded command output (no live task association).") }
     if C.output.failed(block) then rows[#rows + 1] = C.line("Command call failed.", "DiagnosticWarn") end
-    if text then
-      local values = vim.split(C.clean(text:gsub(" %[%s*weave task: [%w%-]+%]", ""), nil, true), "\n", { plain = true })
-      local shown = math.min(#values, props.expanded and 80 or M.PREVIEW_LINES)
-      for i = 1, shown do rows[#rows + 1] = C.line(values[i], "Normal") end
-      if shown < #values then rows[#rows + 1] = C.line((#values - shown) .. " more lines; K for recorded output.") end
-    end
+    rows[#rows + 1] = { comp = M.Recorded, props = props }
     return C.column(rows)
   end
   local glyph, hl = TerminalTasks.flag(task)
   local rows = { C.line(glyph .. " " .. TerminalTasks.status_label(task) .. " | runtime " .. runtime(task), hl) }
-  local lines, omitted = M.tail(task, props.expanded and 40 or M.PREVIEW_LINES)
-  if omitted then rows[#rows + 1] = C.line("Earlier output omitted; open full output.") end
-  for _, line in ipairs(lines) do
-    rows[#rows + 1] = C.line((line.stream == "stderr" and "[err] " or "[out] ") .. line.text,
-      line.stream == "stderr" and "DiagnosticWarn" or "Normal")
+  local panes = {}
+  for _, name in ipairs({ "stdout", "stderr" }) do
+    if #(task[name] or {}) > 0 then
+      panes[#panes + 1] = { comp = TaskOutput.Pane, key = name, props = { stream = name, chunks = task[name], block = props.block } }
+    end
   end
-  if #lines == 0 then rows[#rows + 1] = C.line("No output received yet.") end
+  if #panes == 0 then rows[#rows + 1] = C.line("No output received yet.")
+  else rows[#rows + 1] = { comp = ui.col, props = { gap = 1 }, children = panes } end
   if props.expanded then
-    rows[#rows + 1] = C.line("Combined output uses editor-observed chunk order; it is not a PTY.")
     rows[#rows + 1] = { comp = ui.button, props = { label = "Open full output", theme = false,
       on_press = function() if allowed(task, props.store) then TerminalTasks.open_task_view(task.id, { full = true }) end end } }
     if task.status == "running" then

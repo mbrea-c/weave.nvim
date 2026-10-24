@@ -1429,7 +1429,7 @@ or result dump. `K` always inspects the original recorded block.
 | Edit/write and native ACP diffs | Up to 60 diff rows | All diff hunks, with unchanged context folded |
 | `weave_read` | Header only | The complete returned page, syntax highlighted with logical-line gutters |
 | `weave_glob` / `weave_grep` | Header only | File-grouped matches/context or navigable file/count lists |
-| `weave_task_start/status/wait/kill` | Single-line header with an ellipsis when truncated | Full highlighted shell command above cwd, runtime/exit status, 40 live output rows, Stop and Open full output controls |
+| `weave_task_start/status/wait/kill` | Single-line header with an ellipsis when truncated | Full highlighted command above cwd/status, separate scrollable stdout/stderr panes, Stop and Open full output controls |
 | `weave_task_list` | Header only | Returned task summaries and full-output links |
 | LSP symbols/definition/references | Header only | Container/file-grouped locations, symbol details, and each server's state |
 | `weave_hover` | Header only | Markdown documentation, with plaintext kept literal |
@@ -1473,8 +1473,27 @@ two identical commands, unrelated sessions, revoked contexts, or restored IDs
 must not cross-associate. Only expanded calls subscribe to live task output.
 While no ID has been reported, the expanded view explicitly waits; a blocking
 start can therefore show no live output until its response arrives.
-Combined stdout/stderr previews label the stream and use editor-observed chunk
-arrival order, not a claimed program-wide ordering or terminal emulation.
+Expanded managed tasks show separate **stdout** and **stderr** panes with rounded
+borders and a subtly darker background derived from the current theme. Empty
+streams stay hidden. Each pane grows up to 10 content rows, scrolls independently,
+and exposes all editor-retained stream history, not just the last 40 lines.
+Click or press Enter over a pane to focus it; normal scrolling and page motions
+stay inside it. Escape or standard window navigation returns to the transcript.
+The configured raw-inspection key (`K` by default) works inside the panes too.
+Each pane follows new output only while its view is at the bottom. Scrolling up
+pauses following for that stream, including mouse-wheel scrolling without focus.
+Return to the bottom to resume. Appends preserve a paused view and never steal
+focus. Collapsing the call destroys its stream buffers; reopening reconstructs
+them from retained output. These are read-only text logs, not terminal emulators;
+ANSI CSI escapes are removed and stdout/stderr are not interleaved.
+
+The `WeaveTaskOutput` highlight controls the pane background/foreground and
+`WeaveTaskOutputBorder` its border. Explicit user highlights take precedence;
+transparent themes without a background remain transparent. Theme changes update
+the derived background. Recorded results with explicit stdout/stderr fields use
+separate panes too. Unseparated historical text is labeled **recorded result**,
+without guessing stream boundaries or associating it with a live process.
+
 Open full output bypasses the ordinary task popup's 200-line-per-stream tail
 cap and provides all retained stdout/stderr in a scrollable view.
 
