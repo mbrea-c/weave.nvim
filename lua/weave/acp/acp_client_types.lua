@@ -233,6 +233,20 @@
 --- @class weave.acp.ToolCallUpdate : weave.acp.ToolCallBase
 --- @field sessionUpdate "tool_call_update"
 
+--- Provider-normalized transcript block, not an ACP wire message.
+--- @class weave.acp.ToolCallBlock
+--- @field tool_call_id string
+--- @field kind? weave.acp.ToolKind
+--- @field status? weave.acp.ToolCallStatus
+--- @field argument? string Provider title
+--- @field input? table Unwrapped tool arguments
+--- @field output? table Provider-reported raw result
+--- @field mcp? weave.acp.McpName Provider-reported MCP identity
+--- @field meta? table<string, any>
+--- @field body? string[]
+--- @field file_path? string
+--- @field diff? { old: string[], new: string[], all: boolean }
+
 --- @class weave.acp.PlanUpdate
 --- @field sessionUpdate "plan"
 --- @field entries weave.acp.PlanEntry[]
@@ -320,8 +334,8 @@
 --- @field on_session_update weave.acp.ClientHandlers.on_session_update
 --- @field on_request_permission weave.acp.ClientHandlers.on_request_permission
 --- @field on_error weave.acp.ClientHandlers.on_error
---- @field on_tool_call fun(tool_call: weave.ui.MessageWriter.ToolCallBlock): nil
---- @field on_tool_call_update fun(tool_call: weave.ui.MessageWriter.ToolCallBlock): nil
+--- @field on_tool_call fun(tool_call: weave.acp.ToolCallBlock): nil
+--- @field on_tool_call_update fun(tool_call: weave.acp.ToolCallBlock): nil
 
 --- @class weave.acp.ACPProviderConfig
 --- @field name? string Provider name

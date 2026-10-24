@@ -284,9 +284,15 @@ local function apply_session_update(store, update, restoring, on_config_options_
   end
 end
 
+--- @class weave.AcpBridgeOptions
+--- @field is_live? fun(): boolean Whether the owning session context is still valid
+--- @field is_restoring? fun(): boolean
+--- @field on_config_options_update? fun(config_options: weave.acp.ConfigOption[])
+--- @field permissions? table Session-scoped permission engine
+
 --- Build the ACP client handlers backed by a session store.
 --- @param store weave.store.SessionStore
---- @param opts? { is_restoring?: fun(): boolean, on_config_options_update?: fun(config_options: weave.acp.ConfigOption[]) }
+--- @param opts? weave.AcpBridgeOptions
 ---  is_restoring: predicate read per-update; when it returns true
 ---  (load_session replay in flight) status mutations are skipped.
 ---  on_config_options_update: lets Session recapture agent-side config changes.

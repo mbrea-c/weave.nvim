@@ -476,9 +476,9 @@ end
 --- Build the message for a tool_call. it's usually the first update received for a tool call
 --- @protected
 --- @param update weave.acp.ToolCallBase
---- @return weave.ui.MessageWriter.ToolCallBlock message
+--- @return weave.acp.ToolCallBlock message
 function ACPClient:__build_tool_call_message(update)
-  --- @type weave.ui.MessageWriter.ToolCallBlock
+  --- @type weave.acp.ToolCallBlock
   local message = {
     tool_call_id = update.toolCallId,
   }

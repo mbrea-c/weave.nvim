@@ -9,6 +9,8 @@ local ToolCall = require("weave.view.tool_call")
 local ToolIdent = require("weave.tool_ident")
 
 local function build(update)
+  -- Exercise the protected normalizer without starting a provider.
+  ---@diagnostic disable-next-line: invisible
   return ACPClient.__build_tool_call_message(ACPClient, update)
 end
 
@@ -98,7 +100,9 @@ describe("Kiro MCP normalization", function()
       path = "/p/a.lua", old_string = "one", new_string = "two",
     }))
     assert.is_true(FsDiff.edit.match(msg))
-    local entry = FsDiff.edit.render({}, { block = msg, show_diff = true })
+    local entry = FsDiff.edit.render({}, {
+      block = msg, store = SessionStore:new(), expanded = false, awaiting = false, show_diff = true,
+    })
     local diff = entry.props.render_body()
     assert.same({ "one" }, diff.props.old)
     assert.same({ "two" }, diff.props.new)
@@ -176,10 +180,11 @@ describe("Kiro MCP permission routing", function()
     if announced then handlers.on_tool_call(build(announced)) end
     local answer
     handlers.on_request_permission({
+      sessionId = "kiro-session",
       toolCall = tc,
       options = {
-        { optionId = "once", kind = "allow_once" },
-        { optionId = "reject", kind = "reject_once" },
+        { optionId = "once", kind = "allow_once", name = "Allow once" },
+        { optionId = "reject", kind = "reject_once", name = "Reject once" },
       },
     }, function(id) answer = id end)
     return answer, store

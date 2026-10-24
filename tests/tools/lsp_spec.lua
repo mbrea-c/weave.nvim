@@ -32,7 +32,7 @@ describe("editor language tools", function()
     local out, count
     count = 0
     local def = defs["weave_" .. name]
-    assert.is_not_nil(def, "tool not registered: " .. name)
+    assert(def, "tool not registered: " .. name)
     local ok, err = pcall(def.handler, args or {}, function(value) out, count = value, count + 1 end, call_ctx or ctx)
     if not ok then out = { isError = true, content = { { type = "text", text = tostring(err) } } } end
     return function(wait)
@@ -44,7 +44,7 @@ describe("editor language tools", function()
 
   local function call(name, args, call_ctx)
     local out = start(name, args, call_ctx)()
-    assert.is_not_nil(out, "tool never responded")
+    assert(out, "tool never responded")
     if out.isError then error(vim.inspect(out)) end
     return out
   end
@@ -85,6 +85,8 @@ describe("editor language tools", function()
     if ok then Runtime._reset() end
     Tools.register_into({ register_tool = function(name, def) defs[name] = def end })
     saved_clients = vim.lsp.get_clients
+    -- Intentional mock of Neovim's client registry.
+    ---@diagnostic disable-next-line: duplicate-set-field
     vim.lsp.get_clients = function(filter)
       local out = {}
       for _, c in ipairs(clients) do
@@ -164,7 +166,8 @@ describe("editor language tools", function()
   it("uses the real Neovim client and flushes unsaved text before requesting", function()
     local buf, path = buffer("project/native.lua")
     vim.lsp.get_clients = saved_clients
-    local events, closed, serial, dispatcher = {}, false, 0
+    local events, closed, serial = {}, false, 0
+    local dispatcher
     local id = vim.lsp.start({
       name = "weave-native-spec", root_dir = project,
       flags = { debounce_text_changes = 60000 },
@@ -194,9 +197,11 @@ describe("editor language tools", function()
       end,
     }, { bufnr = buf, reuse_client = function() return false end })
     assert.is_not_nil(id)
-    local c = vim.lsp.get_client_by_id(id)
+    local c = assert(vim.lsp.get_client_by_id(assert(id)))
     local ok, err = pcall(function()
-      assert.is_true(vim.wait(500, function() return c.initialized and c.attached_buffers[buf] end, 2))
+      assert.is_true(vim.wait(500, function()
+        return c.initialized == true and not not c.attached_buffers[buf]
+      end, 2))
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "bλ😀z", "unsaved second" })
       local out = call("definition", { buffer = buf, line = 1, column = 8 })
       assert.same({ line = 1, column = 8 }, out.items[1].range.start)
@@ -296,6 +301,8 @@ describe("editor language tools", function()
       { uri = vim.uri_from_fname(path), range = range(1, 2) },
     })
     local readfile, count = vim.fn.readfile, 0
+    -- Count file reads while preserving the real reader.
+    ---@diagnostic disable-next-line: duplicate-set-field
     vim.fn.readfile = function(name, ...)
       if name == path then count = count + 1 end
       return readfile(name, ...)
@@ -319,8 +326,7 @@ describe("editor language tools", function()
     })
     local done = start("diagnostics", { path = alias })
     for _ = 1, 3 do
-      local pending = session:get_store():pop_permission()
-      assert.is_not_nil(pending)
+      local pending = assert(session:get_store():pop_permission())
       pending.respond("allow_once")
     end
     local out = done()
@@ -981,8 +987,7 @@ describe("editor language tools", function()
     vim.diagnostic.set(ns, buf, { { lnum = 0, col = 0, message = "allowed once" } })
     ctx, session = context("ask")
     local done = start("diagnostics", { buffer = buf })
-    local pending = session:get_store():pop_permission()
-    assert.is_not_nil(pending)
+    local pending = assert(session:get_store():pop_permission())
     pending.respond("allow_once")
     local out = done()
     assert.falsy(out.isError, vim.inspect(out))
