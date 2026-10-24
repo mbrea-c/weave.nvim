@@ -18,9 +18,14 @@ local function finish(request, ok)
 end
 
 function SessionConfig.new(opts)
+  local force_pending = {}
+  if opts.force_defaults then
+    for id in pairs(opts.defaults or {}) do force_pending[id] = true end
+  end
   return setmetatable({
     defaults = opts.defaults or {},
     enabled = opts.enabled,
+    force_pending = force_pending,
     on_snapshot = opts.on_snapshot,
     on_applied = opts.on_applied,
     on_error = opts.on_error,
@@ -107,12 +112,13 @@ function SessionConfig:_next_default()
   for _, candidate in ipairs(candidates) do
     local kind = candidate.kind
     local value = self.defaults[kind.id]
+    local force = self.force_pending[kind.id]
     if type(value) == "string" and not self.manual[kind.id]
-        and value ~= kind.current and option(kind, value) then
+        and (force or value ~= kind.current) and option(kind, value) then
       local signature = self:_signature(kind, value)
       if self.attempts[kind.id] ~= signature then
         self.attempts[kind.id] = signature
-        return { id = kind.id, value = value, automatic = true }
+        return { id = kind.id, value = value, automatic = true, force = force }
       end
     end
   end
@@ -127,11 +133,15 @@ function SessionConfig:_drain()
     finish(request, false)
     return self:_drain()
   end
-  if kind.current == request.value then
+  if kind.current == request.value and not request.force then
     finish(request, true)
     return self:_drain()
   end
 
+  -- A restore owes one explicit write per configured field, even if its
+  -- reported value matches. Consume that obligation only when sending, and
+  -- never recreate it on notifications or failures.
+  if request.automatic then self.force_pending[request.id] = nil end
   self.pending = request
   local before = kind.current
   local answered = false

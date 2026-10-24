@@ -882,10 +882,18 @@ through the usual notification.
 
 Defaults and manual-choice tracking are per conversation, not per provider
 process. `/new` resets manual-choice tracking and reapplies defaults, retaining
-that Session's copied `config_defaults` overrides. Restored conversations keep
-their saved configuration: automatic defaults (including per-session overrides)
-are disabled there, including for fields discovered later; manual changes still
-work. A subsequent `/new` enables defaults again.
+that Session's copied `config_defaults` overrides. Restoring a conversation also
+resets manual-choice tracking and reapplies both provider and per-session
+defaults, even if that replaces a manual choice from the previous conversation.
+
+After a successful load, each valid configured default is explicitly sent once,
+even if the provider reports that it is already selected. Matching restored
+values are not treated as proof that the setting was applied. Missing fields
+and unavailable values still wait until valid; model defaults are sent before
+dependent defaults. Fields without defaults keep the provider-reported values.
+Normal reconciliation continues after that initial write, and manual selections
+made in the restored conversation take precedence. Identical notifications do
+not repeatedly force the same write, including after a rejection.
 
 ### MCP servers
 
@@ -1400,7 +1408,7 @@ its panel leaves it running; the sessions modal can select or close it, and
 `provider` and `config_defaults` apply only when they create a session, not
 when focusing or reopening an existing one. The other options size the panel.
 `sessions({ config_defaults = ... })` passes defaults to its new/load-saved
-flows; restored conversations still preserve their saved config as described
+flows, including explicit application of defaults after restore as described
 under [Provider session defaults](#provider-session-defaults).
 
 ### The Session

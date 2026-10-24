@@ -290,7 +290,9 @@ end
 
 --- Reset intent and pending config writes at an ACP conversation boundary.
 --- @private
-function Session:_reset_config_session(defaults_enabled)
+--- @param defaults_enabled boolean
+--- @param force_defaults? boolean Explicitly send each configured default once after restore
+function Session:_reset_config_session(defaults_enabled, force_defaults)
   if self._config_session then self._config_session:close() end
   self._config, self._config_order, self._config_by_id = {}, {}, {}
   self._config_snapshot, self._early_config_options = {}, nil
@@ -298,6 +300,7 @@ function Session:_reset_config_session(defaults_enabled)
   local config = SessionConfig.new({
     defaults = vim.tbl_extend("force", provider.session_defaults or {}, self._config_defaults),
     enabled = defaults_enabled,
+    force_defaults = force_defaults,
     on_snapshot = function(response)
       self:_capture_config(response)
       self:_publish_meta()
@@ -969,7 +972,9 @@ function Session:restore(session_id)
   self:_drop_steered()
   self._cancelling = false
   self._store:reset()
-  local config = self:_reset_config_session(false)
+  -- Enable defaults after restore and explicitly send each valid value once,
+  -- since provider-reported restored values may not reflect actual settings.
+  local config = self:_reset_config_session(true, true)
   self._store:set_status("busy")
   self._restoring = true
 
