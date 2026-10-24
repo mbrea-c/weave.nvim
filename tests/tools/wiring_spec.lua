@@ -92,6 +92,7 @@ describe("tools wiring", function()
     end
     package.preload["clankbox.broker"] = function()
       return {
+        supports_call_context = true,
         listen = function(opts)
           capture.opts = opts
           capture.listener = {
@@ -107,6 +108,21 @@ describe("tools wiring", function()
     end
     return capture
   end
+
+  it("binds session MCP entries to revocable transport credentials", function()
+    local capture = fake_broker()
+    Config.tools.clankbox_path = stub_checkout()
+    local session = Session:new()
+    session:_reset_config_session(true)
+    local entry = Tools.clankbox_server_entry(session)
+    local env = {}
+    for _, item in ipairs(entry.env) do env[item.name] = item.value end
+    assert.is_not_nil(env.CLANKBOX_AUTH_TOKEN)
+    local caller = capture.opts.authenticate(env.CLANKBOX_AUTH_TOKEN)
+    assert.rawequal(session, caller.session)
+    session:stop()
+    assert.is_nil(capture.opts.authenticate(env.CLANKBOX_AUTH_TOKEN))
+  end)
 
   it("inspects an already loaded editor host without creating a broker or tool calls", function()
     local requests = {}
@@ -179,6 +195,8 @@ describe("tools wiring", function()
       "task_kill",
       "check_user_edits",
       "session_introspect",
+      "subagent_create", "subagent_list", "subagent_send", "subagent_read",
+      "subagent_wait", "subagent_cancel", "subagent_close",
       "request_access",
       "web_fetch",
       "annotate",
@@ -210,6 +228,7 @@ describe("tools wiring", function()
   end)
 
   it("sessions hand the agent the clankbox server alongside configured ones", function()
+    fake_broker()
     Config.tools.clankbox_path = stub_checkout()
     Config.mcp_servers = { { name = "other", command = "other-cmd", args = {} } }
     local client = started()
@@ -287,7 +306,7 @@ describe("tools wiring", function()
     assert.is_nil(other_env.NVIM)
   end)
 
-  it("falls back to the $NVIM shim path when clankbox has no broker", function()
+  it("refuses an unbound legacy transport for a managed session", function()
     package.preload["clankbox"] = function()
       return fake_clankbox()
     end
@@ -300,16 +319,10 @@ describe("tools wiring", function()
     end
     Config.tools.clankbox_path = stub_checkout()
     Config.mcp_servers = {}
-    local client = started()
-    assert.equal("clankbox", client.mcp[1].name)
-    local env = {}
-    for _, e in ipairs(client.mcp[1].env) do
-      env[e.name] = e.value
-    end
-    assert.is_nil(env.CLANKBOX_SOCKET)
-    if vim.v.servername ~= "" then
-      assert.equal(vim.v.servername, env.NVIM)
-    end
+    local session = Session:new()
+    session:_reset_config_session(true)
+    assert.has_error(function() Tools.clankbox_server_entry(session) end)
+    session:stop()
   end)
 
   it("_reset closes the broker listener", function()

@@ -188,7 +188,7 @@ describe("weave entrypoint", function()
     pump()
 
     local modal = weave.sessions()
-    activate(modal, locate(modal.bufnr, "(no messages yet)"))
+    activate(modal.tree, locate(modal.tree.bufnr, "(no messages yet)"))
     pump()
 
     assert.rawequal(b.session, weave.get_session())
@@ -223,9 +223,9 @@ describe("weave entrypoint", function()
     pump()
 
     local modal = weave.sessions()
-    local row = locate(modal.bufnr, "(no messages yet)")
-    local line = vim.api.nvim_buf_get_lines(modal.bufnr, row - 1, row, false)[1]
-    activate(modal, row, line:find("ⓘ", 1, true) - 1)
+    local row = locate(modal.tree.bufnr, "(no messages yet)")
+    local line = vim.api.nvim_buf_get_lines(modal.tree.bufnr, row - 1, row, false)[1]
+    activate(modal.tree, row, line:find("ⓘ", 1, true) - 1)
     pump()
     assert.is_false(modal.is_open())
 
@@ -290,16 +290,16 @@ describe("weave entrypoint", function()
     pump()
 
     local modal = weave.sessions()
-    local row = locate(modal.bufnr, "alpha question")
-    local line = vim.api.nvim_buf_get_lines(modal.bufnr, row - 1, row, false)[1]
-    activate(modal, row, line:find("✕", 1, true) - 1)
+    local row = locate(modal.tree.bufnr, "alpha question")
+    local line = vim.api.nvim_buf_get_lines(modal.tree.bufnr, row - 1, row, false)[1]
+    activate(modal.tree, row, line:find("✕", 1, true) - 1)
     pump()
 
     -- the session (and its panel) are gone, but the modal kept the focus
     assert.equal(1, #Registry.list())
     assert.is_false(weave.is_open())
     assert.is_true(modal.is_open())
-    assert.equal(modal.winid, vim.api.nvim_get_current_win())
+    assert.is_true(require("weave.view.float").owns(modal.winid, vim.api.nvim_get_current_win()))
 
     modal.close()
     weave.stop()

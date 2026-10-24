@@ -46,10 +46,20 @@ local function render(task)
   }, "\n")
 end
 
-local function find(args)
+local function visible(task, ctx)
+  if not ctx or not ctx.caller then return true end
+  if task.caller and not task.caller.valid() then return false end
+  local actor = ctx.caller.session
+  if task.owner == actor then return true end
+  local Registry = require("weave.registry")
+  local owner, caller = Registry.entry_for(task.owner), Registry.entry_for(actor)
+  return owner and caller and Registry.is_descendant(owner.key, caller.key) or false
+end
+
+local function find(args, ctx)
   local id = tonumber(args.id)
   local task = id and TaskStore.get(id)
-  if not task then
+  if not task or not visible(task, ctx) then
     error(("no task with id %s"):format(tostring(args.id)), 0)
   end
   return task
@@ -85,8 +95,8 @@ M.start = {
     required = { "command" },
   },
   async = true,
-  handler = function(args, respond)
-    local task, err = TaskStore.start({ command = args.command, cwd = args.cwd })
+  handler = function(args, respond, ctx)
+    local task, err = TaskStore.start({ command = args.command, cwd = args.cwd, context = ctx })
     if not task then
       error(err, 0)
     end
@@ -124,8 +134,8 @@ M.start = {
 M.status = {
   description = "Report a task's state (running/exited/killed, exit code) and its stdout/stderr so far.",
   inputSchema = { type = "object", properties = ID_PROP, required = { "id" } },
-  handler = function(args)
-    return render(find(args))
+  handler = function(args, ctx)
+    return render(find(args, ctx))
   end,
 }
 
@@ -147,8 +157,8 @@ M.wait = {
     required = { "id" },
   },
   async = true,
-  handler = function(args, respond)
-    local task = find(args)
+  handler = function(args, respond, ctx)
+    local task = find(args, ctx)
     local timeout = tonumber(args.timeout_ms) or DEFAULT_TIMEOUT_MS
     TaskStore.wait(task.id, timeout, function(t, timed_out)
       if timed_out then
@@ -167,8 +177,8 @@ M.wait = {
 M.kill = {
   description = "Kill a running task: SIGTERM to its process group, SIGKILL if it does not exit.",
   inputSchema = { type = "object", properties = ID_PROP, required = { "id" } },
-  handler = function(args)
-    local task = find(args)
+  handler = function(args, ctx)
+    local task = find(args, ctx)
     local ok, err = TaskStore.kill(task.id)
     if not ok then
       error(err, 0)
@@ -202,7 +212,7 @@ M.list = {
       },
     },
   },
-  handler = function(args)
+  handler = function(args, ctx)
     local status = args.status or "running"
     if status ~= "running" and status ~= "all" and status ~= "failed" and status ~= "successful" then
       error("status must be running, all, failed, or successful", 0)
@@ -217,8 +227,8 @@ M.list = {
       local successful = task.status == "exited" and task.exit_code == 0
       local failed = task.status == "killed"
         or (task.status == "exited" and task.exit_code ~= nil and task.exit_code ~= 0)
-      if status == "all" or (status == "running" and task.status == "running")
-        or (status == "successful" and successful) or (status == "failed" and failed) then
+      if visible(task, ctx) and (status == "all" or (status == "running" and task.status == "running")
+        or (status == "successful" and successful) or (status == "failed" and failed)) then
         matched = matched + 1
         if #rows < limit then
           rows[#rows + 1] = status_line(task) .. "\ncommand: " .. task.command .. "\ncwd: " .. task.cwd

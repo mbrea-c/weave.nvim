@@ -1,0 +1,58 @@
+local Session = require("weave.session")
+local Permissions = require("weave.permissions")
+local Details = require("weave.view.session_details")
+local Window = require("weave.view.permissions_window")
+
+local function text(buf)
+  return table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+end
+
+describe("session-scoped permission UI", function()
+  before_each(function() Permissions._reset(); Permissions.set_mode("on"); Permissions.set_active("auto") end)
+  after_each(function()
+    Permissions._reset()
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_config(win).relative ~= "" then pcall(vim.api.nvim_win_close, win, true) end
+    end
+  end)
+
+  it("shows the inspected session's preset rather than the editor default", function()
+    local session = Session:new({ permissions = { preset = "read_only" } })
+    local handle = Details.open({ session = session })
+    assert.truthy(text(handle.bufnr):find("Read%-only"))
+    handle.close()
+  end)
+
+  it("updates the catalogue live without changing the displayed session policy", function()
+    local session = Session:new({ permissions = { preset = "read_only" } })
+    local handle = Window.open({ session = session })
+    Permissions.save_preset({ name = "available-later", rules = {} })
+    vim.wait(30, function() return false end, 2)
+    assert.truthy(text(handle.bufnr):find("available-later", 1, true))
+    assert.truthy(text(handle.bufnr):find("Rules: Read%-only"))
+    handle.unmount()
+  end)
+
+  it("hides deletion when another session already removed the selected template", function()
+    Permissions.save_preset({ name = "retired", rules = { { tool = "*", decision = "deny" } } })
+    local session = Session:new({ permissions = { preset = "retired" } })
+    local handle = Window.open({ session = session })
+    assert.truthy(text(handle.bufnr):find("[delete]", 1, true))
+    Permissions.delete_preset("retired")
+    vim.wait(30, function() return false end, 2)
+    assert.equal("retired", session:permissions().active().name)
+    assert.is_nil(text(handle.bufnr):find("[delete]", 1, true))
+    handle.unmount()
+  end)
+
+  it("renders and mutates only the permission-window's target session", function()
+    local session = Session:new({ permissions = { preset = "read_only" } })
+    local handle = Window.open({ session = session })
+    assert.truthy(text(handle.bufnr):find("Rules: Read%-only"))
+    session:permissions().set_active("edit")
+    vim.wait(30, function() return false end, 2)
+    assert.truthy(text(handle.bufnr):find("Rules: Edit", 1, true))
+    assert.equal("auto", Permissions.active().name)
+    handle.unmount()
+  end)
+end)

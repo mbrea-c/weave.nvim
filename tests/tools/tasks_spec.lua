@@ -19,12 +19,77 @@ local function process_alive(pid)
   return vim.uv.kill(pid, 0) == 0
 end
 
+describe("bound task ownership", function()
+  after_each(function() TaskStore._reset() end)
+
+  it("revokes old task access and kills only the reset conversation's processes", function()
+    local Session = require("weave.session")
+    local Context = require("weave.tool_context")
+    local a, b = Session:new(), Session:new()
+    a:_reset_config_session(true); b:_reset_config_session(true)
+    local ca = { caller = Context.authenticate(Context.bind(a)) }
+    local cb = { caller = Context.authenticate(Context.bind(b)) }
+    local ta = assert(TaskStore.start({ command = "sleep 30", context = ca }))
+    local tb = assert(TaskStore.start({ command = "sleep 30", context = cb }))
+    a:_reset_config_session(true)
+    local fresh = { caller = Context.authenticate(Context.bind(a)) }
+    wait_done(ta)
+    assert.equal("killed", ta.status)
+    assert.equal("running", tb.status)
+    assert.has_error(function() Tools.status.handler({ id = ta.id }, fresh) end)
+    -- Retained task history must not retain the closed Session and its transcript.
+    assert.is_nil(ta.owner)
+    assert.is_nil(ta.caller)
+    a:stop(); b:stop()
+  end)
+  it("associates task cancellation with the delegated run that started it", function()
+    local Session = require("weave.session")
+    local Subagents = require("weave.subagents")
+    local active = Subagents.active_run_id
+    local session = Session:new()
+    local ctx = { caller = { session = session, valid = function() return true end } }
+    local ok, err = pcall(function()
+      Subagents.active_run_id = function() return 41 end
+      local first = assert(TaskStore.start({ command = "sleep 30", context = ctx }))
+      Subagents.active_run_id = function() return 42 end
+      local second = assert(TaskStore.start({ command = "sleep 30", context = ctx }))
+      TaskStore.cancel_run(session, 41)
+      wait_done(first)
+      assert.equal("killed", first.status)
+      assert.equal("running", second.status)
+    end)
+    Subagents.active_run_id = active
+    if not ok then error(err) end
+  end)
+
+  it("does not expose another session's task output or lifecycle controls", function()
+    local Session = require("weave.session")
+    local a, b = Session:new(), Session:new()
+    local ca = { caller = { session = a, valid = function() return true end } }
+    local cb = { caller = { session = b, valid = function() return true end } }
+    local task = assert(TaskStore.start({ command = "printf private-task-output", context = ca }))
+    wait_done(task)
+    assert.has_error(function() Tools.status.handler({ id = task.id }, cb) end)
+    assert.has_error(function() Tools.kill.handler({ id = task.id }, cb) end)
+    assert.has_error(function() Tools.wait.handler({ id = task.id }, function() end, cb) end)
+    assert.is_nil(Tools.list.handler({ status = "all" }, cb):find("private-task-output", 1, true))
+    assert.truthy(Tools.status.handler({ id = task.id }, ca):find("private-task-output", 1, true))
+  end)
+end)
+
 describe("task store", function()
+  local wrap
   before_each(function()
     TaskStore._reset()
+    -- These assert shell/process-group signals. A sandbox supervisor may exit
+    -- on TERM while its child ignores it; hull confinement is tested separately.
+    local Sandbox = require("weave.sandbox")
+    wrap = Sandbox.wrap_shell
+    Sandbox.wrap_shell = function(command) return "sh", { "-c", command } end
   end)
 
   after_each(function()
+    require("weave.sandbox").wrap_shell = wrap
     TaskStore._reset()
   end)
 

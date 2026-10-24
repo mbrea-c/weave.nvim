@@ -77,6 +77,11 @@ local ConfigDefault = {
 
   provider = "claude-agent-acp",
 
+  subagents = {
+    max_depth = 4, max_children = 8, max_sessions = 32, max_running = 8,
+    provision_timeout_ms = 30000, max_runs_per_session = 100,
+  },
+
   -- Panel geometry defaults, read by view/panel.lua at open time; each field is
   -- overridable per call via open()/toggle() opts.
   view = {

@@ -61,7 +61,7 @@ local SessionStore = require("weave.session_store")
 local Session = {}
 Session.__index = Session
 
---- @param opts { provider?: string, config_defaults?: table<string, string>, get_instance?: fun(provider: string, on_ready: fun(client: table)): table|nil }|nil
+--- @param opts { provider?: string, config_defaults?: table<string, string>, permissions?: table, permission_base?: table, agent_sandbox_mode?: string, get_instance?: function }|nil
 ---   get_instance is injectable so specs can script the client; defaults to
 ---   AgentInstance.get_instance (spawn or reuse the provider process).
 --- @return weave.Session session
@@ -69,11 +69,14 @@ function Session:new(opts)
   opts = opts or {}
   local session = setmetatable({
     _store = SessionStore:new(),
+    _event_listeners = {},
     _client = nil,
     _session_id = nil,
     _provider_name = opts.provider or Config.provider,
     _config_defaults = vim.deepcopy(opts.config_defaults or {}),
+    _permissions = require("weave.permissions").new(opts.permissions, opts.permission_base),
     _get_instance = opts.get_instance or AgentInstance.get_instance,
+    _agent_sandbox_mode = opts.agent_sandbox_mode,
     _turn_active = false,
     _steer_queue = {},
     _cancelling = false,
@@ -81,6 +84,7 @@ function Session:new(opts)
     _config = {},
     _config_order = {},
   }, Session)
+  require("weave.permissions").bind(session._store, session._permissions)
   -- A drain held back by an in-progress edit (dequeue_prompt refuses while
   -- the edited entry is at the head) resumes here: when the box releases (or
   -- moves to another entry), pick the queue back up. Deferred so the drain
@@ -96,6 +100,30 @@ function Session:new(opts)
     end
   end)
   return session
+end
+
+--- Observe lifecycle boundaries independently of UI activity status.
+function Session:subscribe_events(fn)
+  self._event_listeners[#self._event_listeners + 1] = fn
+  return function()
+    for i, value in ipairs(self._event_listeners) do
+      if value == fn then table.remove(self._event_listeners, i); break end
+    end
+  end
+end
+
+function Session:_emit(kind, payload)
+  payload = payload or {}
+  payload.kind, payload.session = kind, self
+  for _, fn in ipairs({ unpack(self._event_listeners) }) do
+    local ok, err = pcall(fn, payload)
+    if not ok then Logger.debug("session event listener failed", err) end
+  end
+end
+
+--- This session's permission engine (preset, overrides and grants).
+function Session:permissions()
+  return self._permissions
 end
 
 --- The store backing this session; the panel binds to it.
@@ -158,7 +186,7 @@ end
 --- notify. Kept under the historical action name: ;;p used to cycle the
 --- session-level permission MODE, which the presets re-encode.
 function Session:cycle_permission_mode()
-  local preset = require("weave.permissions").cycle()
+  local preset = self._permissions.cycle()
   Logger.notify("Permission preset: " .. (preset.label or preset.name), vim.log.levels.INFO)
 end
 
@@ -176,7 +204,7 @@ function Session:start(opts)
     vim.schedule(function()
       if self._config_session == config and not config.closed then self:_on_client_ready(c, restore) end
     end)
-  end)
+  end, { sandbox_mode = self._agent_sandbox_mode })
 
   if not client then
     self._store:set_status("idle")
@@ -194,6 +222,7 @@ end
 --- @param client table
 --- @param restore string|nil saved session id to load instead of creating
 function Session:_on_client_ready(client, restore)
+  if client.sandbox_mode then self._permissions.set_mode(client.sandbox_mode) end
   if client.state == "error" or client.state == "disconnected" then
     self._store:set_status("idle")
     self._store:append_entry({
@@ -240,6 +269,7 @@ end
 --- briefs machinery behind them.
 --- @private
 function Session:_conversation_ready()
+  self:_emit("ready")
   pcall(function()
     require("weave.briefs").on_conversation_ready(self)
   end)
@@ -302,6 +332,9 @@ end
 --- @param defaults_enabled boolean
 --- @param force_defaults? boolean Explicitly send each configured default once after restore
 function Session:_reset_config_session(defaults_enabled, force_defaults)
+  require("weave.tool_context").revoke(self)
+  if self._on_registry_reset then self._on_registry_reset() end
+  self:_emit("reset")
   if self._config_session then self._config_session:close() end
   self._config, self._config_order, self._config_by_id = {}, {}, {}
   self._config_snapshot, self._early_config_options = {}, nil
@@ -312,6 +345,7 @@ function Session:_reset_config_session(defaults_enabled, force_defaults)
     defaults = vim.tbl_extend("force", provider.session_defaults or {}, self._config_defaults),
     enabled = defaults_enabled,
     force_defaults = force_defaults,
+    on_idle = function() self:_emit("config") end,
     on_snapshot = function(response)
       self:_capture_config(response)
       self:_publish_meta()
@@ -459,6 +493,8 @@ function Session:_build_handlers()
   local config = self._config_session
   return AcpBridge.build_handlers(self._store, {
     is_restoring = function() return self._restoring end,
+    permissions = self._permissions,
+    is_live = function() return self._config_session == config and not config.closed end,
     on_config_options_update = function(config_options)
       if self._config_session ~= config or config.closed then return end
       if not self._session_id then
@@ -526,7 +562,7 @@ function Session:_resolve_mcp_servers()
     if not has_clankbox then
       local Tools = require("weave.tools")
       Tools.ensure_registered()
-      local entry = Tools.clankbox_server_entry()
+      local entry = Tools.clankbox_server_entry(self)
       if entry then
         local merged = {}
         for i, srv in ipairs(servers) do
@@ -565,7 +601,7 @@ function Session:_resolve_mcp_servers()
       -- and the agent gets the shim against the proxy socket. The gate then
       -- mediates its tools/call frames as mcp:<tool>. Fallback (no clankbox
       -- shim to run): the legacy in-sandbox spawn with $NVIM injected.
-      local wrapped = require("weave.mcp_proxy").entry_for(srv)
+      local wrapped = require("weave.mcp_proxy").entry_for(srv, self)
       if wrapped then
         resolved[#resolved + 1] = wrapped
       else
@@ -662,6 +698,7 @@ function Session:send_system(opts)
     label = opts.label or "(system message)",
     on_sent = opts.on_sent,
     on_dropped = opts.on_dropped,
+    run_id = opts.run_id,
   }
   if opts.interrupt then
     self:_steer_messages({ msg })
@@ -712,6 +749,8 @@ end
 --- move straight on to it (requests.md). Clear queued prompts individually (the
 --- prompt-box `✕`) to drop them. Resolves pending permissions as cancelled (ACP).
 function Session:cancel()
+  self._cancel_requested = true
+  self:_emit("cancel_requested")
   self:_drop_steered()
   self._cancelling = false
   if self._turn_active then
@@ -831,6 +870,8 @@ function Session:_send_messages(msgs)
 
   self._store:set_status("thinking")
   self._turn_active = true
+  self._turn_messages, self._cancel_requested = msgs, false
+  self:_emit("turn_started", { messages = msgs })
 
   local session_id = self._session_id
 
@@ -856,7 +897,7 @@ function Session:_send_messages(msgs)
       if self._session_id ~= session_id then
         return
       end
-      self:_on_turn_end(err)
+      self:_on_turn_end(err, _response)
     end)
   end)
 
@@ -873,7 +914,7 @@ end
 --- sidebar hint, then either resends a steered prompt or drains the queue.
 --- @private
 --- @param err table|nil ACPError
-function Session:_on_turn_end(err)
+function Session:_on_turn_end(err, response)
   self._turn_active = false
   self._store:set_status("idle")
   self._store:rotate_hint()
@@ -884,6 +925,10 @@ function Session:_on_turn_end(err)
       text = "🐞 Turn failed: " .. (err.message or vim.inspect(err)),
     })
   end
+
+  local messages, cancelled = self._turn_messages, self._cancel_requested
+  self._turn_messages, self._cancel_requested = nil, false
+  self:_emit("turn_finished", { messages = messages, error = err, response = response, cancelled = cancelled })
 
   -- Steered messages take priority over the queue: something interrupted to
   -- send THESE now. They go out as one turn, in arrival order, so a user steer
@@ -917,11 +962,16 @@ end
 
 --- Stop the conversation: cancel the ACP session. Does NOT touch views.
 function Session:stop()
+  require("weave.tool_context").revoke(self)
+  if self._on_registry_reset then self._on_registry_reset() end
   if self._config_session then self._config_session:close() end
   if self._client and self._session_id then
     self._client:cancel_session(self._session_id)
   end
   self._session_id = nil
+  self._turn_active = false
+  self._store:drain_permissions()
+  self:_emit("stopped")
 end
 
 --- Start a fresh conversation in place (the `/new` command): cancel the

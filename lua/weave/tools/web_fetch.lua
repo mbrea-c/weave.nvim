@@ -69,10 +69,10 @@ end
 --- Spawn seam (specs script curl's answers instead of reaching the network).
 --- @param argv string[]
 --- @param cb fun(res: { code: integer, stdout: string, stderr: string })
-function M._run(argv, cb)
+function M._run(argv, cb, ctx)
   local Sandbox = require("weave.sandbox")
   local command, args = argv[1], { unpack(argv, 2) }
-  command, args = Sandbox.wrap_for_tool("weave:web_fetch", command, args)
+  command, args = Sandbox.wrap_for_tool("weave:web_fetch", command, args, ctx)
   local full = { command }
   vim.list_extend(full, args)
   vim.system(full, { text = true, timeout = M.TIMEOUT_MS }, function(res)
@@ -144,7 +144,7 @@ end
 --- per hop). `-sS` keeps progress noise out but keeps errors.
 --- @param url string
 --- @param cb fun(res: { status: integer, headers: string, body: string }|nil, err: string|nil)
-local function fetch_once(url, cb)
+local function fetch_once(url, cb, ctx)
   local curl = M.curl_path()
   if not curl then
     return cb(
@@ -183,7 +183,7 @@ local function fetch_once(url, cb)
     end
     local status = tonumber(headers:match("^HTTP/%S+%s+(%d%d%d)") or "") or 0
     cb({ status = status, headers = headers, body = body }, nil)
-  end)
+  end, ctx)
 end
 
 --- @param headers string
@@ -259,7 +259,7 @@ end
 --- @param url string normalized
 --- @param hops integer
 --- @param cb fun(text: string|nil, err: string|nil)
-local function fetch_chain(url, hops, cb)
+local function fetch_chain(url, hops, cb, ctx)
   fetch_once(url, function(res, err)
     if err then
       return cb(nil, err)
@@ -285,7 +285,7 @@ local function fetch_chain(url, hops, cb)
       if hops >= M.MAX_REDIRECTS then
         return cb(nil, ("%s: more than %d redirects"):format(url, M.MAX_REDIRECTS))
       end
-      return fetch_chain(target, hops + 1, cb)
+      return fetch_chain(target, hops + 1, cb, ctx)
     end
     if status < 200 or status >= 300 then
       return cb(nil, ("%s answered HTTP %d"):format(url, status))
@@ -306,7 +306,7 @@ local function fetch_chain(url, hops, cb)
       head[#head + 1] = ("(truncated to %d characters)"):format(M.MAX_CHARS)
     end
     cb(table.concat(head, "\n") .. "\n\n" .. text, nil)
-  end)
+  end, ctx)
 end
 
 M.def = {
@@ -323,7 +323,7 @@ M.def = {
     required = { "url" },
   },
   async = true,
-  handler = function(args, respond)
+  handler = function(args, respond, ctx)
     local url, err = M.normalize_url(args and args.url)
     if not url then
       return respond({ content = { { type = "text", text = err } }, isError = true })
@@ -340,7 +340,7 @@ M.def = {
       end
       cache[url] = { at = M._now(), text = text }
       respond(text)
-    end)
+    end, ctx)
   end,
 }
 

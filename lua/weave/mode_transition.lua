@@ -80,31 +80,27 @@ end
 --- conversation when the provider can.
 --- @param mode string
 --- @param callback fun(ok: boolean)
-local function default_restart(mode, callback)
+local function default_restart(mode, callback, session)
   local Registry = require("weave.registry")
   local AgentInstance = require("weave.acp.agent_instance")
-  local entry = Registry.selected() or Registry.list()[1]
-  if not entry then
-    -- Nothing running: the mode applies to whatever spawns next.
+  if not session then
     AgentInstance.set_mode_override(nil, mode)
     return callback(true)
   end
-
-  local restore = M.load_session_supported() and entry.session:session_id() or nil
-  AgentInstance.set_mode_override(entry.provider, mode)
-
-  -- No stop() here. Processes are keyed (provider, mode), so the new
-  -- session lands on a new process by construction, and killing the old one
-  -- would take down any OTHER session still sitting in it. reap() collects
-  -- it afterwards, once closing this session has made it an orphan.
+  if not Registry.entry_for(session) then return callback(false) end
+  local restore = M.load_session_supported(session) and session:session_id() or nil
   local ok, err = pcall(function()
-    local fresh = Registry.add({ provider = entry.provider, restore = restore })
-    Registry.select(fresh.key)
-    Registry.close(entry.key)
+    -- Retain the registry key, parent, configuration and policy. Stop only this
+    -- ACP conversation, never the process serving its siblings.
+    session:cancel()
+    session:stop()
+    session:get_store():reset()
+    session._agent_sandbox_mode = mode
+    session:start({ restore = restore })
     AgentInstance.reap()
   end)
   if not ok then
-    require("weave.utils.logger").notify("weave: agent restart failed — " .. tostring(err), vim.log.levels.ERROR)
+    require("weave.utils.logger").notify("weave: agent restart failed: " .. tostring(err), vim.log.levels.ERROR)
   end
   callback(ok)
 end
@@ -114,20 +110,26 @@ end
 --- selection, never a grant. Someone reaching this has gone looking for it.
 --- @param mode "on"|"off"
 --- @param callback? fun(ok: boolean)
-function M.request_mode(mode, callback)
-  local from = Permissions.current_mode()
-  if from == mode then
-    return callback and callback(true)
-  end
-  M._confirm(M.confirmation({ from = from, to = mode, load_session = M.load_session_supported() }), function(ok)
-    if not ok then
+function M.request_mode(mode, callback, session)
+  if mode ~= "on" and mode ~= "off" then error("invalid agent sandbox mode", 0) end
+  local Registry = require("weave.registry")
+  if session and not Registry.entry_for(session) then return callback and callback(false) end
+  local entry = session and Registry.entry_for(session) or Registry.selected()
+  session = entry and entry.session
+  local generation = session and session._config_session
+  local policy = session and session:permissions() or Permissions
+  local from = policy.current_mode()
+  if from == mode then return callback and callback(true) end
+  local answered = false
+  M._confirm(M.confirmation({ from = from, to = mode, load_session = M.load_session_supported(session) }), function(ok)
+    if answered then return end
+    answered = true
+    if not ok or session and (Registry.entry_for(session) ~= entry or session._config_session ~= generation) then
       return callback and callback(false)
     end
     M._restart(mode, function(restarted)
-      if callback then
-        callback(restarted)
-      end
-    end)
+      if callback then callback(restarted) end
+    end, session)
   end)
 end
 
@@ -135,13 +137,12 @@ end
 --- restart. Unknown means no: promising a restore we cannot deliver is the
 --- one failure this whole flow exists to avoid.
 --- @return boolean
-function M.load_session_supported()
+function M.load_session_supported(session)
   local ok, Registry = pcall(require, "weave.registry")
-  if not ok then
-    return false
-  end
-  local entry = Registry.selected() or Registry.list()[1]
-  local client = entry and entry.session and entry.session:client()
+  if not ok then return false end
+  local entry = not session and Registry.selected() or nil
+  session = session or entry and entry.session
+  local client = session and session:client()
   local caps = client and client.agent_capabilities
   return (caps and caps.loadSession) == true
 end

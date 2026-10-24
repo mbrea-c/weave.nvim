@@ -17,7 +17,8 @@ local M = {}
 
 --- The session whose gate applies. Overridable seam for specs.
 --- @return table|nil
-function M._session()
+function M._session(ctx)
+  if ctx and ctx.caller then return ctx.caller.session end
   local ok, Registry = pcall(require, "weave.registry")
   if not ok then
     return nil
@@ -29,8 +30,8 @@ end
 --- Why the gate refuses right now, or nil when it does not: the acting
 --- session must have edit_gate on AND unseen edits pending.
 --- @return string|nil reason
-function M.gate_reason()
-  local session = M._session()
+function M.gate_reason(ctx)
+  local session = M._session(ctx)
   if not session then
     return nil
   end
@@ -56,15 +57,16 @@ function M.guard(def)
     description = def.description,
     inputSchema = def.inputSchema,
     async = def.async,
-    handler = function(args, respond)
-      local reason = M.gate_reason()
+    handler = function(args, respond, ctx)
+      if not def.async then ctx = respond end
+      local reason = M.gate_reason(ctx)
       if reason then
         error(reason, 0)
       end
       if def.async then
-        return def.handler(args, respond)
+        return def.handler(args, respond, ctx)
       end
-      return def.handler(args)
+      return def.handler(args, ctx)
     end,
   }
 end
@@ -80,8 +82,8 @@ M.check = {
   -- table encodes as `[]`, which is not a valid JSON Schema `properties` —
   -- strict clients reject the tool (or the whole tools/list) over it.
   inputSchema = { type = "object", properties = vim.empty_dict() },
-  handler = function()
-    local session = M._session()
+  handler = function(_args, ctx)
+    local session = M._session(ctx)
     if not session then
       error("no active weave session", 0)
     end

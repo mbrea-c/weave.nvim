@@ -79,7 +79,7 @@ end
 local function Details(ctx, props)
   local state = use_store(ctx, props.store)
   local kinds = props.get_kinds()
-  local preset = use_permissions(ctx)
+  local preset = use_permissions(ctx, props.store)
   local meta = state.meta
 
   local rows = {

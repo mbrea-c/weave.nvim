@@ -40,7 +40,7 @@ end
 M.def = {
   description = "Request access beyond the current sandbox: a directory, network for executed tasks, or "
     .. "tool_sandbox = false to run tool subprocesses unwrapped (the agent sandbox is unaffected). The user is "
-    .. "asked; a grant lasts for this editor session and applies to your next tool call — no restart. Provide "
+    .. "asked; a grant lasts for this managed Session and applies to your next tool call — no restart. Provide "
     .. "`reason` so the user knows why.",
   inputSchema = {
     type = "object",
@@ -56,9 +56,11 @@ M.def = {
     },
   },
   async = true,
-  handler = function(args, respond)
+  handler = function(args, respond, ctx)
     local Permissions = require("weave.permissions")
     local Gate = require("weave.tools.gate")
+    if ctx and not ctx.caller or not Gate.valid(ctx) then return respond({ content = { { type = "text", text = "stale session context" } }, isError = true }) end
+    Permissions = Gate.policy(ctx)
 
     local wants_path = type(args.path) == "string" and args.path ~= ""
     local wants_network = args.network == true
@@ -92,13 +94,14 @@ M.def = {
       title = title .. " — " .. args.reason
     end
 
-    local store = Gate._ask_store()
+    local store = Gate._ask_store(ctx)
     if not store then
       return respond({
         content = { { type = "text", text = "access not granted: no active weave session to ask" } },
         isError = true,
       })
     end
+    local answered = false
     store:enqueue_permission({
       client_side = true,
       request = {
@@ -109,6 +112,9 @@ M.def = {
         },
       },
       respond = function(option_id)
+        if answered then return end
+        answered = true
+        if ctx and not ctx.caller or not Gate.valid(ctx) then return respond({ content = { { type = "text", text = "stale session context" } }, isError = true }) end
         if option_id ~= "allow_once" then
           return respond({
             content = { { type = "text", text = "access not granted: the user declined" } },

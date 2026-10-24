@@ -389,16 +389,18 @@ end
 --- Create, register and asynchronously start a Session. Background by default:
 --- no selection, panel or provider picker. With open=true, select it for this
 --- tab and open/rebind its panel. Closing the panel does not stop the session.
---- @param opts { provider?: string, config_defaults?: table<string, string>, restore?: string, open?: boolean, get_instance?: function }|nil
+--- @param opts { provider?: string, config_defaults?: table<string, string>, permissions?: table, parent?: weave.Session, agent_sandbox_mode?: string, restore?: string, open?: boolean, get_instance?: function }|nil
 --- @return weave.Session session
 function M.new_session(opts)
   opts = opts or {}
+  local parent = opts.parent and Registry.entry_for(opts.parent)
+  if opts.parent and not parent then error("parent session is not managed", 0) end
   injected_get_instance = opts.get_instance or injected_get_instance
   local entry = Registry.add({
-    provider = opts.provider,
-    config_defaults = opts.config_defaults,
-    get_instance = opts.get_instance,
-    restore = opts.restore,
+    parent_key = parent and parent.key, permissions = opts.permissions,
+    provider = opts.provider, config_defaults = opts.config_defaults,
+    get_instance = opts.get_instance, restore = opts.restore,
+    agent_sandbox_mode = opts.agent_sandbox_mode,
   })
   if opts.open then select_session(entry) end
   return entry.session
@@ -407,7 +409,7 @@ end
 --- Open the panel for the current tab's selected session (starting and
 --- selecting a new one when the tab has none); focuses the prompt if already
 --- open.
---- @param opts { provider?: string, config_defaults?: table<string, string>, get_instance?: function, width?: integer, sidebar_width?: integer, prompt_height?: integer }|nil
+--- @param opts { provider?: string, config_defaults?: table<string, string>, permissions?: table, agent_sandbox_mode?: string, get_instance?: function, width?: integer, sidebar_width?: integer, prompt_height?: integer }|nil
 ---   provider/config_defaults/get_instance apply only when a session is created.
 function M.open(opts)
   opts = opts or {}
@@ -423,6 +425,7 @@ function M.open(opts)
   if not entry then
     entry = Registry.add({
       provider = opts.provider, config_defaults = opts.config_defaults, get_instance = opts.get_instance,
+      permissions = opts.permissions, agent_sandbox_mode = opts.agent_sandbox_mode,
     })
     Registry.select(entry.key)
   end
@@ -470,9 +473,9 @@ function M.sessions(opts)
     on_new = function()
       pick_provider(function(provider)
         pick_mode(provider, function(mode)
-          AgentInstance.set_mode_override(provider, mode)
           M.new_session({
             provider = provider, config_defaults = opts.config_defaults, get_instance = get_instance, open = true,
+            permissions = opts.permissions, agent_sandbox_mode = mode,
           })
         end)
       end)

@@ -137,7 +137,7 @@ function M.start(opts)
     end
   end
 
-  local spawn_cmd, spawn_args = require("weave.sandbox").wrap_shell(opts.command)
+  local spawn_cmd, spawn_args = require("weave.sandbox").wrap_shell(opts.command, opts.context)
   local sok, proc, pid = pcall(vim.uv.spawn, spawn_cmd, {
     args = spawn_args,
     cwd = cwd,
@@ -172,6 +172,10 @@ function M.start(opts)
   local task = {
     id = id,
     command = opts.command,
+    owner = opts.context and opts.context.caller and opts.context.caller.session,
+    caller = opts.context and opts.context.caller,
+    run_id = opts.context and opts.context.caller and package.loaded["weave.subagents"]
+      and package.loaded["weave.subagents"].active_run_id(opts.context.caller.session),
     cwd = cwd,
     pid = pid,
     status = "running",
@@ -264,6 +268,26 @@ function M.kill(id)
   end
   notify()
   return true
+end
+
+--- A cancelled delegated run does not cancel another run's shell tasks.
+function M.cancel_run(session, run_id)
+  for _, id in ipairs(order) do
+    local task = tasks[id]
+    if task.owner == session and task.run_id == run_id and task.status == "running" then M.kill(id) end
+  end
+end
+
+--- Cancel this conversation's live process groups without touching siblings.
+function M.close_session(session)
+  for _, id in ipairs(order) do
+    local task = tasks[id]
+    if task.owner == session then
+      if task.status == "running" then M.kill(id) end
+      -- Keep compact process history, not the Session/transcript or capability.
+      task.owner, task.caller = nil, nil
+    end
+  end
 end
 
 --- Call cb(task, timed_out) when the task settles, immediately (scheduled)

@@ -1,12 +1,17 @@
--- Read-only, active-session introspection. MCP does not carry the calling ACP
--- session's identity, so an implicit target follows the editor's selection.
+-- Read-only introspection of the authenticated caller or its descendants.
+-- Only trusted direct Lua calls retain the editor-selection fallback.
 local Config = require("weave.config")
 local Registry = require("weave.registry")
 local Settings = require("weave.settings")
 
 local M = {}
 
-local function resolve(args)
+local function resolve(args, ctx)
+  local caller = ctx and ctx.caller and require("weave.tool_context").require_caller(ctx)
+  local owner = caller and Registry.entry_for(caller)
+  local function visible(entry)
+    return not caller or owner and (entry == owner or Registry.is_descendant(entry.key, owner.key))
+  end
   if args.session_id ~= nil and args.session_key ~= nil then
     error("pass session_id or session_key, not both", 0)
   end
@@ -16,7 +21,7 @@ local function resolve(args)
     end
     local found
     for _, entry in ipairs(Registry.list()) do
-      if entry.session:session_id() == args.session_id then
+      if visible(entry) and entry.session:session_id() == args.session_id then
         if found then error("ambiguous ACP session ID; pass session_key instead", 0) end
         found = entry
       end
@@ -30,8 +35,12 @@ local function resolve(args)
       error("session_key must be a positive integer registry key", 0)
     end
     local entry = Registry.get(key)
-    if not entry then error("no active session with that session_key", 0) end
+    if not entry or not visible(entry) then error("no accessible session with that session_key", 0) end
     return entry
+  end
+  if caller then
+    if not owner then error("caller is no longer registered", 0) end
+    return owner
   end
   local selected = Registry.selected()
   if selected then return selected end
@@ -78,8 +87,8 @@ M.introspect = {
     "Returns provider fields with current values, available choices, descriptions,",
     "configured provider/session/effective defaults and their validity, manual overrides,",
     "pending config writes, and scoped runtime settings with defaults and constraints.",
-    "Omit selectors for the current editor tab's selected session (or the sole active session).",
-    "MCP does not identify the caller's session; use session_id to target your own explicitly.",
+    "Omit selectors for the authenticated calling session, independently of UI selection.",
+    "Explicit selectors may target only yourself or a descendant, never siblings or unrelated sessions.",
     "Alternatively pass the stable registry session_key, including for sessions still starting.",
     "Pass at most one selector. Never creates, loads or switches sessions.",
     "Does not expose transcripts, prompts, launch arguments or environment variables.",
@@ -87,12 +96,12 @@ M.introspect = {
   inputSchema = {
     type = "object",
     properties = {
-      session_id = { type = "string", description = "Active ACP session ID; omit for the current selected session" },
+      session_id = { type = "string", description = "Active ACP session ID; omit for your authenticated session" },
       session_key = { type = "integer", description = "Stable active-session registry key, instead of session_id" },
     },
   },
-  handler = function(args)
-    local entry = resolve(args or {})
+  handler = function(args, ctx)
+    local entry = resolve(args or {}, ctx)
     local session = entry.session
     local state = session:get_store().state
     return vim.json.encode({
@@ -104,6 +113,8 @@ M.introspect = {
       title = state.meta.title or vim.NIL,
       config = session:config_snapshot() or vim.NIL,
       settings = runtime_settings(entry),
+      parent_key = entry.parent_key or vim.NIL,
+      permissions = session:permissions().snapshot(),
     })
   end,
 }

@@ -7,6 +7,23 @@ function Logger.get_timestamp()
   return os.date("%Y-%m-%d %H:%M:%S")
 end
 
+-- Capabilities cross ACP in MCP environment entries. Logs must not turn into
+-- reusable credentials, including when a provider echoes a structured payload.
+local function redact(value)
+  if type(value) ~= "table" then return value end
+  local copy, seen = vim.deepcopy(value), {}
+  local function visit(item)
+    if type(item) ~= "table" or seen[item] then return end
+    seen[item] = true
+    if item.name == "CLANKBOX_AUTH_TOKEN" then item.value = "[redacted]" end
+    for key, child in pairs(item) do
+      if key == "CLANKBOX_AUTH_TOKEN" then item[key] = "[redacted]" else visit(child) end
+    end
+  end
+  visit(copy)
+  return copy
+end
+
 local function format_debug_message(...)
   if not Config.debug then
     return nil
@@ -31,7 +48,7 @@ local function format_debug_message(...)
     if type(arg) == "string" then
       table.insert(log_parts, arg)
     else
-      table.insert(log_parts, vim.inspect(arg))
+      table.insert(log_parts, vim.inspect(redact(arg)))
     end
   end
 
@@ -119,7 +136,7 @@ function Logger.unrecognized_acp(reason, message, provider)
     timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     reason = reason,
     provider = provider,
-    message = message,
+    message = redact(message),
   }
 
   local encoded_ok, encoded = pcall(vim.json.encode, record)

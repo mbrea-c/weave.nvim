@@ -8,7 +8,8 @@ local Permissions = require("weave.permissions")
 
 --- @param ctx table fibrous ReactiveCtx
 --- @return weave.permissions.Preset active
-return function(ctx)
+return function(ctx, store, policy)
+  local Permissions = policy or Permissions.for_store(store)
   local ver = ctx.use_state(0)
   ctx.use_effect(function()
     return Permissions.subscribe(function()

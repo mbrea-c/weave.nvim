@@ -218,7 +218,8 @@ order as the turn ends. The prompt box is a movable edit-cursor over that stack:
 When an agent wants to run a tool that needs approval, a permission request
 appears in the transcript and sidebar with numbered options — answer with
 `;;1`…`;;9`. How much is auto-answered is decided by the **client-side
-permission engine** (`weave.permissions`): editor-global, generic **rules**
+permission engine**: each managed Session owns its active preset, rule overrides,
+tool-sandbox settings, grants, and pending approvals. Generic **rules**
 of the form *(tool glob, optional resource glob, decision allow/deny/ask)*,
 grouped into named **presets**. The first matching rule of the active preset
 wins; both ACP permission requests (as `acp:<kind>` with the file path or
@@ -301,7 +302,14 @@ session grants, and the running agent's sandbox mode. `[edit]` opens the
 active preset as a Lua table in a scratch float (`:w` applies it as a
 *runtime* preset, shadowing a builtin of the same name; `[delete]` reverts to
 the shadowed definition), `[new]` starts from a template. Runtime presets
-live in memory for now.
+live in memory for now. Named definitions share one editor-wide catalogue,
+but each Session keeps a detached snapshot of its selected policy. Saving an
+edit applies it to that Session only; other sessions keep their snapshots,
+even if the shared definition is edited or deleted. Selecting a preset again
+explicitly adopts its latest definition. Constructor rule/tool-sandbox overrides
+are local snapshots, not published definitions. Grants remain session-local.
+Children inherit a detached policy/grant snapshot, so later changes in either
+session do not propagate.
 
 That editor is the one popup that does **not** vanish when you look away: with
 unsaved edits it stays put (and says so once), on the same rule its `q` already
@@ -316,15 +324,77 @@ Different sessions can run on different providers at the same time.
 
 Open the **session modal** with `;;s` or `:Weave sessions`:
 
-- Each row is a button — `<CR>` selects that session for the current tab.
+- Sessions form a live tree. `[+]` / `[-]` folds a branch; background children
+  appear without reopening the popup. The tree scrolls independently, with
+  new/load actions fixed beneath it.
+- Each row is a button: `<CR>` selects that session for the current tab.
 - `ⓘ` on a row opens that session's **details window** (below).
-- `✕` on a row closes that session everywhere (it stops running).
+- `✕` closes that session and all its descendants everywhere, deepest first.
+  Closing a parent asks for confirmation; unrelated roots keep running.
 - **+ new session** starts a fresh session on any configured provider.
 - **↺ load saved…** activates a previously saved session (from the provider's
   history) into a new entry.
 
 `;;r` instead restores a saved session *in place*, over the current
 conversation in the panel.
+
+### Subagents
+
+Agents delegate work into ordinary child Sessions with these MCP tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `weave_subagent_create` | Create a child with `prompt`, optional `name`, configured `provider`, `config_defaults`, and `permissions` |
+| `weave_subagent_list` | List direct children, or descendants with `recursive = true`; `status` defaults to `all`, `limit` to 10 |
+| `weave_subagent_send` | Queue another `prompt` in a descendant and return a new `run_id` |
+| `weave_subagent_read` | Read assistant output with `cursor` / `next_cursor` and `max_chars` (default 16384, maximum 65536 Unicode characters) |
+| `weave_subagent_wait` | Wait asynchronously, default 30000 ms, maximum 120000; timeout does not cancel work |
+| `weave_subagent_cancel` | Cancel a run, its shell tasks, and runs it delegated, retaining the child and earlier output |
+| `weave_subagent_close` | Close the child subtree and release its retained runs |
+
+Operations identify a child by `subagent_id`. Read/wait/cancel accept an
+optional `run_id`, defaulting to the active or latest run. List supports
+`all`, `running`, `completed`, `failed`, `cancelled`, and `idle`; running
+includes queued, provisioning, and approval-blocked work.
+
+The parent is always the authenticated caller, never an agent-supplied ID or
+the current UI selection. Agents manage only strict descendants, not themselves,
+siblings, ancestors, or unrelated roots. No transcript or thoughts are
+automatically copied: delegation prompts supply context, and reads return
+assistant output only. Runs in a reusable child are serialized. Completion
+means the ACP prompt turn ended, not that its answer was independently verified.
+
+Omitting `permissions` inherits the parent's current policy and grants as a
+snapshot. Explicit `permissions = { preset?, rules?, sandbox? }` requires
+user approval, even under YOLO. The sandbox block is the normal tool-sandbox
+vocabulary, including `enabled` and per-tool overrides. A different provider,
+permission-sensitive config field, or any config override with the agent
+sandbox off also requires approval. Unsupported requested defaults fail
+provisioning after a timeout instead of silently running with other settings.
+Children inherit their parent's agent-sandbox mode separately.
+
+Creation never accepts arbitrary launch commands or an ownership override.
+Depth, direct children, sessions per root (including retained children),
+editor-wide running jobs, and retained runs are bounded:
+
+```lua
+require("weave").setup({
+  subagents = {
+    max_depth = 4, max_children = 8, max_sessions = 32, max_running = 8,
+    provision_timeout_ms = 30000, max_runs_per_session = 100,
+  },
+})
+```
+
+Session reset/restore/close revokes its transport credentials and stops its
+owned shell tasks and child sessions. Cancellation does not stop a shared
+provider process or unrelated runs queued in the same reusable child.
+
+Credentials protect routing, not a hostile provider implementation. Provider
+processes are trusted to keep each conversation's MCP connection separate;
+shared processes can see their sessions' credentials. An unsandboxed agent,
+arbitrary editor Lua, or host-level process access is not a security boundary
+between sessions.
 
 ### MCP servers
 
@@ -707,7 +777,8 @@ would make them harder to find, not easier.
 | `acp_providers` | `table` | 13 built-ins | Agent launch definitions (see below) |
 | `mcp_servers` | `list` | `{}` | MCP servers handed to **every** provider at session start |
 | `tools` | `table` | `{ enabled = true }` | weave's own MCP tool suite (`weave_read`/`weave_write`/`weave_edit`, `weave_glob`/`weave_grep`, task lifecycle, `weave_web_fetch`) via clankbox; `clankbox_path`, `ripgrep_path` and `curl_path` override binary/checkout auto-detection |
-| `permissions` | `table` | `{ presets = {} }` | The permission engine: startup preset + setup-time presets (see [Permission presets](#permission-presets)) |
+| `permissions` | `table` | `{ presets = {} }` | Startup permission template + setup-time presets; active policy and grants are per Session (see [Permission presets](#permission-presets)) |
+| `subagents` | `table` | see [Subagents](#subagents) | Hierarchy, concurrency, retained-run and provisioning limits |
 | `sandbox` | `table` | `{ mode = "on" }` | Agent process confinement (bubblewrap on Linux, Seatbelt on macOS — see [Sandbox](#sandbox)) |
 | `edits` | `table` | see below | Edit-batch delivery mechanics ([tutor mode](#tutor-mode)); the on/off switches are runtime [settings](#settings) |
 | `settings` | `table` | see below | The runtime-settings surface: sidebar subset, default overrides, agent briefs, presets |
@@ -730,7 +801,8 @@ stdpath("state") .. "/weave/acp-unrecognized.jsonl"
 
 On a default Linux setup this is
 `~/.local/state/nvim/weave/acp-unrecognized.jsonl`. Each line contains a UTC
-timestamp, a reason, the provider when known, and the raw message. The file is
+timestamp, a reason, the provider when known, and the raw message (structured
+session transport credentials are redacted in both logs). The file is
 owner-only (`0600`) on POSIX systems. Raw ACP payloads can include prompts,
 paths, and source text, so treat it as private diagnostic data. It is safe to
 delete or truncate; Weave recreates it when the next unrecognized message
@@ -905,7 +977,12 @@ creation (this is not Neovim's own MCP connection). A provider entry's own
 `{ name, command, args, env }` where `env` is a list of `{ name, value }`.
 
 With `tools.enabled` (the default) weave also appends a **clankbox** entry,
-the stdio shim run by this very nvim, carrying weave's own tool suite. Every
+the stdio shim run by this very nvim, carrying weave's own tool suite. Managed
+sessions require a clankbox version with authenticated call-context support;
+an old unbound broker/RPC transport is refused. The editor owns one registry
+and broker, with a distinct revocable capability for each session connection.
+Capabilities are sent via shim environment, never tool arguments, and redacted
+from structured ACP logs. Every
 public endpoint starts with `weave_`, so agents that flatten MCP endpoints and
 their builtins into one namespace cannot confuse the two:
 
@@ -926,7 +1003,8 @@ their builtins into one namespace cannot confuse the two:
   tasks; `successful` means exited with code 0. `limit` sets the maximum number
   returned (positive integer, default 10), applied after filtering. Summaries
   include task IDs, state, command, and working directory; use
-  `weave_task_status` for output.
+  `weave_task_status` for output. Authenticated agents see and control only their
+  own live-conversation tasks and tasks owned by descendants.
 - `weave_task_start`/`weave_task_status`/`weave_task_wait`/`weave_task_kill`,
   a lifecycle over managed shell tasks (surfaced in the sidebar's *Terminal
   tasks* section).
@@ -954,11 +1032,11 @@ content-level exclusion belongs in rg's own filters.
 
 ### Session introspection
 
-Call `weave_session_introspect` with an empty object for the session selected in
-the current editor tab. If nothing is selected, it uses the sole active session;
-with several active sessions it errors instead of guessing. MCP calls do not
-identify the calling ACP session, so "current" is the editor selection, not
-necessarily the caller's own conversation.
+Call `weave_session_introspect` with an empty object for the authenticated
+calling Session, independently of the selected editor tab. An explicit
+`session_id` or `session_key` may identify the caller or a descendant, never
+an unrelated Session. Direct trusted Lua calls without MCP context retain the
+current-tab/sole-session fallback.
 
 Pass `{ "session_id": "..." }` to inspect another active ACP session explicitly.
 Alternatively, `{ "session_key": 3 }` uses the stable numeric registry key,
@@ -970,7 +1048,11 @@ session.
 The JSON result contains:
 
 - Identity: `session_id` (null before startup completes), `session_key`,
-  `provider` (the configured provider key), `ready`, `status`, and `title`.
+  `parent_key`, `provider` (the configured provider key), `ready`, `status`,
+  and `title`.
+- `permissions`: the Session's effective preset, rule and tool-sandbox overrides,
+  grants, agent-sandbox mode, and project root. It never contains transport
+  credentials.
 - `config.defaults.provider`, `.session`, and `.effective`: the provider's
   configured defaults, per-session overrides, and their merged result captured
   for this ACP conversation. Later plugin-config changes do not rewrite this
@@ -1226,10 +1308,10 @@ for one tool. The builtin scoped presets use overrides for one tool —
 the one job that needs the network and no filesystem at all, and nobody should
 have to grant the whole session network access to read a doc page. Session
 **elevation grants**, which `weave_request_access` writes when you approve it,
-are deliberately global: path and network grants widen every tool's hull,
+apply across tools within that Session only: path and network grants widen every tool's hull,
 overridden ones included, since granting access answers "may we reach this at
 all". An agent may also request `tool_sandbox = false`; approval makes every
-subsequent tool subprocess run unwrapped for the editor session, is shown and
+subsequent tool subprocess run unwrapped for that managed Session, is shown and
 revocable in the permissions window, and still leaves the agent sandbox
 unchanged. The `sandbox` section is orthogonal to the sandbox MODE in a second
 sense too: with the mode off, nothing is wrapped at all and the section is
@@ -1433,8 +1515,11 @@ weave.dismiss_annotations()  -- drop them all ({ buffer = true } for this file o
 ```
 
 `new_session(opts)` always creates a new managed Session, even if another is
-selected. It accepts `provider` (default: the configured provider),
-`config_defaults`, optional `restore` (a saved ACP session ID), and `open`
+selected. It accepts `provider` (default: the parent's provider for a child,
+otherwise the configured provider),
+`config_defaults`, `permissions = { preset?, rules?, sandbox? }`, optional
+`parent` (a managed Session object), `agent_sandbox_mode = "on" | "off"`,
+`restore` (a saved ACP session ID), and `open`
 (default `false`). With `open = true`, it selects the new session for the
 current tab and opens its panel, or rebinds an existing panel at the same
 geometry. By default it does neither: existing selections, panels, and focus
@@ -1457,8 +1542,8 @@ its panel leaves it running; the sessions modal can select or close it, and
 `weave.stop()` shuts down all managed sessions.
 
 `open`/`toggle` accept
-`{ provider?, config_defaults?, width?, sidebar_width?, prompt_height? }`.
-`provider` and `config_defaults` apply only when they create a session, not
+`{ provider?, config_defaults?, permissions?, agent_sandbox_mode?, width?, sidebar_width?, prompt_height? }`.
+The provider, config, permissions and agent-sandbox mode apply only when they create a session, not
 when focusing or reopening an existing one. The other options size the panel.
 `sessions({ config_defaults = ... })` passes defaults to its new/load-saved
 flows, including explicit application of defaults after restore as described
@@ -1476,7 +1561,8 @@ session:submit(text)             -- send (queued while a turn is running)
 session:steer(text)              -- interrupt the running turn and send NOW
 session:cancel()                 -- cancel the running turn (keeps the queue)
 session:respond_permission(n)    -- answer the pending permission, option n
-session:cycle_permission_mode()  -- next permission preset (editor-global)
+session:cycle_permission_mode()  -- next preset for this Session
+session:permissions()            -- this Session's policy engine and snapshot()
 
 session:config_kinds()           -- what the agent lets you change: a list of
                                  -- { id, key, category?, label, description?, current,
@@ -1520,9 +1606,10 @@ The snapshot's main fields: `entries` (the transcript timeline), `tool_calls`
 head), `usage` (context tokens or percentage, plus provider breakdown), `meta`
 (session title / provider / agent / model / mode / session id), `commands`
 (advertised slash commands). The permission preset is
-NOT store state — it lives in the editor-global engine,
-`require("weave.permissions")` (`active()`, `set_active(name)`, `cycle()`,
-`resolve(action)`, `save_preset(p)`, `subscribe(fn)`). Snapshots
+NOT store state: it lives in `session:permissions()` (`active()`,
+`set_active(name)`, `cycle()`, `resolve(action)`, `snapshot()`, `subscribe(fn)`).
+The module `require("weave.permissions")` supplies startup defaults, not an
+implicit policy for the currently selected session. Snapshots
 are reference-stable: a field's table is reassigned only when it changed, so
 `old.entries ~= new.entries` is a cheap "did content change" test.
 

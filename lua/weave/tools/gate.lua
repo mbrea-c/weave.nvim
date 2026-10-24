@@ -25,12 +25,22 @@ local Permissions = require("weave.permissions")
 local M = {}
 local next_permission = 0
 
---- The store that surfaces "ask" prompts: the current tab's session, else
---- the first active one. MCP calls arrive over clankbox with no session
---- identity attached, so "the session you are looking at" is the best
---- available owner for the prompt. Overridable seam for specs.
---- @return weave.store.SessionStore|nil
-function M._ask_store()
+--- Bound callers carry host-authenticated identity and a revocation check.
+--- nil context is reserved for trusted direct Lua calls and test seams.
+function M.valid(ctx)
+  local caller = ctx and ctx.caller
+  if not caller then return true end
+  return type(caller.valid) == "function" and caller.valid() and caller.session ~= nil
+end
+
+function M.policy(ctx)
+  return ctx and ctx.caller and ctx.caller.session:permissions() or Permissions
+end
+
+function M._ask_store(ctx)
+  if ctx and ctx.caller then
+    return M.valid(ctx) and ctx.caller.session:get_store() or nil
+  end
   local ok, Registry = pcall(require, "weave.registry")
   if not ok then
     return nil
@@ -60,8 +70,8 @@ end
 --- @param action weave.permissions.Action
 --- @param verb "Allow"|"Reject"
 --- @return string
-local function always_label(action, verb)
-  local rule = Permissions.grant_rule(action, "allow")
+local function always_label(action, verb, policy)
+  local rule = policy.grant_rule(action, "allow")
   if rule.resource == nil then
     return verb .. " always"
   end
@@ -83,8 +93,10 @@ end
 --- @param run fun()
 --- @param respond fun(ret: string|table)
 --- @return function|nil cancel Remove a pending approval without answering it.
-function M.mediate(action, title, kind, run, respond)
-  local decision, rule = Permissions.resolve(action)
+function M.mediate(action, title, kind, run, respond, ctx)
+  if not M.valid(ctx) then return respond(refusal("permission denied: stale session context")) end
+  local policy = M.policy(ctx)
+  local decision, rule = policy.resolve(action)
 
   if decision == "allow" then
     return run() -- a sync throw propagates into clankbox's pcall
@@ -96,7 +108,7 @@ function M.mediate(action, title, kind, run, respond)
     -- instead") rather than only block.
     local text = ("permission denied: %s is blocked by the active weave permission preset %q"):format(
       describe(action),
-      Permissions.active().name
+      policy.active().name
     )
     if rule and rule.message then
       text = text .. " — " .. rule.message
@@ -105,7 +117,7 @@ function M.mediate(action, title, kind, run, respond)
   end
 
   -- ask: surface through the session's existing permission queue
-  local store = M._ask_store()
+  local store = M._ask_store(ctx)
   if not store then
     return respond(
       refusal(
@@ -137,18 +149,19 @@ function M.mediate(action, title, kind, run, respond)
       -- want and currently cannot say.
       options = {
         { optionId = "allow_once", name = "Allow once", kind = "allow_once" },
-        { optionId = "allow_always", name = always_label(action, "Allow"), kind = "allow_always" },
+        { optionId = "allow_always", name = always_label(action, "Allow", policy), kind = "allow_always" },
         { optionId = "reject_once", name = "Reject once", kind = "reject_once" },
-        { optionId = "reject_always", name = always_label(action, "Reject"), kind = "reject_always" },
+        { optionId = "reject_always", name = always_label(action, "Reject", policy), kind = "reject_always" },
       },
     },
     respond = function(option_id)
       if finished then return end
       finished = true
+      if not M.valid(ctx) then return respond(refusal("permission denied: stale session context")) end
       if option_id == "allow_always" then
-        Permissions.add_grant(Permissions.grant_rule(action, "allow"))
+        policy.add_grant(policy.grant_rule(action, "allow"))
       elseif option_id == "reject_always" then
-        Permissions.add_grant(Permissions.grant_rule(action, "deny"))
+        policy.add_grant(policy.grant_rule(action, "deny"))
       end
       if option_id ~= "allow_once" and option_id ~= "allow_always" then
         return respond(refusal(("permission not granted: the user declined %s"):format(describe(action))))
@@ -185,7 +198,7 @@ function M.middleware()
     if ok and Tools.OWNS[ctx.name] then
       return next()
     end
-    M.mediate({ tool = "mcp:" .. ctx.name }, ("MCP tool %s"):format(ctx.name), "other", next, respond)
+    M.mediate({ tool = "mcp:" .. ctx.name }, ("MCP tool %s"):format(ctx.name), "other", next, respond, ctx)
   end
 end
 
@@ -203,7 +216,12 @@ function M.wrap(name, def, opts)
     description = def.description,
     inputSchema = def.inputSchema,
     async = true,
-    handler = function(args, respond)
+    handler = function(args, respond, ctx)
+      -- nil context is the trusted, direct Lua test/API path. A protocol call
+      -- always has a context and must carry host-authenticated ownership.
+      if ctx and not ctx.caller then
+        return respond(refusal("permission denied: authenticated session context required"))
+      end
       -- Record which weave tool this is, keyed on the arguments, so the
       -- transcript header can tag the matching ACP block `w:<tool>` (the block
       -- itself carries no tool name). See weave.tool_ident. Recorded before the
@@ -211,13 +229,17 @@ function M.wrap(name, def, opts)
       require("weave.tool_ident").record(name, args)
       local action = { tool = "weave:" .. name, resource = opts.resource and opts.resource(args) or nil }
       local title = ("weave tool %s%s"):format(name, action.resource and (": " .. action.resource) or "")
+      local function reply(ret)
+        if not M.valid(ctx) then return respond(refusal("permission denied: stale session context")) end
+        return respond(ret)
+      end
       M.mediate(action, title, opts.kind, function()
         if def.async then
-          def.handler(args, respond)
+          def.handler(args, reply, ctx)
         else
-          respond(def.handler(args))
+          reply(def.handler(args, ctx))
         end
-      end, respond)
+      end, respond, ctx)
     end,
   }
 end

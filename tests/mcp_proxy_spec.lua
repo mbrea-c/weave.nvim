@@ -126,6 +126,28 @@ describe("mcp proxy", function()
     Permissions._reset()
   end)
 
+  it("authenticates before spawning and mediates with the bound session policy", function()
+    local Session = require("weave.session")
+    local Context = require("weave.tool_context")
+    local session = Session:new({ permissions = {
+      rules = { { tool = "mcp:*", decision = "deny" } },
+    } })
+    session:_reset_config_session(true)
+    local proxy = assert(McpProxy.listener_for(fake_server_cfg(), true))
+    local frames = {}
+    local sock = connect(proxy.path, frames)
+    vim.wait(50, function() return false end, 5)
+    assert.equal(0, #proxy.instances)
+    sock:write("CLANKBOX_AUTH " .. Context.bind(session) .. "\n")
+    send(sock, { jsonrpc = "2.0", id = 1, method = "tools/call",
+      params = { name = "echo_tool", arguments = { caller = "another-session" } } })
+    wait_frames(frames, 1)
+    assert.is_true(frames[1].result.isError)
+    assert.truthy(frames[1].result.content[1].text:find("permission denied", 1, true))
+    session:stop()
+    sock:close()
+  end)
+
   it("tracks metadata and restarts a stopped process on the same agent connection", function()
     local proxy = assert(McpProxy.listener_for(fake_server_cfg()))
     local frames = {}

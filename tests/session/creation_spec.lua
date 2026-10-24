@@ -71,6 +71,37 @@ describe("session creation API", function()
     pump()
   end)
 
+  it("creates public child sessions with independent policy overrides", function()
+    local _, get = fake_client()
+    local parent = weave.new_session({ get_instance = get, permissions = { sandbox = { network = true } } })
+    local child = weave.new_session({ get_instance = get, parent = parent,
+      permissions = { sandbox = { network = false } } })
+    assert.equal(Registry.entry_for(parent).key, Registry.entry_for(child).parent_key)
+    assert.is_true(parent:permissions().active().sandbox.network)
+    assert.is_false(child:permissions().active().sandbox.network)
+    local stale = Session:new({ get_instance = get })
+    unmanaged[#unmanaged + 1] = stale
+    assert.has_error(function() weave.new_session({ get_instance = get, parent = stale }) end)
+    assert.equal(2, #Registry.list())
+  end)
+
+  it("passes a session-only native sandbox mode and inherits it for children", function()
+    local seen = {}
+    local function get(_, ready, opts)
+      seen[#seen + 1] = opts and opts.sandbox_mode
+      local client = fake_client()
+      client.sandbox_mode = opts and opts.sandbox_mode
+      ready(client)
+      return client
+    end
+    local parent = weave.new_session({ get_instance = get, agent_sandbox_mode = "on" })
+    pump()
+    weave.new_session({ get_instance = get, parent = parent })
+    pump()
+    assert.same({ "on", "on" }, seen)
+    assert.equal("on", parent:permissions().current_mode())
+  end)
+
   it("creates and starts a managed Session without opening or selecting it", function()
     local _, get = fake_client()
     local wins = #vim.api.nvim_list_wins()

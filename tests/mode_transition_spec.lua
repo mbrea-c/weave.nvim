@@ -100,6 +100,50 @@ describe("mode_transition.request_mode", function()
   end)
 end)
 
+describe("session-scoped sandbox transition", function()
+  local Registry = require("weave.registry")
+  local AgentInstance = require("weave.acp.agent_instance")
+  local Permissions = require("weave.permissions")
+  after_each(function() Registry.reset(); Transition._reset(); Permissions._reset() end)
+
+  it("captures the target across approval and restarts it in place only", function()
+    local function get(_, ready, opts)
+      local client = { state = "connected", sandbox_mode = opts.sandbox_mode or "on" }
+      function client:create_session(_, cb) cb({ sessionId = tostring({}) }) end
+      function client:cancel_session() end
+      function client:cancel_turn() end
+      ready(client); return client
+    end
+    local a = Registry.add({ get_instance = get, agent_sandbox_mode = "on" })
+    local b = Registry.add({ get_instance = get, agent_sandbox_mode = "on" })
+    vim.wait(50, function() return false end, 2)
+    Registry.select(b.key)
+    local respond, result
+    Transition._confirm = function(_, cb) respond = cb end
+    Transition.request_mode("off", function(ok) result = ok end, a.session)
+    assert.equal("function", type(respond))
+    Registry.select(b.key)
+    respond(true)
+    vim.wait(50, function() return false end, 2)
+    assert.is_true(result)
+    assert.rawequal(a, Registry.get(a.key))
+    assert.equal("off", a.session:permissions().current_mode())
+    assert.equal("on", b.session:permissions().current_mode())
+    assert.rawequal(b, Registry.selected())
+    assert.is_nil(AgentInstance._mode_overrides[a.provider])
+  end)
+
+  it("does not restart a closed target after approval", function()
+    local session = require("weave.session"):new()
+    local respond
+    session:permissions().set_mode("on")
+    Transition._confirm = function(_, cb) respond = cb end
+    Transition.request_mode("off", nil, session)
+    if respond then respond(true) end
+    assert.equal(0, #Registry.list())
+  end)
+end)
+
 describe("preset selection needs no transition", function()
   local Permissions = require("weave.permissions")
 

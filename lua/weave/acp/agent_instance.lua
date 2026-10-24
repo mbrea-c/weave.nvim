@@ -65,12 +65,15 @@ end
 --- The provider config a spawn would use, with any mode override folded in.
 --- @param provider_name string
 --- @return table|nil
-local function spawn_config(provider_name)
+local function spawn_config(provider_name, opts)
   local config = Config.acp_providers[provider_name]
   if not config then
     return nil
   end
-  local override = mode_override(provider_name)
+  local override = opts and opts.sandbox_mode or mode_override(provider_name)
+  if override ~= nil and override ~= "on" and override ~= "off" then
+    error("invalid agent sandbox mode", 0)
+  end
   if override then
     config = vim.tbl_extend("force", config, {
       sandbox = vim.tbl_extend("force", config.sandbox or {}, { mode = override }),
@@ -84,8 +87,8 @@ end
 --- platform keys as `off` rather than pretending to be its own environment.
 --- @param provider_name string
 --- @return string
-function AgentInstance.resolved_mode(provider_name)
-  local config = spawn_config(provider_name)
+function AgentInstance.resolved_mode(provider_name, opts)
+  local config = spawn_config(provider_name, opts)
   local ok, Sandbox = pcall(require, "weave.sandbox")
   if not ok then
     return "off"
@@ -167,8 +170,8 @@ end
 
 --- @param provider_name weave.UserConfig.ProviderName
 --- @param on_ready fun(client: weave.acp.ACPClient)|nil
-function AgentInstance.get_instance(provider_name, on_ready)
-  local mode = AgentInstance.resolved_mode(provider_name)
+function AgentInstance.get_instance(provider_name, on_ready, opts)
+  local mode = AgentInstance.resolved_mode(provider_name, opts)
   local client = AgentInstance.instance(provider_name, mode)
 
   if client then
@@ -178,7 +181,7 @@ function AgentInstance.get_instance(provider_name, on_ready)
     return client
   end
 
-  local config = spawn_config(provider_name)
+  local config = spawn_config(provider_name, opts)
 
   if not config then
     error("No ACP provider configuration found for: " .. provider_name)

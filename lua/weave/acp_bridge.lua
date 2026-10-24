@@ -292,6 +292,7 @@ end
 --- @return weave.acp.ClientHandlers handlers
 function AcpBridge.build_handlers(store, opts)
   opts = opts or {}
+  local policy = opts.permissions or Permissions.for_store(store)
   local is_restoring = opts.is_restoring or function()
     return false
   end
@@ -338,6 +339,7 @@ function AcpBridge.build_handlers(store, opts)
     end,
 
     on_request_permission = function(request, callback)
+      if opts.is_live and not opts.is_live() then return callback(nil) end
       -- The active preset may answer this request without the user (see the
       -- permission-resolution note above). The tool call still renders (the
       -- user should see what was auto-answered) — that arrives via
@@ -346,7 +348,7 @@ function AcpBridge.build_handlers(store, opts)
       -- through to the queue (never guess); a deny with no reject option
       -- answers the cancelled outcome (respond nil).
       local action = acp_action(request, store)
-      local decision, rule = Permissions.resolve(action)
+      local decision, rule = policy.resolve(action)
       -- The one line that makes the next provider quirk debuggable: which
       -- action a request mapped to is invisible from the transcript, and
       -- mapping it WRONG is how a provider's tool calls get silently refused.
@@ -386,9 +388,13 @@ function AcpBridge.build_handlers(store, opts)
       -- ONLY the agent. Queue removal is the caller's job (pop on a user
       -- answer; remove_* on a terminal status) so respond can't double-pop.
       -- See the queue-pattern note in session_store.lua.
+      local answered = false
       store:enqueue_permission({
         request = request,
         respond = function(option_id)
+          if answered then return end
+          answered = true
+          if opts.is_live and not opts.is_live() then return callback(nil) end
           callback(option_id)
         end,
       })

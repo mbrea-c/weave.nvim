@@ -31,31 +31,32 @@ local function get_instance(_name, on_ready)
   return client
 end
 
-local function lines(bufnr)
-  return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+local function buffers(handle)
+  return { { bufnr = handle.bufnr, winid = handle.winid },
+    { bufnr = handle.tree.bufnr, winid = handle.tree.winid } }
 end
-
-local function buffer_text(bufnr)
-  return table.concat(lines(bufnr), "\n")
+local function buffer_text(handle)
+  local chunks = {}
+  for _, target in ipairs(buffers(handle)) do
+    chunks[#chunks + 1] = table.concat(vim.api.nvim_buf_get_lines(target.bufnr, 0, -1, false), "\n")
+  end
+  return table.concat(chunks, "\n")
 end
-
--- Find "needle" in the buffer; returns 1-based row and 0-based col.
-local function locate(bufnr, needle, from_row)
-  for i, l in ipairs(lines(bufnr)) do
-    if i >= (from_row or 1) then
-      local col = l:find(needle, 1, true)
-      if col then
-        return i, col - 1
+local function locate(handle, needle, from)
+  for _, target in ipairs(buffers(handle)) do
+    for row, line in ipairs(vim.api.nvim_buf_get_lines(target.bufnr, 0, -1, false)) do
+      if not from or target.bufnr == from.bufnr and row >= from.row then
+        local col = line:find(needle, 1, true)
+        if col then return { row = row, col = col - 1, bufnr = target.bufnr, winid = target.winid } end
       end
     end
   end
-  error("not found in buffer: " .. needle)
+  error("not found in popup: " .. needle)
 end
-
-local function activate(handle, row, col)
-  vim.api.nvim_set_current_win(handle.winid)
-  vim.api.nvim_win_set_cursor(handle.winid, { row, col })
-  vim.api.nvim_exec_autocmds("CursorMoved", { buffer = handle.bufnr })
+local function activate(_, target)
+  vim.api.nvim_set_current_win(target.winid)
+  vim.api.nvim_win_set_cursor(target.winid, { target.row, target.col })
+  vim.api.nvim_exec_autocmds("CursorMoved", { buffer = target.bufnr })
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "xt", false)
 end
 
@@ -74,7 +75,7 @@ describe("view.session_modal", function()
     Registry.select(a.key)
 
     local handle = SessionModal.open({ on_select = function() end })
-    local text = buffer_text(handle.bufnr)
+    local text = buffer_text(handle)
     assert.truthy(text:find("prov%-a"))
     assert.truthy(text:find("prov%-b"))
     assert.truthy(text:find("fix the panel bug please", 1, true))
@@ -82,9 +83,9 @@ describe("view.session_modal", function()
     assert.falsy(text:find("(no messages yet)", 1, true))
 
     -- the ● marker sits on the selected session's row, and only there
-    local marked_row = locate(handle.bufnr, "●")
-    local a_row = locate(handle.bufnr, "prov-a")
-    assert.equal(a_row, marked_row)
+    local marked_row = locate(handle, "●")
+    local a_row = locate(handle, "prov-a")
+    assert.equal(a_row.row, marked_row.row)
     handle.close()
   end)
 
@@ -100,7 +101,7 @@ describe("view.session_modal", function()
         picked = entry
       end,
     })
-    activate(handle, locate(handle.bufnr, "prov-b"))
+    activate(handle, locate(handle, "prov-b"))
     assert.rawequal(b, picked)
     assert.is_false(handle.is_open())
   end)
@@ -111,13 +112,12 @@ describe("view.session_modal", function()
     pump()
 
     local handle = SessionModal.open({ on_select = function() end })
-    local row = locate(handle.bufnr, "prov-b")
-    local _, col = locate(handle.bufnr, "✕", row)
-    activate(handle, row, col)
+    local row = locate(handle, "prov-b")
+    activate(handle, locate(handle, "✕", row))
 
     assert.equal(1, #Registry.list())
     assert.equal("prov-a", Registry.list()[1].provider)
-    assert.is_nil(buffer_text(handle.bufnr):find("prov%-b"))
+    assert.is_nil(buffer_text(handle):find("prov%-b"))
     assert.is_true(handle.is_open())
     handle.close()
   end)
@@ -134,9 +134,8 @@ describe("view.session_modal", function()
         detailed = entry
       end,
     })
-    local row = locate(handle.bufnr, "prov-b")
-    local _, col = locate(handle.bufnr, "ⓘ", row)
-    activate(handle, row, col)
+    local row = locate(handle, "prov-b")
+    activate(handle, locate(handle, "ⓘ", row))
     assert.rawequal(b, detailed)
     assert.is_false(handle.is_open())
   end)
@@ -145,7 +144,7 @@ describe("view.session_modal", function()
     Registry.add({ provider = "prov-a", get_instance = get_instance })
     pump()
     local handle = SessionModal.open({ on_select = function() end })
-    assert.is_nil(buffer_text(handle.bufnr):find("ⓘ", 1, true))
+    assert.is_nil(buffer_text(handle):find("ⓘ", 1, true))
     handle.close()
   end)
 
@@ -163,7 +162,7 @@ describe("view.session_modal", function()
         called[#called + 1] = "load"
       end,
     })
-    activate(handle, locate(handle.bufnr, "new session"))
+    activate(handle, locate(handle, "new session"))
     assert.same({ "new" }, called)
     assert.is_false(handle.is_open())
 
@@ -173,7 +172,7 @@ describe("view.session_modal", function()
         called[#called + 1] = "load"
       end,
     })
-    activate(handle, locate(handle.bufnr, "load saved"))
+    activate(handle, locate(handle, "load saved"))
     assert.same({ "new", "load" }, called)
     assert.is_false(handle.is_open())
   end)
@@ -202,7 +201,7 @@ describe("view.session_modal", function()
 
   it("q closes; an empty registry shows the placeholder", function()
     local handle = SessionModal.open({ on_select = function() end })
-    assert.truthy(buffer_text(handle.bufnr):find("(no active sessions)", 1, true))
+    assert.truthy(buffer_text(handle):find("(no active sessions)", 1, true))
 
     vim.api.nvim_set_current_win(handle.winid)
     vim.api.nvim_feedkeys("q", "xt", false)

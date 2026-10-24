@@ -367,8 +367,8 @@ end
 --- @param command string
 --- @return string command
 --- @return string[] args
-function M.wrap_shell(command)
-  return M.wrap_for_tool("weave:task_start", "sh", { "-c", command })
+function M.wrap_shell(command, ctx)
+  return M.wrap_for_tool("weave:task_start", "sh", { "-c", command }, ctx)
 end
 
 --- The same, for a tool that spawns a BINARY rather than a shell (curl, under
@@ -380,12 +380,14 @@ end
 --- @param args? string[]
 --- @return string command
 --- @return string[] args
-function M.wrap_for_tool(tool, command, args)
+function M.wrap_for_tool(tool, command, args, ctx)
   args = args or {}
-  if not M.tool_sandboxing_on() then
-    return command, args
-  end
+  local bound = ctx and ctx.caller
+  local confined = bound and M._available() and bound.session:permissions().current_mode() == "on"
+    or (not bound and M.tool_sandboxing_on())
+  if not confined then return command, args end
   local ok, Permissions = pcall(require, "weave.permissions")
+  if bound then Permissions = bound.session:permissions() end
   local hull = ok and Permissions.tool_sandbox(nil, tool) or { enabled = true, binds = {}, network = false }
   if not hull.enabled then
     return command, args

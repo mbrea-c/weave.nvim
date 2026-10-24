@@ -97,7 +97,8 @@ end
 --- edit is never lost); close_float refuses to discard unsaved edits (`:q!`
 --- remains the explicit discard).
 --- @param preset weave.permissions.Preset
-local function open_editor(preset)
+local function open_editor(preset, policy)
+  local Permissions = policy or Permissions
   local lines = M.serialize(preset)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].buftype = "acwrite"
@@ -184,7 +185,8 @@ end
 --- greyed, since selecting one is not a thing weave will do.
 --- @param p weave.permissions.Preset
 --- @param active_name string
-local function preset_row(p, active_name)
+local function preset_row(p, active_name, policy)
+  local Permissions = policy or Permissions
   local marker = p.name == active_name and "●" or "○"
   local label = ("%s %s"):format(marker, p.label or p.name)
   return {
@@ -222,13 +224,14 @@ local function rule_row(rule)
   return { comp = ui.label, props = { text = text } }
 end
 
-local function Window(ctx)
-  local active = use_permissions(ctx)
+local function Window(ctx, props)
+  local Permissions = props.permissions
+  local active = use_permissions(ctx, nil, Permissions)
   local rows = { header("Permission presets") }
   -- Only the presets this sandbox mode allows: one written for the other
   -- mode would be actively wrong here, and set_active refuses it anyway.
   for _, p in ipairs(Permissions.available()) do
-    rows[#rows + 1] = preset_row(p, active.name)
+    rows[#rows + 1] = preset_row(p, active.name, Permissions)
   end
 
   rows[#rows + 1] = blank()
@@ -328,7 +331,7 @@ local function Window(ctx)
     children = {
       { comp = ui.label, props = { text = "  " .. mode .. (backend and (" (" .. backend .. ")") or "") } },
       bare_button(mode == "on" and "[restart unsandboxed…]" or "[restart sandboxed…]", function()
-        require("weave.mode_transition").request_mode(mode == "on" and "off" or "on")
+        require("weave.mode_transition").request_mode(mode == "on" and "off" or "on", nil, props.session)
       end),
     },
   }
@@ -336,7 +339,7 @@ local function Window(ctx)
   rows[#rows + 1] = blank()
   local buttons = {
     bare_button("[edit]", function()
-      open_editor(active)
+      open_editor(active, Permissions)
     end),
     bare_button("[new]", function()
       open_editor({
@@ -346,10 +349,11 @@ local function Window(ctx)
           { tool = "acp:*", decision = "ask" },
           { tool = "*", decision = "allow" },
         },
-      })
+      }, Permissions)
     end),
   }
-  if active.source == "runtime" then
+  local definition = Permissions.get(active.name)
+  if definition and definition.source == "runtime" then
     buttons[#buttons + 1] = bare_button("[delete]", function()
       Permissions.delete_preset(active.name)
     end)
@@ -362,10 +366,22 @@ end
 
 --- Open the configuration window (also reached from the sidebar's
 --- Permissions header). Returns the fibrous app handle.
-function M.open()
+function M.open(opts)
+  opts = opts or {}
+  local session = opts.session
+  if not session and opts.store then
+    for _, entry in ipairs(require("weave.registry").list()) do
+      if entry.session:get_store() == opts.store then session = entry.session; break end
+    end
+  end
+  if not session and not opts.store then
+    local entry = require("weave.registry").selected()
+    session = entry and entry.session
+  end
+  local Permissions = session and Permissions.for_session(session) or Permissions.for_store(opts.store)
   local mount = require("fibrous.inline.mount")
   local size = #Permissions.available() + #(Permissions.active().rules or {}) + 15
-  local app = mount.floating(Window, {}, {
+  local app = mount.floating(Window, { permissions = Permissions, session = session }, {
     width = 64,
     height = math.min(math.max(size, 10), math.max(vim.o.lines - 6, 8)),
     mode = "scroll",

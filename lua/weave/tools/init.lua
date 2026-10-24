@@ -45,6 +45,8 @@ local SHORT_NAMES = {
   "task_kill",
   "check_user_edits",
   "session_introspect",
+  "subagent_create", "subagent_list", "subagent_send", "subagent_read",
+  "subagent_wait", "subagent_cancel", "subagent_close",
   "request_access",
   "web_fetch",
   "annotate",
@@ -138,6 +140,10 @@ function M.register_into(server)
   register("check_user_edits", Gate.wrap("check_user_edits", UserEdits.check, { kind = "read" }))
   local session = require("weave.tools.session")
   register("session_introspect", Gate.wrap("session_introspect", session.introspect, { kind = "read" }))
+  local subagents = require("weave.tools.subagents")
+  for _, operation in ipairs({ "create", "list", "send", "read", "wait", "cancel", "close" }) do
+    register("subagent_" .. operation, Gate.wrap("subagent_" .. operation, subagents[operation], { kind = "other" }))
+  end
   register("task_list", Gate.wrap("task_list", tasks.list, { kind = "read" }))
   register("task_status", Gate.wrap("task_status", tasks.status, { kind = "execute" }))
   register("task_wait", Gate.wrap("task_wait", tasks.wait, { kind = "execute" }))
@@ -240,7 +246,8 @@ function M.broker_listener()
   for name in pairs(M.OWNS) do
     names[#names + 1] = name
   end
-  listener = broker.listen({ tools = names })
+  listener = broker.listen({ tools = names, authenticate = require("weave.tool_context").authenticate })
+  listener.supports_call_context = broker.supports_call_context == true
   return listener
 end
 
@@ -283,15 +290,21 @@ function M.shim_path()
 end
 
 --- @return weave.acp.McpServer|nil
-function M.clankbox_server_entry()
+function M.clankbox_server_entry(session)
   local shim = M.shim_path()
   if not shim then
     return nil
   end
   local env = {}
   local lst = M.broker_listener()
+  if session and (not lst or not lst.supports_call_context) then
+    error("session-bound tools require an updated clankbox with authenticated call context", 0)
+  end
   if lst then
     env[#env + 1] = { name = "CLANKBOX_SOCKET", value = lst.path }
+    if session then
+      env[#env + 1] = { name = "CLANKBOX_AUTH_TOKEN", value = require("weave.tool_context").bind(session) }
+    end
   end
   return { name = "clankbox", command = vim.v.progpath, args = { "-l", shim }, env = env }
 end

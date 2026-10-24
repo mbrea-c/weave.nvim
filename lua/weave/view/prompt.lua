@@ -211,7 +211,7 @@ end
 function M.Prompt(ctx, props)
   local state = use_store(ctx, props.store)
   -- the active permission preset colours the border + title (ambient cue)
-  local preset = use_permissions(ctx)
+  local preset = use_permissions(ctx, props.store)
   local store = props.store
   local queued = state.queued
   local history = state.history

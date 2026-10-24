@@ -143,9 +143,9 @@ function M.restart(id)
   return true
 end
 
-local function attach(conn, cfg)
+local function attach(conn, cfg, ctx)
   next_instance = next_instance + 1
-  local instance = { id = next_instance, status = "starting", tools = {} }
+  local instance = { id = next_instance, status = "starting", tools = {}, caller = ctx and ctx.caller }
   local proxy = M._proxies[cfg.name]
   proxy.instances = proxy.instances or {}
   proxy.instances[#proxy.instances + 1] = instance
@@ -290,9 +290,9 @@ local function attach(conn, cfg)
     notify()
   end
 
-  conn:read_start(line_reader(function(line)
-    vim.schedule(function()
+  local function receive(line)
       if closed then return end
+      if not require("weave.tools.gate").valid(ctx) then instance.close(); return end
       local ok, frame = pcall(vim.json.decode, line)
       if not ok or type(frame) ~= "table" then return end
       if frame.method == "initialize" then init_frame = frame end
@@ -325,12 +325,12 @@ local function attach(conn, cfg)
             if not active() then return end
             pending[frame.id] = nil
             to_agent({ jsonrpc = "2.0", id = frame.id, result = to_result(ret) })
-          end)
+          end, ctx)
       else
         forward()
       end
-    end)
-  end, function()
+  end
+  conn:read_start(line_reader(function(line) vim.schedule(function() receive(line) end) end, function()
     vim.schedule(function()
       closed = true
       stop("disconnected")
@@ -343,6 +343,7 @@ local function attach(conn, cfg)
     if not conn:is_closing() then conn:close() end
   end
   instance.start()
+  return receive
 end
 
 --- The proxy socket for a configured server entry: one listener per server
@@ -350,9 +351,13 @@ end
 --- process. Returns nil when the listener cannot be created.
 --- @param cfg table McpServer entry
 --- @return { path: string }|nil
-function M.listener_for(cfg)
+function M.listener_for(cfg, authenticated)
   local existing = M._proxies[cfg.name]
   if existing then
+    if authenticated and not existing.require_auth then
+      existing.require_auth = true
+      for _, instance in ipairs(existing.instances) do instance.close() end
+    end
     return existing
   end
 
@@ -376,7 +381,29 @@ function M.listener_for(cfg)
     local conn = uv.new_pipe(false)
     server:accept(conn)
     vim.schedule(function()
-      if M._proxies[cfg.name] then attach(conn, cfg) else conn:close() end
+      local proxy = M._proxies[cfg.name]
+      if not proxy then conn:close(); return end
+      if not proxy.require_auth then attach(conn, cfg); return end
+      local dispatch, rejected
+      conn:read_start(line_reader(function(line)
+        vim.schedule(function()
+          if rejected or conn:is_closing() then return end
+          if dispatch then dispatch(line); return end
+          local token = line:match("^CLANKBOX_AUTH ([^\r\n]+)$")
+          local caller = require("weave.tool_context").authenticate(token)
+          if not caller then
+            rejected = true
+            conn:write(vim.json.encode({ jsonrpc = "2.0", id = vim.NIL,
+              error = { code = -32001, message = "Authentication failed" } }) .. "\n",
+              function() if not conn:is_closing() then conn:close() end end)
+            return
+          end
+          conn:read_stop()
+          dispatch = attach(conn, cfg, { caller = caller })
+        end)
+      end, function()
+        if not conn:is_closing() then conn:close() end
+      end))
     end)
   end)
   if not ok then
@@ -385,7 +412,7 @@ function M.listener_for(cfg)
     return nil
   end
 
-  local proxy = { path = path, server = server, cfg = cfg, instances = {} }
+  local proxy = { path = path, server = server, cfg = cfg, instances = {}, require_auth = authenticated == true }
   M._proxies[cfg.name] = proxy
   notify()
   return proxy
@@ -397,21 +424,31 @@ end
 --- to handing over the raw entry.
 --- @param cfg table McpServer entry
 --- @return table|nil
-function M.entry_for(cfg)
+function M.entry_for(cfg, session)
   local shim = require("weave.tools").shim_path()
   if not shim then
     return nil
   end
-  local proxy = M.listener_for(cfg)
+  local proxy = M.listener_for(cfg, session ~= nil)
   if not proxy then
     return nil
   end
+  local env = { { name = "CLANKBOX_SOCKET", value = proxy.path } }
+  if session then env[#env + 1] = { name = "CLANKBOX_AUTH_TOKEN", value = require("weave.tool_context").bind(session) } end
   return {
     name = cfg.name,
     command = vim.v.progpath,
     args = { "-l", shim },
-    env = { { name = "CLANKBOX_SOCKET", value = proxy.path } },
+    env = env,
   }
+end
+
+function M.close_session(session)
+  for _, proxy in pairs(M._proxies) do
+    for _, instance in ipairs(proxy.instances or {}) do
+      if instance.caller and instance.caller.session == session then instance.close() end
+    end
+  end
 end
 
 -- Test hook: close listeners, agent connections, and their managed processes.

@@ -31,6 +31,7 @@ function SessionConfig.new(opts)
     on_snapshot = opts.on_snapshot,
     on_applied = opts.on_applied,
     on_error = opts.on_error,
+    on_idle = opts.on_idle,
     kinds = {},
     order = {},
     manual = {},
@@ -199,7 +200,10 @@ end
 function SessionConfig:_drain()
   if self.closed or not self.ready or self.pending then return end
   local request = table.remove(self.queue, 1) or self:_next_default()
-  if not request then return end
+  if not request then
+    if self.on_idle then self.on_idle() end
+    return
+  end
   local kind = self.kinds[request.id]
   if not option(kind, request.value) then
     finish(request, false)

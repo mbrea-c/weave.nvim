@@ -508,7 +508,7 @@ end
 --- @param props { store: weave.store.SessionStore }
 function M.PermissionsSection(ctx, props)
   local state = use_store(ctx, props.store)
-  local active = use_permissions(ctx)
+  local active = use_permissions(ctx, props.store)
   local rows = {
     {
       comp = ui.button,
@@ -517,13 +517,13 @@ function M.PermissionsSection(ctx, props)
         theme = false,
         style = { text_hl = "Title", _hover = { hl = "FibrousHover" } },
         on_press = function()
-          require("weave.view.permissions_window").open()
+          require("weave.view.permissions_window").open({ store = props.store })
         end,
       },
     },
     { comp = ui.label, props = { text = "Preset: " .. (active.label or active.name) .. "  (;;p)" } },
   }
-  local Permissions = require("weave.permissions")
+  local Permissions = require("weave.permissions").for_store(props.store)
   if Permissions.current_mode() == "on" then
     rows[#rows + 1] = dim("Sandbox: on")
   end
