@@ -85,6 +85,16 @@ local function select_session(entry)
   open_panel(entry, opts)
 end
 
+--- Open an already-managed Session without creating or restarting it.
+--- @param key integer
+--- @return boolean
+function M.open_session(key)
+  local entry = Registry.get(key)
+  if not entry or entry.closing then return false end
+  select_session(entry)
+  return true
+end
+
 --- vim.ui.select over the configured providers (● marks the default).
 --- @param on_picked fun(provider: string)
 local function pick_provider(on_picked)
@@ -211,6 +221,11 @@ function M.setup(opts)
   -- the config-file overrides so a user spec can still replace these by name.
   require("weave.view.renderers.fs_diff").install()
   require("weave.view.renderers.diagnostics").install()
+  require("weave.view.renderers.read").install()
+  require("weave.view.renderers.search").install()
+  require("weave.view.renderers.lsp").install()
+  require("weave.view.renderers.subagent").install()
+  require("weave.view.renderers.task").install()
   -- Tool-call rendering overrides. This is the config-file door onto the same
   -- registry plugins call directly (weave.view.tool_call.register), so a
   -- plugin loaded after setup can still register. Re-running setup replaces

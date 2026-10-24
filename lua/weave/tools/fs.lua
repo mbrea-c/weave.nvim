@@ -326,20 +326,28 @@ M.write = {
   inputSchema = schema({
     content = { type = "string", description = "The complete new content" },
   }, { "content" }),
-  handler = function(args)
+  handler = function(args, ctx)
     if type(args.content) ~= "string" then
       error("`content` must be a string", 0)
     end
     local target = resolve(args)
-    -- Before the content lands: a full-content write carries only the new
-    -- side, and once this returns there is no way back to what the file held.
-    -- See weave.tools.write_snapshots.
-    if target.path then
-      Snapshots.capture(target.path, args.content)
+    local old
+    if target.bufnr then
+      old = vim.api.nvim_buf_get_lines(target.bufnr, 0, -1, false)
+    elseif not vim.uv.fs_stat(target.path) then
+      old = {}
+    else
+      local ok, before = pcall(read_disk_lines, target.path)
+      if ok then old = before end
     end
+    -- Preserve the compatibility lookup for direct Lua users, not as the
+    -- authoritative history for managed sessions.
+    if not ctx and target.path then Snapshots.capture(target.path, args.content) end
     local lines = content_lines(args.content)
     local where = land(target, lines, args.content)
+    local path = target.path or (target.bufnr and vim.api.nvim_buf_get_name(target.bufnr))
     return ("wrote %d lines to %s"):format(#lines, where)
+      .. Snapshots.record(ctx, old, lines, { path = path ~= "" and path or nil, bufnr = target.bufnr })
   end,
 }
 
@@ -388,7 +396,7 @@ M.edit = {
     new_string = { type = "string", description = "Replacement text" },
     replace_all = { type = "boolean", description = "Replace every occurrence (default false)" },
   }, { "old_string", "new_string" }),
-  handler = function(args)
+  handler = function(args, ctx)
     local old, new = args.old_string, args.new_string
     if type(old) ~= "string" or old == "" then
       error("`old_string` must be a non-empty string", 0)
@@ -412,7 +420,10 @@ M.edit = {
 
     local new_text = replace_plain(text, old, new)
     local where = land(target, vim.split(new_text, "\n", { plain = true }), new_text)
+    local path = target.path or (target.bufnr and vim.api.nvim_buf_get_name(target.bufnr))
     return ("replaced %d occurrence(s) in %s"):format(n, where)
+      .. Snapshots.record(ctx, content_lines(text), content_lines(new_text),
+        { path = path ~= "" and path or nil, bufnr = target.bufnr })
   end,
 }
 

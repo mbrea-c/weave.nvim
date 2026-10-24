@@ -186,6 +186,7 @@ end
 
 --- @class weave.store.SessionStore
 --- @field state weave.store.State The current snapshot (never mutated in place)
+--- @field _file_changes? table<string, { old?: string[], new: string[], path?: string, buffer?: integer }> Successful change snapshots retained with this conversation
 --- @field _subscribers fun(state: weave.store.State)[]
 --- @field _permission_queue weave.store.PendingPermission[] FIFO of pending permission requests; state.permission mirrors the head
 local SessionStore = {}
@@ -759,6 +760,7 @@ end
 --- Provider/agent/config meta persists because it belongs to the client and is
 --- re-applied on session creation; title/timestamp belong to one conversation.
 function SessionStore:reset()
+  self._file_changes = nil
   self._plan_source = nil -- forget which source owned the plan
   self._kiro_tasks = nil -- forget remembered Kiro task-list state
   self:_commit(function(draft)

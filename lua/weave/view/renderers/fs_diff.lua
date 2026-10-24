@@ -1,124 +1,65 @@
--- Diffs for weave's own fs tool calls, which arrive over MCP and so lose the
--- signals the builtin rendering keys on.
---
--- `tool_call.Body` renders a diff when the normalized block carries one, and
--- acp_client builds that block's diff from either an ACP `content` diff part
--- or a rawInput fallback -- but the fallback is gated on `kind == "edit"`,
--- and an MCP tool call has no such kind (nor a tool name; see the identity
--- note in weave.view.tool_call). So an edit through weave's own `edit` tool
--- renders as a vim.inspect dump behind an expand toggle, even though both
--- sides of the diff are sitting right there in rawInput.
---
--- Two renderers, because the two tools lose different things:
---
---   edit   {path, old_string, new_string} -- both sides present, purely a
---          matching problem.
---   write  {path, content}                -- the new side only. The old side
---          comes from the pre-write snapshot (weave.tools.write_snapshots);
---          with no snapshot there is nothing honest to draw, so it falls
---          through to the builtin rendering rather than diffing against an
---          empty file and claiming the whole file was added.
---
--- Both delegate to `ToolCall.Entry` with a `render_body` override, so headers,
--- expansion and metadata stay exactly as they are everywhere else, and both
--- draw through `weave.view.diff`, the same component the native edit path
--- uses.
-
+-- Whole-operation snapshots when available, requested fragments otherwise.
+local ui = require("fibrous.inline.components")
 local Diff = require("weave.view.diff")
 local Snapshots = require("weave.tools.write_snapshots")
 local ToolCall = require("weave.view.tool_call")
-
+local C = require("weave.view.renderers.common")
 local M = {}
 
---- @param value any
---- @return boolean
-local function is_str(value)
-  return type(value) == "string"
-end
-
---- rawInput off a normalized block, or nil when it is not a table.
---- @param block table
---- @return table|nil
-local function input_of(block)
-  return type(block.input) == "table" and block.input or nil
-end
-
---- Split content the way the store does, so a diff built here lines up with
---- one built upstream. A trailing newline must not become a phantom last line.
---- @param text string
---- @return string[]
 local function split(text)
   local lines = vim.split(text, "\n", { plain = true })
-  if #lines > 1 and lines[#lines] == "" then
-    table.remove(lines)
-  end
+  if #lines > 1 and lines[#lines] == "" then table.remove(lines) end
   return lines
 end
 
---- An Entry whose body is the given diff, honouring the show_diffs pref and
---- the same preview cap as the builtin body. `extra` merges into the diff
---- props — the path, for language inference.
---- @param props weave.view.ToolCallProps
---- @param old string[]
---- @param new string[]
---- @param extra? { path?: string, line_numbers?: boolean, start_line?: integer }
---- @return table
-local function entry_with_diff(props, old, new, extra)
-  return {
-    comp = ToolCall.Entry,
-    props = vim.tbl_extend("force", {}, props, {
-      render_body = function()
-        if props.show_diff == false then
-          return nil
-        end
-        return {
-          comp = Diff.Diff,
-          props = vim.tbl_extend("force", {
-            old = old,
-            new = new,
-            max_lines = ToolCall.DIFF_PREVIEW_MAX_LINES,
-            indent = "    ",
-          }, extra or {}),
-        }
-      end,
-    }),
-  }
+local function own_or_legacy(block, name)
+  local tool = ToolCall.weave_tool(block)
+  if tool then return tool == name end
+  if block.mcp then return false end
+  local input = type(block.input) == "table" and block.input or {}
+  if name == "edit" then
+    return type(input.path) == "string" and type(input.old_string) == "string" and type(input.new_string) == "string"
+  end
+  return type(input.path) == "string" and type(input.content) == "string"
+    and Snapshots.get(input.path, input.content) ~= nil
 end
 
---- @type weave.view.ToolRenderer
-M.edit = {
-  name = "weave.fs.edit",
-  match = function(block)
-    local input = input_of(block)
-    return input ~= nil and is_str(input.path) and is_str(input.old_string) and is_str(input.new_string)
-  end,
-  render = function(_, props)
-    local input = props.block.input
-    return entry_with_diff(props, split(input.old_string), split(input.new_string), { path = input.path })
-  end,
-}
-
---- @type weave.view.ToolRenderer
-M.write = {
-  name = "weave.fs.write",
-  match = function(block)
-    local input = input_of(block)
-    if input == nil or not is_str(input.path) or not is_str(input.content) then
-      return false
+local function render(_, props)
+  local block = props.block
+  local input = type(block.input) == "table" and block.input or {}
+  local snap = Snapshots.for_call(block, props.store)
+  local old, new, path = snap and snap.old, snap and snap.new, snap and snap.path or block.file_path or input.path
+  local reported = not snap and type(block.diff) == "table"
+    and type(block.diff.old) == "table" and type(block.diff.new) == "table"
+  local requested = not snap and not reported
+  if reported then old, new = block.diff.old, block.diff.new
+  elseif not snap and type(input.old_string) == "string" and type(input.new_string) == "string" then
+    old, new = split(input.old_string), split(input.new_string)
+  elseif not snap and not props.store and type(input.path) == "string" and type(input.content) == "string" then
+    old = Snapshots.get(input.path, input.content)
+    new = split(input.content)
+  end
+  return C.entry(props, function()
+    if props.show_diff == false then return nil end
+    if not old or not new then
+      return C.column({ C.line((block.status == "pending" or block.status == "in_progress")
+        and "Waiting for change result..." or "Diff unavailable: original content was not recorded; K for details.") })
     end
-    -- Only claim the block when there is a snapshot to diff against.
-    return Snapshots.get(input.path, input.content) ~= nil
-  end,
-  render = function(_, props)
-    local input = props.block.input
-    local old = Snapshots.get(input.path, input.content) or {}
-    -- both sides are the WHOLE file here, so the default from-1 numbering
-    -- is the file's own
-    return entry_with_diff(props, old, split(input.content), { path = input.path })
-  end,
-}
+    local label = C.output.failed(block) and (snap and "Call reported failure; recorded filesystem change shown."
+        or "Call reported failure; requested/reported change shown.")
+      or requested and "Requested change (fragment-relative lines; application not established by this preview)."
+      or reported and "Provider-reported change (recorded ACP diff)."
+      or "Applied change (recorded snapshot)."
+    local diff = { comp = Diff.Diff, props = { old = old, new = new, path = path,
+      max_lines = not props.expanded and ToolCall.DIFF_PREVIEW_MAX_LINES or nil, indent = "    " } }
+    return { comp = ui.col, props = {},
+      children = { C.column({ C.line(label) }), diff } }
+  end)
+end
 
---- Register both. Idempotent: the registry replaces by name.
+M.edit = { name = "weave.fs.edit", match = function(block) return own_or_legacy(block, "edit") end, render = render }
+M.write = { name = "weave.fs.write", match = function(block) return own_or_legacy(block, "write") end, render = render }
+
 function M.install()
   ToolCall.register(M.edit)
   ToolCall.register(M.write)

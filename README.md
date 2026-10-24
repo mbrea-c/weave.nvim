@@ -1323,7 +1323,8 @@ so the header shows the call's meaningful argument instead: the file path for
 `weave_read`/`weave_write`/`weave_edit`/`weave_glob`, the pattern for
 `weave_grep`, the command for `weave_task_start`, the URL for
 `weave_web_fetch`, the task id for the other `weave_task_*` tools, and the
-file/buffer/root for `weave_diagnostics`.
+file/buffer/root for diagnostics and file-targeted LSP queries, the query for
+workspace symbols, and child/run identity for subagent operations.
 Everything else keeps its normal title (the agent's title, else the file path,
 else an id label).
 
@@ -1415,39 +1416,65 @@ argument-correlation fallback.
 The renderer accepts structured results, MCP JSON text, and ACP content-body
 results (including Kiro). JSON decoding is cached per result and bounded to
 8 MiB. Historical calls display their recorded snapshot, even if current editor
-diagnostics or file contents have changed. Other tools retain their existing
-expanded views, and custom renderers can override this one through the normal
-registry.
+diagnostics or file contents have changed. Custom renderers can override this
+one through the normal registry. Other built-in formatted views are described
+below.
 
-The builtin task renderer (`weave.view.renderers.task`, opt-in via
-`require("weave.view.renderers.task").install()`) is a worked example: it
-swaps `render_body` for a live view of the task's output, and identifies
-which task a call belongs to by reading the `task <id>` prefix out of the
-call's own result — the id weave's own task store minted. Nothing identifies
-the task on the way *in*: `rawInput` is exactly the arguments the tool
-declared, with no ACP or MCP correlation id anywhere in it.
+The following renderers are also installed automatically by `setup`, at
+priority `0`. Expansion is a formatted detail view, not a duplicate argument
+or result dump. `K` always inspects the original recorded block.
 
-`weave.view.renderers.fs_diff` is another builtin, registered automatically
-by `setup`, and it exists for the same reason: weave's
-`weave_read`/`weave_write`/`weave_edit` reach the agent over MCP, so the
-tool call arrives with no tool name and no
-`kind = "edit"` — which is exactly what the builtin diff rendering keys on. It
-duck-types `rawInput` instead, and both its renderers draw through
-`weave.view.diff`, the same component the native ACP edit path uses.
+| Tools | Collapsed | Expanded |
+| --- | --- | --- |
+| Edit/write and native ACP diffs | Up to 60 diff rows | All diff hunks, with unchanged context folded |
+| `weave_read` | Four returned source lines | The complete returned page, syntax highlighted with logical-line gutters |
+| `weave_glob` / `weave_grep` | Three returned entries | File-grouped matches/context or navigable file/count lists |
+| `weave_task_start/status/wait/kill` | Status and eight live output rows when safely associated | Full shell command, cwd, runtime/exit status, 40 live output rows, Stop and Open full output controls |
+| `weave_task_list` | Three returned task summaries | Returned task summaries and full-output links |
+| LSP symbols/definition/references | Three returned items | Container/file-grouped locations, symbol details, and each server's state |
+| `weave_hover` | Short text previews | Markdown documentation, with plaintext kept literal |
+| `weave_subagent_*` | Child/run identity, recorded state and output preview | Returned assistant output, pagination/error/timeout details, and Open session when the child still exists |
 
-A `weave_edit` call needs nothing else: `old_string` and `new_string` are
-both in `rawInput`. A `weave_write` call carries only the new content, and by
-the time the
-transcript draws, the write has landed — reading the file back would just
-return that same content and diff to nothing. So the old side is captured
-*before* the handler runs (`weave.tools.write_snapshots`) and looked up by
-`(path, content)`, the pair both ends agree on. Snapshots are bounded and
-lookup is non-consuming, since a transcript entry re-renders on every flush;
-when one has been evicted the renderer declines the block rather than diffing
-against an empty file and claiming the agent wrote it from scratch. A write's
-two sides really are whole files, so its diff's line numbers are the file's
-own; an edit diffs a fragment of unknown position, so its numbers are
-relative to the fragment.
+Read snippets and shell commands wrap without changing their logical line
+numbers. Search expansion shows at most 300 returned entries, LSP navigation
+300, and subagent/task lists 100, with explicit omission notices. Search/tool
+truncation, filters, page offsets, unresolved symbol locations, and partial LSP
+responses remain visible. Numbered grep matches/context are clickable; request
+`-n = true` for these locations. Unnumbered or ambiguous historical text is
+shown without fabricated coordinates. Location activation is explicit; rendering
+does not load files, query LSPs, or navigate. Missing historical files are not
+recreated. Native execute calls get formatted recorded output and shell commands,
+but never a guessed association with a Weave-managed process.
+
+Successful `weave_write` and `weave_edit` operations capture the actual live
+buffer or disk content before changing it, including scratch buffers, relative
+paths, unsaved edits, and every occurrence of a replace-all edit. A short
+`[weave change: ...]` receipt appended to their result identifies the exact
+operation, even for identical repeated writes. Before/after source stays
+editor-side, retained with its owning conversation rather than in a global
+32-entry history. Reset/restore clears those captures; they are not persisted
+across editor restarts. Missing captures are reported as unavailable, never
+diffed against an invented empty file. Legacy edits can show their requested
+fragment, explicitly labeled as such, including failed/pending operations.
+The `show_diffs` preference hides both collapsed and expanded diffs.
+
+Managed task responses include an editor-qualified `[weave task: ...]`
+reference. Live previews require that reference, the reported task ID, and an
+owning conversation or descendant task. The renderer never joins by command:
+two identical commands, unrelated sessions, revoked contexts, or restored IDs
+must not cross-associate. While no ID has been reported, it explicitly waits;
+a blocking start can therefore show no live output until its response arrives.
+Combined stdout/stderr previews label the stream and use editor-observed chunk
+arrival order, not a claimed program-wide ordering or terminal emulation.
+Open full output bypasses the ordinary task popup's 200-line-per-stream tail
+cap and provides all retained stdout/stderr in a scrollable view.
+
+Read/search/LSP/subagent views show recorded results, not implicit live
+requeries or another Session's transcript. Server readiness never establishes
+complete indexing, and an empty LSP response is not proof of complete analysis.
+Unsupported, oversized, malformed, or failed responses show an explicit notice
+with `K` available for the original data. Custom renderer priorities and the
+default raw rendering for unsupported tools remain unchanged.
 
 ### Permission presets
 
@@ -1741,6 +1768,7 @@ weave.close()          -- close the panel; the session keeps running
 weave.is_open()        -- boolean: does the current tab have a panel?
 
 weave.new_session(opts) -- create + start a managed Session; returns it
+weave.open_session(key) -- select/open an existing registry session key; false if closed/unknown
 weave.sessions(opts)   -- open the session modal; returns its handle
 weave.get_session()    -- the current tab's selected Session (or nil)
 weave.stop()           -- close every session (and all their panels)

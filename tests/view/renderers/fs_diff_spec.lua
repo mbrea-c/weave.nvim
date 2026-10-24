@@ -18,7 +18,9 @@ local function body_props(spec, props)
       return {}
     end,
   }, props)
-  return entry.props.render_body()
+  local body = entry.props.render_body()
+  if body and body.children then return body.children[#body.children] end
+  return body
 end
 
 describe("fs diff renderers", function()

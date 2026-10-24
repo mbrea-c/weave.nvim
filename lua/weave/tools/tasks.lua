@@ -21,13 +21,20 @@ local function tail(text)
     .. text:sub(#text - MAX_STREAM_BYTES + 1)
 end
 
+local function stamp(task, text)
+  if type(task.receipt) ~= "string" then return text end
+  local tag = " [weave task: " .. task.receipt .. "]"
+  local first = text:find("\n", 1, true)
+  return first and (text:sub(1, first - 1) .. tag .. text:sub(first)) or text .. tag
+end
+
 local function status_line(task)
   if task.status == "running" then
-    return ("task %d: running (pid %d)"):format(task.id, task.pid)
+    return stamp(task, ("task %d: running (pid %d)"):format(task.id, task.pid))
   elseif task.status == "killed" then
-    return ("task %d: killed (signal %d)"):format(task.id, task.signal or 0)
+    return stamp(task, ("task %d: killed (signal %d)"):format(task.id, task.signal or 0))
   end
-  return ("task %d: exited (code %d)"):format(task.id, task.exit_code or 0)
+  return stamp(task, ("task %d: exited (code %d)"):format(task.id, task.exit_code or 0))
 end
 
 --- The full report: status line, command, both streams (tail-truncated).
@@ -101,13 +108,10 @@ M.start = {
       error(err, 0)
     end
     if not args.blocking then
-      respond(
+      respond(stamp(task,
         ("task %d started (pid %d): %s\ncheck it with weave_task_status, block on it with weave_task_wait, stop it with weave_task_kill"):format(
-          task.id,
-          task.pid,
-          task.command
-        )
-      )
+          task.id, task.pid, task.command
+        )))
       return
     end
     local timeout = tonumber(args.timeout_ms) or DEFAULT_TIMEOUT_MS
@@ -183,10 +187,9 @@ M.kill = {
     if not ok then
       error(err, 0)
     end
-    return ("sent SIGTERM to task %d's process group; SIGKILL follows in %ds if it does not exit. Use weave_task_wait to confirm."):format(
-      task.id,
-      math.floor(TaskStore._sigkill_ms / 1000)
-    )
+    return stamp(task, ("sent SIGTERM to task %d's process group; SIGKILL follows in %ds if it does not exit. Use weave_task_wait to confirm."):format(
+      task.id, math.floor(TaskStore._sigkill_ms / 1000)
+    ))
   end,
 }
 

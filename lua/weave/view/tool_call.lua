@@ -184,12 +184,23 @@ function M.weave_title(tool, input)
   end
   if tool == "read" or tool == "write" or tool == "edit" then
     local path = str("path")
-    return path and vim.fn.fnamemodify(path, ":~:.")
-  elseif tool == "diagnostics" then
+    if path then return vim.fn.fnamemodify(path, ":~:.") end
+    if type(input.buffer) == "string" or type(input.buffer) == "number" then return "buffer " .. input.buffer end
+  elseif tool == "diagnostics" or tool == "document_symbols" or tool == "definition"
+    or tool == "references" or tool == "hover" then
     local path = str("path") or str("root")
     if path then return vim.fn.fnamemodify(path, ":~:.") end
     if type(input.buffer) == "number" then return "buffer " .. input.buffer end
-    return str("buffer") or "workspace"
+    return str("buffer") or (tool == "diagnostics" and "workspace" or nil)
+  elseif tool == "workspace_symbols" then
+    return str("query") or "workspace symbols"
+  elseif tool == "subagent_create" then
+    return str("name") or "new subagent"
+  elseif tool == "subagent_list" then
+    return input.recursive and "descendants" or "children"
+  elseif tool:match("^subagent_") and type(input.subagent_id) == "number" then
+    return "subagent " .. input.subagent_id
+      .. (type(input.run_id) == "number" and (" / run " .. input.run_id) or "")
   elseif tool == "glob" then
     local pattern = str("pattern")
     local root = str("path")
@@ -397,7 +408,7 @@ function M.Body(_, props)
       -- language inference only (view.diff keeps its header off); line
       -- numbers stay off because a diff block's extent is unknown here
       path = tc.file_path,
-      max_lines = M.DIFF_PREVIEW_MAX_LINES,
+      max_lines = not props.expanded and M.DIFF_PREVIEW_MAX_LINES or nil,
       indent = "    ",
     },
   }
@@ -409,6 +420,7 @@ end
 --- @param props weave.view.ToolCallProps
 function M.Metadata(_, props)
   local tc = props.block
+  if tc.diff then return nil end
   local children = {}
 
   if tc.kind then

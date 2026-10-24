@@ -103,7 +103,8 @@ describe("Kiro MCP normalization", function()
     local entry = FsDiff.edit.render({}, {
       block = msg, store = SessionStore:new(), expanded = false, awaiting = false, show_diff = true,
     })
-    local diff = entry.props.render_body()
+    local body = entry.props.render_body()
+    local diff = body.children[#body.children]
     assert.same({ "one" }, diff.props.old)
     assert.same({ "two" }, diff.props.new)
     assert.equal("/p/a.lua", diff.props.path)

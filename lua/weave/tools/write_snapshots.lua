@@ -1,25 +1,11 @@
--- Pre-write content capture, so a full-content write can be shown as a diff.
+-- Successful filesystem change snapshots, captured before mutation and
+-- committed after the handler lands the change. Managed conversations retain
+-- whole-operation before/after pairs by an editor-qualified receipt, including
+-- buffer targets and repeated identical writes. The raw response contains only
+-- the short receipt, not another copy of the source.
 --
--- A write tool call arrives as {path, content}: the NEW side only. Nothing in
--- the ACP payload carries what the file used to be, and the renderer runs
--- after the write has landed, so it cannot go and read it -- the file already
--- holds `content` and the diff would be empty. The old side therefore has to
--- be taken before the handler runs, which is what weave's clankbox middleware
--- is positioned to do.
---
--- ── Correlating a snapshot with its tool call ───────────────────────────────
---
--- The renderer sees an ACP block with rawInput; it has no handle on the
--- clankbox invocation that produced it. So the key is the pair we know both
--- sides agree on: the path and the exact new content. Path alone would be
--- ambiguous when an agent writes the same file twice in one turn -- with the
--- content in the key, each call finds its own snapshot regardless of order.
---
--- Lookup is deliberately NON-consuming. A transcript entry re-renders every
--- time the view flushes, and its matcher re-runs on every resolve, so a
--- single-use snapshot would draw the diff once and then silently revert the
--- entry to the builtin rendering. The bound below is what keeps this in
--- check: it holds whole file contents in memory, and a session is long.
+-- The old bounded (path, content) API remains for trusted direct Lua consumers.
+-- It is a compatibility fallback, not an authoritative managed-session join.
 
 local M = {}
 
@@ -89,8 +75,52 @@ function M.count()
   return #snapshots
 end
 
+-- Exact successful changes are scoped to their owning conversation. The small
+-- receipt in the tool response distinguishes even two identical writes. File
+-- contents stay editor-side, not in the receipt or the model's tool response.
+local next_id = 0
+local unscoped, unscoped_order = {}, {}
+local function store_for(ctx)
+  return ctx and ctx.caller and ctx.caller.session:get_store() or nil
+end
+
+--- @param ctx table|nil
+--- @param old string[]|nil
+--- @param new string[]
+--- @param target { path?: string, bufnr?: integer }
+--- @return string receipt
+function M.record(ctx, old, new, target)
+  next_id = next_id + 1
+  local store = store_for(ctx)
+  local records = unscoped
+  if store then
+    store._file_changes = store._file_changes or {}
+    records = store._file_changes
+  end
+  local epoch = require("weave.tool_output").epoch
+  local id = epoch .. "-" .. next_id
+  records[id] = { old = old and vim.list_slice(old), new = vim.list_slice(new),
+    path = target.path, buffer = target.bufnr }
+  if not store then
+    unscoped_order[#unscoped_order + 1] = id
+    while #unscoped_order > M.LIMIT do records[table.remove(unscoped_order, 1)] = nil end
+  end
+  return "\n[weave change: " .. id .. "]"
+end
+
+--- @param block table
+--- @param store weave.store.SessionStore|nil
+--- @return { old?: string[], new: string[], path?: string, buffer?: integer }|nil
+function M.for_call(block, store)
+  local text = require("weave.tool_output").text(block)
+  -- Only our suffix is a receipt. Source text can itself contain that phrase.
+  local id = text and text:match("\n%[weave change: (%x+%-%d+)%]%s*$")
+  if not id then return nil end
+  return (store and store._file_changes or not store and unscoped or {})[id]
+end
+
 function M.reset()
-  snapshots = {}
+  snapshots, unscoped, unscoped_order = {}, {}, {}
 end
 
 return M

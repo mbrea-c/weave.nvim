@@ -24,6 +24,9 @@ M._sigkill_ms = DEFAULT_SIGKILL_MS
 
 --- @class weave.Task
 --- @field id integer
+--- @field receipt string Editor-incarnation-qualified reference for transcript previews
+--- @field owner? table Owning managed Session (nil for trusted direct Lua starts)
+--- @field caller? table Authenticated call context
 --- @field command string shell command line (run via sh -c)
 --- @field cwd string
 --- @field pid integer
@@ -32,6 +35,7 @@ M._sigkill_ms = DEFAULT_SIGKILL_MS
 --- @field signal integer|nil non-zero when a signal ended the task
 --- @field stdout string[] output chunks in arrival order (stdout_text concats)
 --- @field stderr string[]
+--- @field events { stream: "stdout"|"stderr", text: string }[] Both streams in editor-observed arrival order
 --- @field started_at integer os.time()
 --- @field finished_at integer|nil
 
@@ -118,7 +122,7 @@ function M._kill_all()
 end
 
 --- Start a task.
---- @param opts { command: string, cwd?: string }
+--- @param opts { command: string, cwd?: string, context?: table }
 --- @return weave.Task|nil task, string|nil err
 function M.start(opts)
   opts = opts or {}
@@ -171,6 +175,7 @@ function M.start(opts)
   --- @type weave.Task
   local task = {
     id = id,
+    receipt = require("weave.tool_output").epoch .. "-" .. id,
     command = opts.command,
     owner = opts.context and opts.context.caller and opts.context.caller.session,
     caller = opts.context and opts.context.caller,
@@ -181,6 +186,7 @@ function M.start(opts)
     status = "running",
     stdout = {},
     stderr = {},
+    events = {},
     started_at = os.time(),
   }
   tasks[id] = task
@@ -188,11 +194,12 @@ function M.start(opts)
   order[#order + 1] = id
   next_id = id + 1
 
-  local function read_into(pipe, chunks)
+  local function read_into(pipe, chunks, stream)
     local ended = false
     pipe:read_start(function(_err, chunk)
       if chunk then
         chunks[#chunks + 1] = chunk
+        task.events[#task.events + 1] = { stream = stream, text = chunk }
         notify()
       elseif not ended then
         ended = true
@@ -203,8 +210,8 @@ function M.start(opts)
       end
     end)
   end
-  read_into(stdout, task.stdout)
-  read_into(stderr, task.stderr)
+  read_into(stdout, task.stdout, "stdout")
+  read_into(stderr, task.stderr, "stderr")
 
   if not cleanup_installed then
     cleanup_installed = true

@@ -199,7 +199,9 @@ end
 --- stdout and stderr streams re-rendered as chunks arrive (each capped to the
 --- last _tail_lines lines), with a kill button while it runs; q/<Esc> closes.
 --- @param id integer
-function M.open_task_view(id)
+--- @param opts? { full?: boolean } Explicit full output bypasses the preview tail cap.
+function M.open_task_view(id, opts)
+  opts = opts or {}
   local mount = require("fibrous.inline.mount")
   local function TaskView(ctx)
     use_tasks(ctx)
@@ -220,8 +222,9 @@ function M.open_task_view(id)
           },
         },
       },
-      dim("command: " .. task.command),
-      dim("cwd: " .. task.cwd),
+      { comp = require("weave.view.renderers.common").Code,
+        props = { code = task.command, lang = "sh", line_numbers = false } },
+      { comp = ui.text, props = { text = "cwd: " .. task.cwd, wrap = "char", style = { text_hl = "@comment" } } },
     }
     if task.status == "running" then
       rows[#rows + 1] = {
@@ -236,14 +239,14 @@ function M.open_task_view(id)
     end
     for _, stream in ipairs({ { "stdout", TaskStore.stdout_text(task) }, { "stderr", TaskStore.stderr_text(task) } }) do
       rows[#rows + 1] = header(stream[1])
-      local lines, omitted = M.tail(stream[2], M._tail_lines)
+      local lines, omitted = M.tail(stream[2], opts.full and math.huge or M._tail_lines)
       if omitted > 0 then
         rows[#rows + 1] = dim(("(… %d earlier lines omitted)"):format(omitted))
       end
       if #lines == 0 then
         rows[#rows + 1] = dim("(empty)")
       else
-        rows[#rows + 1] = { comp = ui.label, props = { text = table.concat(lines, "\n") } }
+        rows[#rows + 1] = { comp = ui.text, props = { text = require("weave.view.renderers.common").clean(table.concat(lines, "\n"), nil, true), wrap = "char" } }
       end
     end
     return { comp = ui.col, props = {}, children = rows }

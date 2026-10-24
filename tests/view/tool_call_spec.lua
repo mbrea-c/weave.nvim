@@ -494,7 +494,10 @@ describe("view.renderers.task", function()
       argument = "run it",
       status = "in_progress",
       input = { command = task.command },
+      mcp = { server = "clankbox", tool = "weave_task_start" },
+      body = { ("task %d started (pid %d) [weave task: %s]"):format(task.id, task.pid, task.receipt) },
     })
+    task.owner = { get_store = function() return store end }
     local handle = mount_transcript(store)
 
     -- output the task produced AFTER the entry mounted shows up on its own:
@@ -506,20 +509,21 @@ describe("view.renderers.task", function()
     assert.truthy(text:find("hello-from-task", 1, true))
     assert.truthy(text:find(Theme.TASK_ICON.in_progress, 1, true))
 
-    -- it delegated to Entry, so the builtin header is still there and the raw
-    -- input dump is still one <CR> away rather than gone
-    assert.truthy(text:find("run it", 1, true))
+    -- It keeps the standard disclosure/header; expanded detail is formatted
+    -- command code, not a duplicate raw argument dump (raw inspection stays K).
+    assert.truthy(text:find("[w:task_start]", 1, true))
     assert.is_nil(text:find("command =", 1, true))
     store:toggle_tool_call("t1")
-    assert.truthy(text_of(handle.bufnr):find("command =", 1, true))
+    assert.truthy(text_of(handle.bufnr):find("cwd:", 1, true))
+    assert.is_nil(text_of(handle.bufnr):find("command =", 1, true))
 
     TaskStore.kill(task.id)
     handle.unmount()
   end)
 
-  it("declines calls whose command we never started, leaving them builtin", function()
+  it("formats native command snapshots without claiming unsupported inputs", function()
     TaskRenderer.install()
-    assert.is_nil(ToolCall.resolve({ kind = "execute", input = { command = "never ran this" } }))
+    assert.equal("weave:task", assert(ToolCall.resolve({ kind = "execute", input = { command = "never ran this" } })).name)
     assert.is_nil(ToolCall.resolve({ kind = "execute", input = {} }))
   end)
 
@@ -539,9 +543,9 @@ describe("view.renderers.task", function()
       }
       assert.equal(first.id, TaskRenderer.task_for(block).id)
 
-      -- without the output it can only guess, and guesses newest-first
+      -- Without a result ID the view must not guess, even for identical commands.
       block.output = nil
-      assert.equal(second.id, TaskRenderer.task_for(block).id)
+      assert.is_nil(TaskRenderer.task_for(block))
 
       TaskStore.kill(first.id)
       TaskStore.kill(second.id)

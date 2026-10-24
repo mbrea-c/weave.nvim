@@ -227,6 +227,17 @@ describe("view.terminal_tasks", function()
     handle.unmount()
   end)
 
+  it("can explicitly open all retained output without the tail cap", function()
+    terminal_tasks._tail_lines = 3
+    local task = assert(TaskStore.start({ command = "seq 11 19" }))
+    wait_done(task)
+    local app = terminal_tasks.open_task_view(task.id, { full = true })
+    local text = text_of(app.bufnr)
+    assert.truthy(text:find("\n12\n", 1, true))
+    assert.falsy(text:find("earlier lines omitted", 1, true))
+    app.unmount()
+  end)
+
   it("caps each stream at the tail and reports the omitted lines", function()
     terminal_tasks._tail_lines = 3
     local task = assert(TaskStore.start({ command = "seq 11 19" }))

@@ -84,7 +84,7 @@ describe("diagnostics transcript renderer", function()
     tc.mcp.server = "external"
     assert.is_nil(ToolCall.resolve(tc))
     tc.mcp = { server = "clankbox", tool = "weave_document_symbols" }
-    assert.is_nil(ToolCall.resolve(tc))
+    assert.equal("weave.lsp.navigation", assert(ToolCall.resolve(tc)).name)
   end)
 
   it("uses the target as its title and shows a bounded severity preview", function()
