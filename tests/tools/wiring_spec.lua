@@ -178,6 +178,7 @@ describe("tools wiring", function()
       "task_wait",
       "task_kill",
       "check_user_edits",
+      "session_introspect",
       "request_access",
       "web_fetch",
       "annotate",

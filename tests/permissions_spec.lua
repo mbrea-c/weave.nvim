@@ -89,6 +89,19 @@ describe("permissions engine", function()
     assert.equal("allow", Permissions.resolve({ tool = "weave:read", resource = "/tmp/x" }))
   end)
 
+  it("allows read-only session introspection under every builtin", function()
+    for _, name in ipairs({ "ask", "read_only", "edit", "auto", "yolo" }) do
+      Permissions.set_mode("on")
+      Permissions.set_active(name)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:session_introspect" }), name)
+    end
+    for _, name in ipairs({ "unsandboxed_ask", "unsandboxed_read_only", "unsandboxed_edit", "unsandboxed_auto" }) do
+      Permissions.set_mode("off")
+      Permissions.set_active(name)
+      assert.equal("allow", Permissions.resolve({ tool = "weave:session_introspect" }), name)
+    end
+  end)
+
   -- Annotations are the agent's whole output channel in tutor mode, and they
   -- change nothing: a virtual-text overlay, no file touched. Making the user
   -- approve twenty of them during one review would make the mode unusable, so

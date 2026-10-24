@@ -28,6 +28,7 @@ local SessionStore = require("weave.session_store")
 --- @class weave.session.Option
 --- @field id string Value sent to the agent
 --- @field label string Human label for the picker
+--- @field description? string Provider description of this value
 
 --- One selectable config kind captured at session creation: the Kiro legacy
 --- pair (model/mode) or ANY ACP configOption category (model, mode,
@@ -38,6 +39,7 @@ local SessionStore = require("weave.session_store")
 --- @field category? string ACP category, used to order dependent defaults
 --- @field key string UI key: unique category or provider field id
 --- @field label string human label for the kind ("Model", "Thinking effort")
+--- @field description? string Provider description of this field
 --- @field current? string
 --- @field available weave.session.Option[]
 --- @field set fun(id: string, cb: fun(ok: boolean, response?: table)): nil
@@ -275,6 +277,13 @@ function Session:config_kinds()
   return out
 end
 
+--- Detached, JSON-safe provider config, defaults and manual/pending intent.
+--- Returns nil until start() initializes the conversation's config controller.
+--- @return table|nil
+function Session:config_snapshot()
+  return self._config_session and self._config_session:snapshot() or nil
+end
+
 --- Apply a manual choice through the conversation's serialized config queue.
 --- @param key string UI key or provider field id
 --- @param id string option id to select
@@ -298,6 +307,8 @@ function Session:_reset_config_session(defaults_enabled, force_defaults)
   self._config_snapshot, self._early_config_options = {}, nil
   local provider = Config.acp_providers[self._provider_name] or {}
   local config = SessionConfig.new({
+    provider_defaults = provider.session_defaults,
+    session_defaults = self._config_defaults,
     defaults = vim.tbl_extend("force", provider.session_defaults or {}, self._config_defaults),
     enabled = defaults_enabled,
     force_defaults = force_defaults,
@@ -382,7 +393,7 @@ function Session:_capture_config(response)
   if snapshot.models then
     local available = {}
     for _, m in ipairs(snapshot.models.availableModels or {}) do
-      available[#available + 1] = { id = m.modelId, label = m.name }
+      available[#available + 1] = { id = m.modelId, label = m.name, description = m.description }
     end
     capture("model", {
       id = "model", category = "model", label = "Model",
@@ -395,7 +406,7 @@ function Session:_capture_config(response)
   if snapshot.modes then
     local available = {}
     for _, m in ipairs(snapshot.modes.availableModes or {}) do
-      available[#available + 1] = { id = m.id, label = m.name }
+      available[#available + 1] = { id = m.id, label = m.name, description = m.description }
     end
     capture("mode", {
       id = "mode", category = "mode", label = "Mode",
@@ -422,7 +433,7 @@ function Session:_capture_config(response)
       if not key or key == "other" or counts[key] > 1 or (ids[key] and key ~= config_id) then key = config_id end
       local available = {}
       for _, o in ipairs(opt.options or {}) do
-        available[#available + 1] = { id = o.value, label = o.name }
+        available[#available + 1] = { id = o.value, label = o.name, description = o.description }
       end
       local label = opt.name
       if not label and type(opt.category) == "string" then
@@ -430,6 +441,7 @@ function Session:_capture_config(response)
       end
       capture(key, {
         id = config_id, category = opt.category, label = label or key,
+        description = opt.description,
         current = opt.currentValue, available = available,
         set = function(id, cb)
           self._client:set_config_option(self._session_id, config_id, id, function(result, err) cb(not err, result) end)

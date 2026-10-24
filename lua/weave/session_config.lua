@@ -23,7 +23,9 @@ function SessionConfig.new(opts)
     for id in pairs(opts.defaults or {}) do force_pending[id] = true end
   end
   return setmetatable({
-    defaults = opts.defaults or {},
+    defaults = vim.deepcopy(opts.defaults or {}),
+    provider_defaults = vim.deepcopy(opts.provider_defaults or {}),
+    session_defaults = vim.deepcopy(opts.session_defaults or {}),
     enabled = opts.enabled,
     force_pending = force_pending,
     on_snapshot = opts.on_snapshot,
@@ -38,6 +40,76 @@ function SessionConfig.new(opts)
     ready = false,
     closed = false,
   }, SessionConfig)
+end
+
+local function copy_map(values)
+  local out = vim.empty_dict()
+  for id, value in pairs(values) do out[id] = vim.deepcopy(value) end
+  return out
+end
+
+local function request_snapshot(request)
+  if not request then return vim.NIL end
+  return {
+    id = request.id, value = request.value,
+    automatic = request.automatic == true, forced = request.force == true,
+  }
+end
+
+--- A detached, JSON-safe view of config state. Never drains or changes intent.
+--- @return table
+function SessionConfig:snapshot()
+  local fields, seen = {}, {}
+  local function append(id, kind)
+    seen[id] = true
+    local default = self.defaults[id]
+    local source = vim.NIL
+    if self.session_defaults[id] ~= nil then
+      source = "session"
+    elseif self.provider_defaults[id] ~= nil then
+      source = "provider"
+    end
+    local available = {}
+    for _, item in ipairs(kind and kind.available or {}) do
+      available[#available + 1] = { id = item.id, label = item.label, description = item.description }
+    end
+    fields[#fields + 1] = {
+      id = id, key = kind and kind.key or id,
+      label = kind and kind.label or id,
+      category = kind and kind.category or nil,
+      description = kind and kind.description or nil,
+      advertised = kind ~= nil,
+      current = kind and kind.current or vim.NIL,
+      available = available,
+      default = default == nil and vim.NIL or default,
+      default_source = source,
+      default_valid = default ~= nil and option(kind, default) ~= nil,
+      manual = self.manual[id] == true,
+      force_pending = self.force_pending[id] == true,
+    }
+  end
+  for _, kind in ipairs(self.order) do append(kind.id, kind) end
+  -- Defaults and manual intent survive a field disappearing. Keep them
+  -- visible until the provider advertises the field again.
+  local missing = {}
+  for id in pairs(vim.tbl_extend("force", {}, self.defaults, self.manual)) do
+    if not seen[id] then missing[#missing + 1] = id end
+  end
+  table.sort(missing)
+  for _, id in ipairs(missing) do append(id) end
+  local queued = {}
+  for _, request in ipairs(self.queue) do queued[#queued + 1] = request_snapshot(request) end
+  return {
+    defaults = {
+      provider = copy_map(self.provider_defaults),
+      session = copy_map(self.session_defaults),
+      effective = copy_map(self.defaults),
+    },
+    defaults_enabled = self.enabled == true,
+    fields = fields,
+    in_flight = request_snapshot(self.pending),
+    queued_manual = queued,
+  }
 end
 
 -- Called only for provider snapshots, not optimistic acknowledgements.

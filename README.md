@@ -849,6 +849,8 @@ their exact commands.
 A provider's `session_defaults` maps ACP config **field IDs** (`configOptions[].id`)
 to **value IDs** (`options[].value`), not display labels or category names. The
 example above uses placeholder IDs; use those advertised by your provider.
+Agents can discover them with `weave_session_introspect` (see
+[Session introspection](#session-introspection)).
 For older providers exposing only `models`/`modes`, use `model`/`mode` as
 the field IDs and their model/mode IDs as values. Omit the map for no automatic
 defaults.
@@ -928,6 +930,8 @@ their builtins into one namespace cannot confuse the two:
 - `weave_task_start`/`weave_task_status`/`weave_task_wait`/`weave_task_kill`,
   a lifecycle over managed shell tasks (surfaced in the sidebar's *Terminal
   tasks* section).
+- `weave_session_introspect`, a read-only snapshot of session config, choices,
+  defaults, manual overrides, pending config writes, and runtime settings.
 - `weave_web_fetch`, written for parity with Claude's own WebFetch: same `url`
   and `prompt` parameters, `http://` upgraded to `https://`, HTML converted
   to markdown, a 15-minute cache, and a redirect to a **different host**
@@ -947,6 +951,55 @@ search **root**, not the files matched: a deny rule on `*/secrets/*` blocks a
 search rooted inside that directory, but not a cwd-rooted search that surfaces
 content from within it. Gating per result would mean one prompt per file;
 content-level exclusion belongs in rg's own filters.
+
+### Session introspection
+
+Call `weave_session_introspect` with an empty object for the session selected in
+the current editor tab. If nothing is selected, it uses the sole active session;
+with several active sessions it errors instead of guessing. MCP calls do not
+identify the calling ACP session, so "current" is the editor selection, not
+necessarily the caller's own conversation.
+
+Pass `{ "session_id": "..." }` to inspect another active ACP session explicitly.
+Alternatively, `{ "session_key": 3 }` uses the stable numeric registry key,
+including while a session is still starting and has no ACP ID. Pass at most one
+selector. Unknown or closed sessions error; duplicate ACP IDs across providers
+require a registry key. The tool never creates, loads, selects or changes a
+session.
+
+The JSON result contains:
+
+- Identity: `session_id` (null before startup completes), `session_key`,
+  `provider` (the configured provider key), `ready`, `status`, and `title`.
+- `config.defaults.provider`, `.session`, and `.effective`: the provider's
+  configured defaults, per-session overrides, and their merged result captured
+  for this ACP conversation. Later plugin-config changes do not rewrite this
+  snapshot. These are Weave-configured defaults, not the provider's native
+  defaults, which ACP does not report separately.
+- `config.fields`: provider field `id`, UI `key`, `category`, `label`,
+  optional `description`, `current`, `available` choices (IDs, labels and
+  optional descriptions), `default`, `default_source` (`provider`, `session`,
+  or null), `default_valid`, `manual`, and `force_pending`. Defaults for
+  missing fields remain listed with `advertised = false`, null current value
+  and no choices; manual intent also survives disappearing fields.
+  `default_valid` means the default is an advertised choice,
+  not that it has been applied.
+- `config.defaults_enabled`, `.in_flight`, and `.queued_manual`: reconciliation
+  state. Pending writes contain only `id`, `value`, `automatic`, and `forced`.
+  Current values are Weave's last observed or acknowledged values, not an
+  independent check of what a provider actually applied.
+- `settings.global`, `.session`, and `.view`: runtime setting specs with
+  `key`, `scope`, `label`, `type`, `current`, configured `default`,
+  `builtin_default`, `available` choices, and integer `min` where applicable.
+  Runtime defaults reflect the current plugin configuration; existing stores
+  keep their current values. Integers have no finite choice list (`available`
+  is null).
+
+Absent config values and pending writes are null; empty default maps are JSON
+objects and field/choice/queue lists are arrays. No transcript, brief prompt,
+launch argument, or environment variable is included. All builtin permission
+presets allow this read-only tool; custom rules can gate or deny
+`weave:session_introspect`.
 
 ### Tool call rendering
 
@@ -1426,7 +1479,9 @@ session:respond_permission(n)    -- answer the pending permission, option n
 session:cycle_permission_mode()  -- next permission preset (editor-global)
 
 session:config_kinds()           -- what the agent lets you change: a list of
-                                 -- { key, label, current, available = { { id, label }, … } }
+                                 -- { id, key, category?, label, description?, current,
+                                 --   available = { { id, label, description? }, ... } }
+session:config_snapshot()        -- detached config/default/intent snapshot (or nil before start)
 session:set_config(key, id, cb)  -- apply one (e.g. "model", "claude-…"); cb(ok)
 
 session:new_conversation()       -- same as the /new slash command
@@ -1439,6 +1494,10 @@ session:send_system(opts)        -- send something that is not the user's words
 session:send_batch(msgs)         -- several messages as ONE turn (what weave.flush
                                  -- uses to put edits and comments together)
 ```
+
+`session:config_snapshot()` returns the same detached `config` object described
+under [Session introspection](#session-introspection), without callbacks or live
+references. Reading or modifying the returned table does not change the session.
 
 ### The store
 

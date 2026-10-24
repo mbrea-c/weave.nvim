@@ -44,6 +44,7 @@ local SHORT_NAMES = {
   "task_wait",
   "task_kill",
   "check_user_edits",
+  "session_introspect",
   "request_access",
   "web_fetch",
   "annotate",
@@ -135,6 +136,8 @@ function M.register_into(server)
   -- The gate's other half: how the agent gets back in sync (and a tool any
   -- agent may call defensively — cheap when clean).
   register("check_user_edits", Gate.wrap("check_user_edits", UserEdits.check, { kind = "read" }))
+  local session = require("weave.tools.session")
+  register("session_introspect", Gate.wrap("session_introspect", session.introspect, { kind = "read" }))
   register("task_list", Gate.wrap("task_list", tasks.list, { kind = "read" }))
   register("task_status", Gate.wrap("task_status", tasks.status, { kind = "execute" }))
   register("task_wait", Gate.wrap("task_wait", tasks.wait, { kind = "execute" }))
