@@ -185,6 +185,11 @@ function M.weave_title(tool, input)
   if tool == "read" or tool == "write" or tool == "edit" then
     local path = str("path")
     return path and vim.fn.fnamemodify(path, ":~:.")
+  elseif tool == "diagnostics" then
+    local path = str("path") or str("root")
+    if path then return vim.fn.fnamemodify(path, ":~:.") end
+    if type(input.buffer) == "number" then return "buffer " .. input.buffer end
+    return str("buffer") or "workspace"
   elseif tool == "glob" then
     local pattern = str("pattern")
     local root = str("path")

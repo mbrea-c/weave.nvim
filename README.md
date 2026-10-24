@@ -1322,7 +1322,8 @@ arrive over MCP, so their agent-supplied title is only the bare endpoint name
 so the header shows the call's meaningful argument instead: the file path for
 `weave_read`/`weave_write`/`weave_edit`/`weave_glob`, the pattern for
 `weave_grep`, the command for `weave_task_start`, the URL for
-`weave_web_fetch`, and the task id for the other `weave_task_*` tools.
+`weave_web_fetch`, the task id for the other `weave_task_*` tools, and the
+file/buffer/root for `weave_diagnostics`.
 Everything else keeps its normal title (the agent's title, else the file path,
 else an id label).
 
@@ -1390,6 +1391,34 @@ No match — or a matcher that throws — falls through to the builtin rendering
 silently. A renderer that throws is contained to its own entry: the rest of
 the conversation keeps drawing and that entry shows the error.
 
+The diagnostics renderer (`weave.view.renderers.diagnostics`) is installed
+automatically by `setup`, at the default priority `0`. It only matches
+Weave's own `weave_diagnostics` calls, using their MCP identity or the
+argument-correlation fallback.
+
+- Collapsed calls show severity counts and up to three diagnostics, most severe
+  first, with a persistent **cached snapshot / coverage incomplete** notice.
+- Expansion replaces raw input/output with file-grouped diagnostics, source and
+  code, each observed server's initialization and report states, and wait timings.
+  Ready, initializing, no report, stale, unversioned, and current-version reports
+  remain distinct. Empty results are never presented as a clean file.
+- Counts describe the returned page, not an entire workspace when paginated or
+  filtered. Expansion displays at most 100 returned diagnostics and 32 servers,
+  with explicit omission notices. Diagnostic text previews are bounded too.
+- Activate a severity/location control such as `W 12:4` to open that location in
+  an ordinary editor window. Rendering never opens files, reruns tools, or reads
+  the live diagnostic cache. Missing historical targets are not recreated.
+- `K` remains the uncapped raw inspection of the original block, including all
+  inputs, outputs, provider metadata, and omitted result entries. Unsupported or
+  oversized result payloads show a short notice directing you there.
+
+The renderer accepts structured results, MCP JSON text, and ACP content-body
+results (including Kiro). JSON decoding is cached per result and bounded to
+8 MiB. Historical calls display their recorded snapshot, even if current editor
+diagnostics or file contents have changed. Other tools retain their existing
+expanded views, and custom renderers can override this one through the normal
+registry.
+
 The builtin task renderer (`weave.view.renderers.task`, opt-in via
 `require("weave.view.renderers.task").install()`) is a worked example: it
 swaps `render_body` for a live view of the task's output, and identifies
@@ -1398,7 +1427,7 @@ call's own result — the id weave's own task store minted. Nothing identifies
 the task on the way *in*: `rawInput` is exactly the arguments the tool
 declared, with no ACP or MCP correlation id anywhere in it.
 
-`weave.view.renderers.fs_diff` is the other builtin, registered automatically
+`weave.view.renderers.fs_diff` is another builtin, registered automatically
 by `setup`, and it exists for the same reason: weave's
 `weave_read`/`weave_write`/`weave_edit` reach the agent over MCP, so the
 tool call arrives with no tool name and no
