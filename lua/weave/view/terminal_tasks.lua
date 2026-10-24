@@ -223,7 +223,7 @@ function M.open_task_view(id, opts)
         },
       },
       { comp = require("weave.view.renderers.common").Code,
-        props = { code = task.command, lang = "sh", line_numbers = false } },
+        props = { code = task.command, lang = "bash", title = "Shell command (bash)", line_numbers = false } },
       { comp = ui.text, props = { text = "cwd: " .. task.cwd, wrap = "char", style = { text_hl = "@comment" } } },
     }
     if task.status == "running" then

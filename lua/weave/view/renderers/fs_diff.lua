@@ -54,7 +54,7 @@ local function render(_, props)
       max_lines = not props.expanded and ToolCall.DIFF_PREVIEW_MAX_LINES or nil, indent = "    " } }
     return { comp = ui.col, props = {},
       children = { C.column({ C.line(label) }), diff } }
-  end)
+  end, nil, nil, true)
 end
 
 M.edit = { name = "weave.fs.edit", match = function(block) return own_or_legacy(block, "edit") end, render = render }

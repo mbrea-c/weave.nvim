@@ -1427,16 +1427,24 @@ or result dump. `K` always inspects the original recorded block.
 | Tools | Collapsed | Expanded |
 | --- | --- | --- |
 | Edit/write and native ACP diffs | Up to 60 diff rows | All diff hunks, with unchanged context folded |
-| `weave_read` | Four returned source lines | The complete returned page, syntax highlighted with logical-line gutters |
-| `weave_glob` / `weave_grep` | Three returned entries | File-grouped matches/context or navigable file/count lists |
-| `weave_task_start/status/wait/kill` | Status and eight live output rows when safely associated | Full shell command, cwd, runtime/exit status, 40 live output rows, Stop and Open full output controls |
-| `weave_task_list` | Three returned task summaries | Returned task summaries and full-output links |
-| LSP symbols/definition/references | Three returned items | Container/file-grouped locations, symbol details, and each server's state |
-| `weave_hover` | Short text previews | Markdown documentation, with plaintext kept literal |
-| `weave_subagent_*` | Child/run identity, recorded state and output preview | Returned assistant output, pagination/error/timeout details, and Open session when the child still exists |
+| `weave_read` | Header only | The complete returned page, syntax highlighted with logical-line gutters |
+| `weave_glob` / `weave_grep` | Header only | File-grouped matches/context or navigable file/count lists |
+| `weave_task_start/status/wait/kill` | Single-line header with an ellipsis when truncated | Full highlighted shell command above cwd, runtime/exit status, 40 live output rows, Stop and Open full output controls |
+| `weave_task_list` | Header only | Returned task summaries and full-output links |
+| LSP symbols/definition/references | Header only | Container/file-grouped locations, symbol details, and each server's state |
+| `weave_hover` | Header only | Markdown documentation, with plaintext kept literal |
+| `weave_subagent_*` | Header only | Returned assistant output, pagination/error/timeout details, and Open session when the child still exists |
 
-Read snippets and shell commands wrap without changing their logical line
-numbers. Search expansion shows at most 300 returned entries, LSP navigation
+The newer read/search/task/LSP/subagent views draw no body while collapsed,
+including waiting/error notices and stdout/stderr. Edit/write diff previews and
+the diagnostics summary retain their existing collapsed views. Task headers stay
+on one row at the current transcript width, with an ellipsis if truncated.
+Expansion shows the complete command first, in a distinct shell code block using
+the Bash Tree-sitter parser when available, with a literal-text fallback.
+Commands wrap without dropping indentation or changing their contents.
+
+Read snippets wrap without changing their logical line numbers.
+Search expansion shows at most 300 returned entries, LSP navigation
 300, and subagent/task lists 100, with explicit omission notices. Search/tool
 truncation, filters, page offsets, unresolved symbol locations, and partial LSP
 responses remain visible. Numbered grep matches/context are clickable; request
@@ -1462,8 +1470,9 @@ Managed task responses include an editor-qualified `[weave task: ...]`
 reference. Live previews require that reference, the reported task ID, and an
 owning conversation or descendant task. The renderer never joins by command:
 two identical commands, unrelated sessions, revoked contexts, or restored IDs
-must not cross-associate. While no ID has been reported, it explicitly waits;
-a blocking start can therefore show no live output until its response arrives.
+must not cross-associate. Only expanded calls subscribe to live task output.
+While no ID has been reported, the expanded view explicitly waits; a blocking
+start can therefore show no live output until its response arrives.
 Combined stdout/stderr previews label the stream and use editor-observed chunk
 arrival order, not a claimed program-wide ordering or terminal emulation.
 Open full output bypasses the ordinary task popup's 200-line-per-stream tail

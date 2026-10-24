@@ -37,6 +37,7 @@ function M.Code(ctx, props)
   end
   local shown, start = math.min(#memo.plain, props.max_lines or math.huge), props.start_line or 1
   local rows, width = {}, #tostring(start + #memo.plain - 1)
+  if props.title then rows[#rows + 1] = M.line(props.title, "Comment") end
   for i = 1, shown do
     local content = memo.highlighted and memo.highlighted[i] or memo.plain[i]
     if content == "" then content = " " end
@@ -51,14 +52,19 @@ function M.Code(ctx, props)
     end
   end
   if shown < #memo.plain then rows[#rows + 1] = M.line((#memo.plain - shown) .. " more lines; expand to view.") end
-  return { comp = ui.col, props = {}, children = rows }
+  return { comp = ui.col, props = { style = props.title and {
+    border = { left = true, hl = "Comment" }, padding = { left = 1 },
+  } or nil }, children = rows }
 end
 
 function M.nothing() return nil end
 
-function M.entry(props, body, details, extra)
+-- New detail views are header-only until explicitly expanded. Only existing
+-- edit/write diff previews opt into an always-visible body.
+function M.entry(props, body, details, extra, collapsed_preview)
   return { comp = ToolCall.Entry, props = vim.tbl_extend("force", {}, props, extra or {}, {
-    render_body = body, render_metadata = details or M.nothing,
+    render_body = (props.expanded or collapsed_preview) and body or M.nothing,
+    render_metadata = details or M.nothing,
   }) }
 end
 

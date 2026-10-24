@@ -84,6 +84,7 @@ local M = {}
 --- @field expanded boolean Whether the user has expanded this call
 --- @field awaiting boolean Whether a permission request targets this call
 --- @field show_diff boolean The show_diffs view pref
+--- @field truncate_header? boolean Keep the header on one row, with a width-aware ellipsis
 --- @field render_header? fun(ctx: table, props: weave.view.ToolCallProps): table
 --- @field render_body? fun(ctx: table, props: weave.view.ToolCallProps): table|nil
 --- @field render_metadata? fun(ctx: table, props: weave.view.ToolCallProps): table|nil
@@ -343,6 +344,31 @@ local function append_raw_block(children, label, value)
   end
 end
 
+-- Ellipsize rich header text at layout time, not against the selected window.
+-- Walk display clusters so wide characters and combining accents stay intact.
+local function ellipsize(parts, columns, hl)
+  if columns < 1 then return "" end
+  local width = require("fibrous.inline.width")
+  local total = 0
+  for _, part in ipairs(parts) do total = total + width.str(part[1]) end
+  if total <= columns then return parts end
+  local out, remaining = {}, columns - 1
+  for _, part in ipairs(parts) do
+    local shown = {}
+    for cluster in width.clusters(part[1]) do
+      local cells = width.char(cluster)
+      if cells > remaining then
+        if #shown > 0 then out[#out + 1] = { table.concat(shown), hl = part.hl } end
+        out[#out + 1] = { "…", hl = hl }
+        return out
+      end
+      shown[#shown + 1], remaining = cluster, remaining - cells
+    end
+    out[#out + 1] = { table.concat(shown), hl = part.hl }
+  end
+  return out
+end
+
 -- ── Default subrenderers ────────────────────────────────────────────────────
 
 --- The header row: a status-colored [+]/[-] control, kind glyph + tag,
@@ -358,6 +384,16 @@ function M.Header(_, props)
   -- type stays emphasized while the whole header signals state at a glance.
   local header_hl = Theme.HEADER_HL[effective_status] or "Function"
   local tag_hl = Theme.KIND_TAG_HL[effective_status] or "Function"
+  local text = {
+    { kind_icon, hl = header_hl },
+    { "[" .. M.tool_tag(tc) .. "] ", hl = tag_hl },
+    { one_line(M.tool_title(tc)), hl = header_hl },
+  }
+  local title_props = { grow = 1, wrap = "char", text = text }
+  if props.truncate_header then
+    title_props.wrap = false
+    title_props.fill = function(columns) return ellipsize(text, columns, header_hl) end
+  end
 
   return {
     comp = ui.row,
@@ -375,16 +411,8 @@ function M.Header(_, props)
       },
       {
         comp = ui.text,
-        props = {
-          -- A separate, one-row button keeps title continuations inert and
-          -- gives Tab/jump navigation exactly one disclosure target.
-          grow = 1, wrap = "char",
-          text = {
-            { kind_icon, hl = header_hl },
-            { "[" .. M.tool_tag(tc) .. "] ", hl = tag_hl },
-            { one_line(M.tool_title(tc)), hl = header_hl },
-          },
-        },
+        -- Only the disclosure is interactive, including when the title wraps.
+        props = title_props,
       },
     },
   }

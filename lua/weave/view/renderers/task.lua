@@ -147,16 +147,22 @@ function M.Body(ctx, props)
 end
 
 function M.Details(_, props)
-  if ToolCall.weave_tool(props.block) == "task_list" then return nil end
+  if ToolCall.weave_tool(props.block) == "task_list" then return M.List({}, props) end
   local input = type(props.block.input) == "table" and props.block.input or {}
   local task = M.task_for(props.block, props.store)
   local command = task and task.command or type(input.command) == "string" and input.command
     or type(input.cmd) == "string" and input.cmd
   local rows = {}
   local cwd = task and task.cwd or input.cwd
+  if command then
+    rows[#rows + 1] = { comp = C.Code, props = {
+      code = command, lang = "bash", title = "Shell command (bash)", line_numbers = false,
+    } }
+  end
   rows[#rows + 1] = C.line("cwd: " .. C.clean(cwd or "(not reported)", 2048))
-  if command then rows[#rows + 1] = { comp = C.Code, props = { code = command, lang = "sh", line_numbers = false } } end
-  return C.column(rows)
+  return { comp = ui.col, props = {}, children = {
+    C.column(rows), { comp = M.Body, props = props },
+  } }
 end
 
 function M.List(_, props)
@@ -184,7 +190,7 @@ function M.List(_, props)
 end
 
 function M.Render(_, props)
-  return C.entry(props, M.Body, M.Details)
+  return C.entry(props, C.nothing, M.Details, { truncate_header = true })
 end
 
 function M.install()

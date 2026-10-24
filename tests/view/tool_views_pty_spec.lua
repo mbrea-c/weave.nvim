@@ -75,13 +75,22 @@ describe("expanded tool views in a real terminal", function()
               press("2 target")
               result.navigation = { path = vim.api.nvim_buf_get_name(0), row = vim.api.nvim_win_get_cursor(0)[1] }
               vim.api.nvim_set_current_win(win)
-              task = assert(Tasks.start({ command = "printf out-marker; sleep 0.3; printf err-marker >&2; sleep 0.3; printf final-marker",
+              task = assert(Tasks.start({ command = "printf out-marker; sleep 0.3; printf err-marker >&2; sleep 0.3; printf final-marker"
+                  .. "\n# " .. ("long-command-"):rep(8) .. "COMMAND_END",
                 context = { caller = { session = owner, valid = function() return true end } } }))
-              put("task_start", { command = task.command .. "\n# " .. ("long-command-"):rep(8) .. "END" },
+              put("task_start", { command = task.command },
                 "task " .. task.id .. " started (pid 1) [weave task: " .. task.receipt .. "]")
-              store:toggle_tool_call("view")
-            elseif i == 5 then result.live = text()
-            elseif i == 6 then result.live_later = text()
+            elseif i == 5 then
+              result.task_collapsed = text()
+              result.task_collapsed_rows = #lines()
+              press("[+]")
+            elseif i == 6 then
+              result.live = text()
+              press("[-]")
+              result.task_recollapsed = text()
+              result.task_recollapsed_rows = #lines()
+              press("[+]")
+              result.live_later = text()
             elseif i == 7 then
               result.terminal = text()
               local old, new = {}, {}
@@ -130,9 +139,19 @@ describe("expanded tool views in a real terminal", function()
       assert.falsy(result.read:find("RAW_ONLY_TOOL_VIEW", 1, true))
       assert.equal(target_path, result.navigation.path)
       assert.equal(2, result.navigation.row)
-      assert.truthy(compact(result.live .. result.live_later):find("out-marker", 1, true))
-      assert.truthy(compact(result.terminal):find("err-marker", 1, true))
-      assert.truthy(compact(result.terminal):find("final-marker", 1, true))
+      assert.equal(1, result.task_collapsed_rows)
+      assert.equal(1, result.task_recollapsed_rows)
+      assert.truthy(result.task_collapsed:gsub("%s+$", ""):match("…$"))
+      assert.falsy(result.task_collapsed:find("[out]", 1, true))
+      assert.falsy(result.task_recollapsed:find("[err]", 1, true))
+      assert.truthy(compact(result.terminal):find("Shellcommand(bash)", 1, true))
+      assert.truthy(compact(result.terminal):find("COMMAND_END", 1, true))
+      assert.truthy(result.terminal:find("│", 1, true))
+      assert.truthy(result.terminal:match("\n    %[%a+%]"))
+      assert.is_true(result.terminal:find("Shell command", 1, true) < result.terminal:find("[out]", 1, true))
+      assert.truthy(compact(result.live .. result.live_later):find("[out]out-marker", 1, true))
+      assert.truthy(compact(result.terminal):find("[err]err-marker", 1, true))
+      assert.truthy(compact(result.terminal):find("[out]final-marker", 1, true))
       assert.falsy(result.diff_collapsed:find("LAST_HUNK", 1, true))
       assert.truthy(result.diff_expanded:find("LAST_HUNK", 1, true))
       assert.truthy(compact(result.symbols):find("slow-server:initializing", 1, true))

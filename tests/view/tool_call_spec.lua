@@ -483,9 +483,9 @@ describe("view.renderers.task", function()
     return table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
   end
 
-  it("streams a running task's output into the transcript entry", function()
+  it("streams output only while expanded and hides it again on collapse", function()
     TaskRenderer.install()
-    local task = assert(TaskStore.start({ command = "printf 'hello-from-task\\n'; sleep 5" }))
+    local task = assert(TaskStore.start({ command = "printf 'hello-%s\\n' from-task; sleep 5" }))
 
     local store = SessionStore:new()
     store:upsert_tool_call({
@@ -500,11 +500,13 @@ describe("view.renderers.task", function()
     task.owner = { get_store = function() return store end }
     local handle = mount_transcript(store)
 
-    -- output the task produced AFTER the entry mounted shows up on its own:
-    -- the body's use_effect subscription is what makes this live
-    vim.wait(5000, function()
+    assert.equal(1, #trimmed(handle.bufnr))
+    assert.is_nil(text_of(handle.bufnr):find("hello-from-task", 1, true))
+    store:toggle_tool_call("t1")
+    -- Expanded output updates without another ACP tool-call update.
+    assert.is_true(vim.wait(5000, function()
       return text_of(handle.bufnr):find("hello-from-task", 1, true) ~= nil
-    end, 10)
+    end, 10))
     local text = text_of(handle.bufnr)
     assert.truthy(text:find("hello-from-task", 1, true))
     assert.truthy(text:find(Theme.TASK_ICON.in_progress, 1, true))
@@ -513,9 +515,11 @@ describe("view.renderers.task", function()
     -- command code, not a duplicate raw argument dump (raw inspection stays K).
     assert.truthy(text:find("[w:task_start]", 1, true))
     assert.is_nil(text:find("command =", 1, true))
+    assert.truthy(text:find("Shell command (bash)", 1, true))
+    assert.truthy(text:find("cwd:", 1, true))
     store:toggle_tool_call("t1")
-    assert.truthy(text_of(handle.bufnr):find("cwd:", 1, true))
-    assert.is_nil(text_of(handle.bufnr):find("command =", 1, true))
+    assert.equal(1, #trimmed(handle.bufnr))
+    assert.is_nil(text_of(handle.bufnr):find("hello-from-task", 1, true))
 
     TaskStore.kill(task.id)
     handle.unmount()
