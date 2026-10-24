@@ -1102,7 +1102,10 @@ clients are listed, not silently discarded.
 `startup_timeout_ms` is a separate asynchronous attachment/initialization
 budget, maximum 300000 ms. Its default is 120000 ms after `load = true` or
 when clients are initializing, otherwise 0. Set 0 for an immediate state
-snapshot. At the deadline, ready clients can still answer, with initializing
+snapshot. A positive budget waits for a client that supports the requested
+operation, even if a formatter attaches first or capabilities are registered
+later. Waiting ends early if all observed clients stop or detach.
+At the deadline, ready clients can still answer, with initializing
 clients retained and `partial = true`. No usable client produces an
 `isError` result whose JSON distinguishes `no_server`, `initializing`,
 `unsupported`, or a stopped/detached server. `startup` includes state,
@@ -1169,7 +1172,9 @@ Workspace diagnostics are explicitly `diagnostic_scope = "workspace_cache"`
 and incomplete. Readiness of an anchor buffer cannot establish coverage of all
 files. Positive `diagnostic_timeout_ms` requires a specific file/buffer.
 Aggregate cache queries do not create buffers, wait for each file, or infer
-whole-workspace analysis from one client's report.
+whole-workspace analysis from one client's report. Their `next_action` is
+`query_file`: choose a specific `path` or `buffer` to wait for reports.
+Per-file queries can suggest retrying with a positive diagnostic wait.
 
 #### Coordinates, limits, and permissions
 

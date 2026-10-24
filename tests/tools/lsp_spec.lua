@@ -405,6 +405,109 @@ describe("editor language tools", function()
     assert.equal("retry", out.next_action.action)
   end)
 
+  it("keeps the startup budget when a formatter attaches before the semantic server", function()
+    local buf = buffer("project/formatter-first.lua")
+    local formatter = client(1, buf, {}, { unsupported = "textDocument/documentSymbol" })
+    formatter.name, formatter.initialized = "null-ls", true
+    local done = start("document_symbols", { buffer = buf, startup_timeout_ms = 300 })
+    assert.is_nil(done(false))
+    assert.equal(0, #requests)
+    vim.defer_fn(function()
+      local semantic = client(2, buf, { { name = "late_symbol", kind = 12, range = range() } })
+      semantic.name, semantic.initialized = "lua_ls", false
+      vim.defer_fn(function() semantic.initialized = true end, 30)
+    end, 30)
+    local out = done()
+    assert.falsy(out.isError, vim.inspect(out))
+    assert.equal("late_symbol", out.items[1].name)
+    assert.equal(1, #requests)
+    assert.equal(2, requests[1].client.id)
+    assert.equal("unsupported", out.clients[1].state)
+    assert.equal("not_requested", out.clients[1].status)
+    assert.equal("ready", out.clients[2].state)
+    assert.is_false(out.startup.timed_out)
+    assert.is_true(out.startup.waited_ms >= 40)
+  end)
+
+  it("does not finish startup when an initializing formatter becomes unsupported", function()
+    local buf = buffer("project/initializing-formatter.lua")
+    local formatter = client(1, buf, {}, { unsupported = "textDocument/hover" })
+    formatter.initialized = false
+    local owner = clients
+    local done = start("hover", { buffer = buf, line = 1, column = 1, startup_timeout_ms = 300 })
+    vim.defer_fn(function() formatter.initialized = true end, 20)
+    vim.defer_fn(function()
+      if clients ~= owner or not vim.api.nvim_buf_is_valid(buf) then return end
+      client(2, buf, { contents = "late semantic hover" }).initialized = true
+    end, 60)
+    local out = done()
+    assert.falsy(out.isError, vim.inspect(out))
+    assert.equal("late semantic hover", out.items[1].text)
+    assert.equal(1, #requests)
+    assert.equal(2, requests[1].client.id)
+  end)
+
+  it("waits for dynamic operation support within a positive startup budget", function()
+    local buf = buffer("project/dynamic.lua")
+    local c, enabled = client(1, buf, { contents = "registered later" }), false
+    c.initialized = true
+    function c:supports_method() return enabled end
+    local done = start("hover", { buffer = buf, line = 1, column = 1, startup_timeout_ms = 300 })
+    assert.is_nil(done(false))
+    vim.defer_fn(function() enabled = true end, 30)
+    local out = done()
+    assert.falsy(out.isError, vim.inspect(out))
+    assert.equal("registered later", out.items[1].text)
+    assert.is_false(out.startup.timed_out)
+  end)
+
+  it("waits until the startup deadline before declaring a formatter-only scope unsupported", function()
+    local buf = buffer("project/formatter-only.lua")
+    client(1, buf, {}, { unsupported = "textDocument/hover" }).initialized = true
+    local out = start("hover", { buffer = buf, line = 1, column = 1, startup_timeout_ms = 30 })()
+    assert.is_true(out.isError)
+    local info = payload(out)
+    assert.equal("unsupported", info.status)
+    assert.is_true(info.startup.timed_out)
+    assert.is_true(info.startup.waited_ms >= 30)
+    assert.equal("unsupported", info.clients[1].state)
+    assert.equal(0, #requests)
+    assert.equal(0, #session._event_listeners)
+  end)
+
+  it("cancels a formatter-only startup wait without querying late-attaching clients", function()
+    local buf = buffer("project/cancel-formatter.lua")
+    client(1, buf, {}, { unsupported = "textDocument/hover" }).initialized = true
+    local done = start("hover", { buffer = buf, line = 1, column = 1, startup_timeout_ms = 300 })
+    assert.is_nil(done(false))
+    session:cancel()
+    assert.is_true(done().isError)
+    assert.equal(0, #requests)
+    assert.equal(0, #session._event_listeners)
+  end)
+
+  it("guides workspace diagnostic callers to select a file instead of suggesting invalid arguments", function()
+    for _, args in ipairs({ {}, { root = project } }) do
+      args.startup_timeout_ms = 0
+      local out = call("diagnostics", args)
+      assert.equal("query_file", out.next_action.action)
+      assert.equal("weave_diagnostics", out.next_action.tool)
+      assert.is_nil(out.next_action.argument)
+      assert.is_nil(out.next_action.value)
+      assert.truthy(out.next_action.message:find("path", 1, true))
+      assert.truthy(out.next_action.message:find("buffer", 1, true))
+      assert.is_false(out.can_conclude_clean)
+    end
+  end)
+
+  it("preserves valid per-file diagnostic retry advice", function()
+    local buf = buffer("project/retry.lua")
+    local out = call("diagnostics", { buffer = buf, startup_timeout_ms = 0, diagnostic_timeout_ms = 0 })
+    assert.equal("retry", out.next_action.action)
+    assert.equal("diagnostic_timeout_ms", out.next_action.argument)
+    assert.equal(120000, out.next_action.value)
+  end)
+
   it("waits asynchronously for a slow client's initialization before querying it", function()
     local buf, path = buffer("project/main.lua")
     local c = client(1, buf, { uri = vim.uri_from_fname(path), range = range() })

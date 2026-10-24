@@ -257,9 +257,15 @@ function M.await_start(scope, args, opts, ctx, respond, done, method)
   if deadline == nil then deadline = (args.load or waiting) and 120000 or 0 end
   await(scope, ctx, deadline, function()
     entries = M.observe(scope, method, entries)
-    local initializing = false
-    for _, entry in ipairs(entries) do initializing = initializing or entry.info.state == "initializing" end
-    return #entries > 0 and not initializing, entries
+    local initializing, ready, terminal = false, false, #entries > 0
+    for _, entry in ipairs(entries) do
+      local state = entry.info.state
+      initializing = initializing or state == "initializing"
+      ready = ready or state == "ready"
+      terminal = terminal and (state == "stopped" or state == "detached")
+    end
+    -- A formatter may attach before a capable server or late capability registration.
+    return terminal or (ready and not initializing), entries
   end, function(current, timing)
     local ready, state = {}, #current == 0 and "no_server" or current[1].info.state
     for _, entry in ipairs(current) do

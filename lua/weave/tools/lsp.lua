@@ -156,12 +156,19 @@ local function diagnostics(scope, args, opts, respond, entries, startup, diagnos
     unconfirmed = unconfirmed or entry.info.state ~= "ready" or entry.info.diagnostics.state ~= "current_version"
   end
   local status = pending and "diagnostics_pending" or unconfirmed and "diagnostics_unconfirmed" or "ok"
+  local next_action
+  if pending or unconfirmed then
+    next_action = target.root and {
+      action = "query_file", tool = "weave_diagnostics",
+      message = "Choose a specific path or buffer to wait for diagnostic reports; workspace queries are cache-only.",
+    } or { action = "retry", argument = "diagnostic_timeout_ms", value = 120000 }
+  end
   respond(page(a, { status = status, clients = Runtime.infos(entries), startup = startup,
     diagnostic_wait = diagnostic_wait, partial = pending or unconfirmed, analysis_complete = false,
     can_conclude_clean = false, coverage = "cached", fresh = false,
     diagnostic_scope = target.root and "workspace_cache" or "buffer",
     message = "Cached diagnostics, NOT proof of a clean file. Each client's report/version state is listed separately. Initialized does not mean fully indexed; undiscovered providers and non-LSP linters may not have reported.",
-    next_action = (pending or unconfirmed) and { action = "retry", argument = "diagnostic_timeout_ms", value = 120000 } or nil,
+    next_action = next_action,
     target = not target.root and Scope.metadata(target) or nil, root = target.root }))
 end
 
@@ -464,7 +471,7 @@ local function schema(name)
     props.root = { type = "string", description = "Aggregate query directory, default calling session's project; cannot be combined with path or buffer" }
   end
   if name == "diagnostics" then
-    props.diagnostic_timeout_ms = { type = "integer", minimum = 0, maximum = 120000, description = "Wait for current-version reports from EACH observed client, including empty reports. Default 30000 after load=true, otherwise 0 (cache snapshot). Unknown push-diagnostic support is not treated as no diagnostics. Maximum 120000." }
+    props.diagnostic_timeout_ms = { type = "integer", minimum = 0, maximum = 120000, description = "Wait for current-version reports from EACH observed client, including empty reports. A positive wait requires path or buffer; workspace queries are cache-only. Default 30000 after load=true, otherwise 0 (cache snapshot). Unknown push-diagnostic support is not treated as no diagnostics. Maximum 120000." }
     props.severity = { type = "string", enum = severity_names, description = "Exact severity filter: error, warning, information, or hint" }
     props.source = { type = "string", description = "Exact diagnostic source filter (all sources by default)" }
   else
@@ -479,7 +486,7 @@ local function schema(name)
   elseif name == "hover" then
     props.max_chars = { type = "integer", description = "Total hover-text budget in Unicode characters, default 16000, maximum 64000", minimum = 1, maximum = 64000 }
   end
-  props.startup_timeout_ms = { type = "integer", minimum = 0, maximum = 300000, description = "Separate asynchronous attachment/initialization deadline. Default 120000 after load=true or when clients are initializing, otherwise 0. Set 0 for immediate status. Maximum 300000. Reports every client's state; a ready formatter cannot satisfy another client's diagnostic readiness." }
+  props.startup_timeout_ms = { type = "integer", minimum = 0, maximum = 300000, description = "Separate asynchronous attachment/initialization deadline. Waits for a client supporting the requested operation, even if an unsupported client attaches first. Default 120000 after load=true or when clients are initializing, otherwise 0. Set 0 for immediate status. Maximum 300000. Reports every client's state; a ready formatter cannot satisfy another client's diagnostic readiness." }
   local required = {}
   if name == "workspace_symbols" then required = { "query" }
   elseif name == "definition" or name == "references" or name == "hover" then required = { "line", "column" } end
