@@ -38,11 +38,14 @@ function M.Code(ctx, props)
   local shown, start = math.min(#memo.plain, props.max_lines or math.huge), props.start_line or 1
   local rows, width = {}, #tostring(start + #memo.plain - 1)
   if props.title then rows[#rows + 1] = M.line(props.title, "Comment") end
+  local offset = 0
   for i = 1, shown do
     local content = memo.highlighted and memo.highlighted[i] or memo.plain[i]
     if content == "" then content = " " end
-    local body = { comp = ui.text, props = { text = content, wrap = "char", grow = 1,
+    local source = props.source and vim.tbl_extend("force", {}, props.source, { offset = offset }) or nil
+    local body = { comp = ui.text, props = { text = content, wrap = "char", grow = 1, source = source,
       style = { text_hl = "@markup.raw" } } }
+    offset = offset + #memo.plain[i] + 1
     if props.line_numbers == false then rows[#rows + 1] = body
     else
       rows[#rows + 1] = { comp = ui.row, props = { gap = 1 }, children = {

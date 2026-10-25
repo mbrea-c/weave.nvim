@@ -50,6 +50,8 @@ local function resolve(args, ctx)
   error("no current session selected; pass session_id or session_key", 0)
 end
 
+M.resolve = resolve -- shared internal selector, with the same hierarchy checks
+
 local function runtime_settings(entry)
   local stores = {
     global = Settings.global(),

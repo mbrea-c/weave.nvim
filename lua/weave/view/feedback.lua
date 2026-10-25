@@ -48,6 +48,9 @@ function M.comment_label(comment)
   local name = comment.path ~= "" and vim.fn.fnamemodify(comment.path, ":t") or "[scratch]"
   local where = at.end_lnum > at.lnum and ("%s:%d-%d"):format(name, at.lnum, at.end_lnum)
     or ("%s:%d"):format(name, at.lnum)
+  if comment.target then
+    where = require("weave.transcript_feedback").label(comment) .. " [" .. at.state .. "]"
+  end
   local body = (comment.body or ""):gsub("%s+", " ")
   if body ~= "" then
     where = where .. "  " .. body
@@ -116,7 +119,8 @@ function M.Section(ctx, props)
   ver.get()
 
   local session = props.session
-  local comments = draft and draft.comments or {}
+  local item = Store.item_for(session)
+  local comments = item and item.comments or {}
   local summary = Sync.pending_summary(session)
 
   local rows = {
@@ -207,7 +211,7 @@ function M.Section(ctx, props)
             if props.on_discard then
               props.on_discard(session)
             else
-              require("weave.feedback").discard()
+              require("weave.feedback").discard({ session = session })
               Sync.mark_seen(session)
             end
           end,
@@ -232,7 +236,7 @@ function M.List(ctx, props)
   local rows = {
     {
       comp = ui.label,
-      props = { text = ("Code feedback (%d)"):format(#comments), style = { text_hl = "Title" } },
+      props = { text = ("Feedback (%d)"):format(#comments), style = { text_hl = "Title" } },
     },
   }
   if #comments == 0 then
@@ -363,11 +367,18 @@ function M.Editor(ctx, props)
   if at.end_lnum > at.lnum then
     head = head .. "-" .. at.end_lnum
   end
+  if comment.target then head = require("weave.transcript_feedback").label(comment) end
 
   local rows = {
     { comp = ui.label, props = { text = head, style = { text_hl = "Title" } } },
   }
-  if at.orphaned then
+  if comment.target then
+    if at.orphaned then
+      rows[#rows + 1] = dim("original transcript content " .. at.state .. "; the captured quote is retained")
+    elseif at.state == "hidden" then
+      rows[#rows + 1] = dim("message is outside the visible transcript window")
+    end
+  elseif at.orphaned then
     rows[#rows + 1] = dim("the code this points at has changed; it will be sent marked stale")
   end
 
@@ -397,9 +408,10 @@ function M.Editor(ctx, props)
       comp = ui.code,
       props = {
         code = table.concat(quote, "\n"),
-        ref = comment.path ~= "" and { path = comment.path } or nil,
+        ref = not comment.target and comment.path ~= "" and { path = comment.path } or nil,
         header = false,
-        start_line = at.lnum,
+        line_numbers = not comment.target,
+        start_line = not comment.target and at.lnum or nil,
         max_lines = M.QUOTE_PREVIEW_LINES,
         style = { padding = { left = 2 } },
       },

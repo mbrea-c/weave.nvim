@@ -46,6 +46,7 @@ local SHORT_NAMES = {
   "task_kill",
   "check_user_edits",
   "session_introspect",
+  "transcript_search", "transcript_read",
   "subagent_create", "subagent_list", "subagent_send", "subagent_read",
   "subagent_wait", "subagent_cancel", "subagent_close",
   "request_access",
@@ -150,6 +151,10 @@ function M.register_into(server)
   register("check_user_edits", Gate.wrap("check_user_edits", UserEdits.check, { kind = "read" }))
   local session = require("weave.tools.session")
   register("session_introspect", Gate.wrap("session_introspect", session.introspect, { kind = "read" }))
+  local transcript = require("weave.tools.transcript")
+  for _, operation in ipairs({ "search", "read" }) do
+    register("transcript_" .. operation, Gate.wrap("transcript_" .. operation, transcript[operation], { kind = "read" }))
+  end
   local subagents = require("weave.tools.subagents")
   for _, operation in ipairs({ "create", "list", "send", "read", "wait", "cancel", "close" }) do
     register("subagent_" .. operation, Gate.wrap("subagent_" .. operation, subagents[operation], { kind = "other" }))

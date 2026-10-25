@@ -161,6 +161,7 @@ function M.open(opts)
     session_settings = opts.session_settings,
     on_transcript_create = function(bufnr, winid)
       transcript.bufnr, transcript.winid = bufnr, winid
+      vim.b[bufnr].weave_transcript = true
     end,
     on_prompt_create = function(bufnr)
       input_bufnr = bufnr

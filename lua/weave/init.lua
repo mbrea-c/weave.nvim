@@ -340,7 +340,7 @@ function M.flush(opts)
       sent_elsewhere = Feedback.send() == true
     end
   else
-    local comments = Feedback.pending_message()
+    local comments = Feedback.pending_message(session)
     if comments then
       msgs[#msgs + 1] = comments
     end

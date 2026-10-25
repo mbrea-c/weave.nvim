@@ -19,13 +19,17 @@
 -- Subscribers fire synchronously, once per mutation, with the new state;
 -- coalescing bursts (streaming!) into frames is the view's job, not ours.
 
+local History = require("weave.transcript_history")
+
 --- A chat entry as rendered by the view. Tool calls keep their data in the
 --- parallel keyed `tool_calls` table (so live updates are O(1)), but appear
 --- in this ordered list as a lightweight `tool_call` marker so they render at
 --- the point in the conversation where they occurred — not bunched at the end.
 --- @class weave.store.ChatEntry
---- @field kind "user" | "agent" | "thought" | "tool_call"
+--- @field kind "user" | "agent" | "thought" | "tool_call" | "tutor"
 --- @field text? string Present for user/agent/thought entries
+--- @field payload? string Tutor payload hidden behind its summary
+--- @field attachments? weave.Attachment[] Files sent with a user entry
 --- @field tool_call_id? string Present for tool_call markers; key into tool_calls
 
 --- @class weave.store.State
@@ -45,6 +49,9 @@
 --- @field hint string Rotating UI hint shown in the sidebar (rotated each turn)
 --- @field commands table[] Slash-command completion items (always includes /new)
 --- @field usage weave.store.Usage|nil Session usage (context tokens + cost) from usage_update; nil until first reported
+--- @field window_start integer First rendered entry
+--- @field window_end? integer Last rendered entry when showing an older bounded window
+--- @field transcript_sources? boolean Enable per-byte render provenance after the first comment
 
 --- @class weave.store.SessionMeta
 --- @field title? string Agent-provided session title
@@ -70,7 +77,7 @@
 --- rotated on each turn end (see rotate_hint / the session's turn-end handler).
 local HINTS = {
   "za toggles a tool call · zR expand all · zM collapse all",
-  "<CR> on a tool-call header toggles it",
+  "<CR> on [+]/[-] toggles a tool call; za works anywhere in the entry",
   "<C-s> submits · <C-x> steers (interrupts the current turn)",
   "<C-c> cancels the running turn",
   ";;t thinking · ;;d edit diffs · ;;c prettify markdown · ;;f follow",
@@ -187,10 +194,20 @@ end
 --- @class weave.store.SessionStore
 --- @field state weave.store.State The current snapshot (never mutated in place)
 --- @field _file_changes? table<string, { old?: string[], new: string[], path?: string, buffer?: integer }> Successful change snapshots retained with this conversation
+--- @field _transcript weave.transcript.History Stable entry metadata over the canonical state
 --- @field _subscribers fun(state: weave.store.State)[]
 --- @field _permission_queue weave.store.PendingPermission[] FIFO of pending permission requests; state.permission mirrors the head
 local SessionStore = {}
 SessionStore.__index = SessionStore
+
+--- @return weave.transcript.History
+function SessionStore:transcript() return self._transcript end
+
+--- Per-byte rendering provenance is only needed after the first comment.
+function SessionStore:enable_transcript_sources()
+  if self.state.transcript_sources then return end
+  self:_commit(function(draft) draft.transcript_sources = true end)
+end
 
 -- Exposed for the view and unit tests.
 SessionStore.order_permission_options = order_permission_options
@@ -227,6 +244,7 @@ function SessionStore:new()
     },
     _subscribers = {},
     _permission_queue = {},
+    _transcript = History.new(),
   }
   return setmetatable(instance, self)
 end
@@ -275,16 +293,25 @@ end
 --- Forward-only + change-guarded: no spurious notifies.
 function SessionStore:follow_window()
   local target = math.max(1, #self.state.entries - SessionStore.WINDOW + 1)
-  if target <= self.state.window_start then
+  if target <= self.state.window_start and not self.state.window_end then
     return
   end
   self:_commit(function(draft)
     draft.window_start = target
+    draft.window_end = nil
   end)
 end
 
---- Reveal the previous WINDOW older entries (the "older messages" expander),
---- clamped at the first entry. Each press stays bounded — no "load all" cliff.
+--- Reveal a bounded window around an exact canonical entry, not a quote match.
+function SessionStore:reveal_entry(sequence)
+  local first = math.max(1, sequence - 3)
+  self:_commit(function(draft)
+    draft.window_start = first
+    draft.window_end = math.min(#draft.entries, first + SessionStore.WINDOW - 1)
+  end)
+end
+
+--- Reveal the previous WINDOW older entries through the explicit expander.
 function SessionStore:reveal_older()
   local target = math.max(1, self.state.window_start - SessionStore.WINDOW)
   if target == self.state.window_start then
@@ -301,6 +328,7 @@ function SessionStore:append_entry(entry)
   self:_commit(function(draft)
     local entries = vim.list_extend({}, draft.entries)
     entries[#entries + 1] = entry
+    self._transcript:append(entry)
     draft.entries = entries
   end)
 end
@@ -321,8 +349,10 @@ function SessionStore:append_streaming_text(kind, text)
     local last = entries[#entries]
     if last and last.kind == kind then
       entries[#entries] = { kind = kind, text = last.text .. text }
+      self._transcript:replace(#entries, entries[#entries])
     else
       entries[#entries + 1] = { kind = kind, text = text }
+      self._transcript:append(entries[#entries])
     end
     draft.entries = entries
   end)
@@ -340,6 +370,8 @@ function SessionStore:upsert_tool_call(block)
     local existing = calls[id]
     if existing then
       calls[id] = vim.tbl_deep_extend("force", existing, block)
+      local seq = self._transcript.by_tool[id]
+      self._transcript:replace(seq, draft.entries[seq], calls[id])
     else
       calls[id] = block
 
@@ -349,6 +381,7 @@ function SessionStore:upsert_tool_call(block)
 
       local entries = vim.list_extend({}, draft.entries)
       entries[#entries + 1] = { kind = "tool_call", tool_call_id = id }
+      self._transcript:append(entries[#entries], block)
       draft.entries = entries
     end
     draft.tool_calls = calls
@@ -760,6 +793,7 @@ end
 --- Provider/agent/config meta persists because it belongs to the client and is
 --- re-applied on session creation; title/timestamp belong to one conversation.
 function SessionStore:reset()
+  self._transcript = History.new()
   self._file_changes = nil
   self._plan_source = nil -- forget which source owned the plan
   self._kiro_tasks = nil -- forget remembered Kiro task-list state
@@ -783,6 +817,8 @@ function SessionStore:reset()
     draft.commands = to_completion_items({})
     draft.usage = nil -- forget the previous conversation's token/cost tally
     draft.window_start = 1 -- fresh session starts at the top of an empty transcript
+    draft.window_end = nil
+    draft.transcript_sources = nil
   end)
   -- Cancel + clear pending permissions so the agent isn't left waiting; this
   -- also resets state.permission / permission_count via _publish.

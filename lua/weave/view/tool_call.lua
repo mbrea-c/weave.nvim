@@ -81,6 +81,7 @@ local M = {}
 --- @class weave.view.ToolCallProps
 --- @field block table tool_call_id, kind, status, input, output, diff, body, file_path, argument, meta
 --- @field store weave.store.SessionStore The owning session store
+--- @field record? table Stable transcript entry metadata (when rendered in a conversation)
 --- @field expanded boolean Whether the user has expanded this call
 --- @field awaiting boolean Whether a permission request targets this call
 --- @field show_diff boolean The show_diffs view pref

@@ -115,7 +115,7 @@ function M.Recorded(_, props)
   for _, name in ipairs({ "stdout", "stderr", "recorded result" }) do
     if data[name] and data[name][1] ~= "" then
       panes[#panes + 1] = { comp = TaskOutput.Pane, key = name,
-        props = { stream = name, chunks = data[name], block = props.block, store = props.store } }
+        props = { stream = name, chunks = data[name], block = props.block, store = props.store, record = props.record } }
     end
   end
   return { comp = ui.col, props = { gap = 1 }, children = panes }
@@ -145,7 +145,7 @@ function M.Body(ctx, props)
   for _, name in ipairs({ "stdout", "stderr" }) do
     if #(task[name] or {}) > 0 then
       panes[#panes + 1] = { comp = TaskOutput.Pane, key = name,
-        props = { stream = name, chunks = task[name], block = props.block, store = props.store } }
+        props = { stream = name, chunks = task[name], block = props.block, store = props.store, record = props.record } }
     end
   end
   if #panes == 0 then rows[#rows + 1] = C.line("No output received yet.")
@@ -173,6 +173,8 @@ function M.Details(_, props)
   if command then
     rows[#rows + 1] = { comp = C.Code, props = {
       code = command, lang = "bash", title = "Shell command (bash)", line_numbers = false,
+      source = require("weave.transcript_feedback").source(props.store, props.record, "tool.command",
+        function() return C.clean(command, nil, true) end),
     } }
   end
   rows[#rows + 1] = C.line("cwd: " .. C.clean(cwd or "(not reported)", 2048))

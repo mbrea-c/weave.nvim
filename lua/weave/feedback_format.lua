@@ -48,6 +48,7 @@ end
 --- @param e weave.feedback.Entry
 --- @return string
 local function location(e)
+  if e.transcript_label then return e.transcript_label end
   if e.end_lnum and e.end_lnum > e.lnum then
     return ("%s:%d-%d"):format(e.path, e.lnum, e.end_lnum)
   end
@@ -60,8 +61,12 @@ function M.render(entries)
   if #entries == 0 then
     return ""
   end
+  local transcripts = 0
+  for _, e in ipairs(entries) do if e.transcript_label then transcripts = transcripts + 1 end end
+  local title = transcripts == #entries and "Transcript feedback"
+    or transcripts > 0 and "Code and transcript feedback" or "Inline code feedback"
   local out = {
-    ("Inline code feedback (%d comment%s):"):format(#entries, #entries == 1 and "" or "s"),
+    ("%s (%d comment%s):"):format(title, #entries, #entries == 1 and "" or "s"),
     "",
   }
   for i, e in ipairs(entries) do
@@ -72,7 +77,12 @@ function M.render(entries)
     if e.reply_to then
       head = head .. (" (reply to your annotation #%d)"):format(e.reply_to.id)
     end
-    if e.orphaned then
+    if e.transcript_label then
+      head = head .. " (conversation " .. e.conversation_id .. ")"
+      if e.state == "changed" or e.state == "unavailable" then
+        head = head .. " (original content " .. e.state .. "; captured quote follows)"
+      end
+    elseif e.orphaned then
       head = head .. " (stale: the code this pointed at has since been changed or deleted)"
     end
     out[#out + 1] = head
@@ -84,11 +94,17 @@ function M.render(entries)
         out[#out + 1] = "> " .. line
       end
     end
-    out[#out + 1] = "```" .. (e.filetype or "")
+    local fence = "```"
+    for _, line in ipairs(e.quote or {}) do
+      for ticks in line:gmatch("`+") do
+        if #ticks >= #fence then fence = string.rep("`", #ticks + 1) end
+      end
+    end
+    out[#out + 1] = fence .. (e.filetype or "")
     for _, line in ipairs(e.quote or {}) do
       out[#out + 1] = line
     end
-    out[#out + 1] = "```"
+    out[#out + 1] = fence
     local frag = fragment(e)
     if frag then
       out[#out + 1] = ("(selected: %s)"):format(frag)
@@ -103,6 +119,18 @@ end
 --- @return weave.feedback.Entry
 function M.entry(comment)
   local at = Store.resolve(comment)
+  if comment.target then
+    local labels = {}
+    for _, span in ipairs(comment.target.spans) do
+      labels[#labels + 1] = ("%s/%s %s"):format(span.entry_id, span.part,
+        span.precision == "entry" and "(whole entry)" or ("bytes %d-%d"):format(span.start_byte, span.end_byte))
+    end
+    return {
+      transcript_label = require("weave.transcript_feedback").label(comment) .. ": " .. table.concat(labels, ", "),
+      conversation_id = comment.target.conversation_id, state = at.state,
+      quote = comment.quote, body = comment.body, source = comment.source,
+    }
+  end
   local filetype
   if comment.bufnr and vim.api.nvim_buf_is_valid(comment.bufnr) then
     filetype = vim.bo[comment.bufnr].filetype

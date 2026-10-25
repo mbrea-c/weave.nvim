@@ -13,6 +13,12 @@ local Keys = require("weave.keys")
 local Peek = require("weave.view.peek")
 local Theme = require("weave.view.theme")
 local ToolCall = require("weave.view.tool_call")
+local FeedbackSource = require("weave.transcript_feedback")
+
+local function source(props, part, offset)
+  if part ~= "entry" and not props.mapped then return nil end
+  return FeedbackSource.source(props.store, props.record, part or "text", nil, offset)
+end
 local use_store = require("weave.view.use_store")
 
 local M = {}
@@ -116,9 +122,9 @@ end
 function M.UserEntry(_, props)
   local body
   if props.conceal then
-    body = { comp = ui.markdown, props = { text = props.entry.text } }
+    body = { comp = ui.markdown, props = { text = props.entry.text, source = source(props) } }
   else
-    body = { comp = ui.paragraph, props = { text = props.entry.text, style = { text_hl = Theme.USER_MSG_HL } } }
+    body = { comp = ui.paragraph, props = { text = props.entry.text, source = source(props), style = { text_hl = Theme.USER_MSG_HL } } }
   end
   local children = {
     {
@@ -144,6 +150,7 @@ function M.UserEntry(_, props)
     comp = ui.col,
     props = {
       on_key = peek_keys(props.entry),
+      source_entry = source(props, "entry"),
       style = {
         hl = Theme.USER_BUBBLE_HL,
         border = "rounded",
@@ -165,6 +172,7 @@ function M.TutorEntry(_, props)
   return {
     comp = ui.col,
     props = {
+      source_entry = source(props, "entry"),
       on_key = Keys.on_key("peek", function()
         Peek.open(entry.payload or entry.text or "", "tutor", "diff")
       end),
@@ -189,7 +197,7 @@ end
 function M.ThoughtEntry(_, props)
   return {
     comp = ui.col,
-    props = { on_key = peek_keys(props.entry) },
+    props = { on_key = peek_keys(props.entry), source_entry = source(props, "entry") },
     children = {
       { comp = ui.label, props = { text = "[thinking]", style = { text_hl = Theme.THINKING_TAG_HL } } },
       {
@@ -197,7 +205,7 @@ function M.ThoughtEntry(_, props)
         props = {},
         children = {
           { comp = ui.label, props = { text = "  " } },
-          { comp = ui.paragraph, props = { text = props.entry.text, style = { text_hl = "@comment" } } },
+          { comp = ui.paragraph, props = { text = props.entry.text, source = source(props), style = { text_hl = "@comment" } } },
         },
       },
     },
@@ -225,18 +233,19 @@ function M.AgentEntry(_, props)
   local entry = props.entry
   if props.live and props.conceal and (props.cut or 0) > 0 then
     local children = {
-      { comp = ui.markdown, props = { text = entry.text:sub(1, props.cut - 1) } },
+      { comp = ui.markdown, props = { text = entry.text:sub(1, props.cut - 1), source = source(props) } },
     }
     local tail = entry.text:sub(props.cut + 2)
     if tail ~= "" then
-      children[#children + 1] = { comp = ui.paragraph, props = { text = tail } }
+      children[#children + 1] = { comp = ui.paragraph, props = { text = tail, source = source(props, "text", props.cut + 1) } }
     end
-    return { comp = ui.col, props = { gap = 1, on_key = peek_keys(entry) }, children = children }
+    return { comp = ui.col, props = { gap = 1, on_key = peek_keys(entry), source_entry = source(props, "entry") }, children = children }
   end
   return {
     comp = ui.markdown,
     props = {
       text = entry.text,
+      source = source(props), source_entry = source(props, "entry"),
       -- streaming OR "prettify off" both render the raw source (no parse)
       live = props.live or not props.conceal,
       on_key = peek_keys(entry),
@@ -255,7 +264,7 @@ end
 function M.ToolCallEntry(_, props)
   return {
     comp = ui.col,
-    props = { on_key = vim.tbl_extend("force", tool_peek_keys(props.block),
+    props = { source_entry = source(props, "entry"), on_key = vim.tbl_extend("force", tool_peek_keys(props.block),
       Keys.on_key("toggle_tool_call", function()
         props.store:toggle_tool_call(props.block.tool_call_id)
       end)) },
@@ -403,7 +412,8 @@ function M.Transcript(ctx, props)
     }
   end
 
-  for i = window_start, #state.entries do
+  local window_end = math.min(state.window_end or #state.entries, #state.entries)
+  for i = window_start, window_end do
     local entry = state.entries[i]
     if entry.kind == "tool_call" then
       local tc = state.tool_calls[entry.tool_call_id]
@@ -417,6 +427,7 @@ function M.Transcript(ctx, props)
           memo = true,
           props = {
             store = store,
+            record = store:transcript().records[i], mapped = state.transcript_sources,
             block = tc,
             expanded = state.expanded[entry.tool_call_id] == true,
             awaiting = awaiting_id == entry.tool_call_id,
@@ -429,13 +440,13 @@ function M.Transcript(ctx, props)
         comp = M.UserEntry,
         key = entry,
         memo = true,
-        props = { entry = entry, conceal = prefs.conceal_markdown == true },
+        props = { entry = entry, store = store, record = store:transcript().records[i], mapped = state.transcript_sources, conceal = prefs.conceal_markdown == true },
       }
     elseif entry.kind == "tutor" then
-      children[#children + 1] = { comp = M.TutorEntry, key = entry, memo = true, props = { entry = entry } }
+      children[#children + 1] = { comp = M.TutorEntry, key = entry, memo = true, props = { entry = entry, store = store, record = store:transcript().records[i], mapped = state.transcript_sources } }
     elseif entry.kind == "thought" then
       if prefs.show_thoughts then
-        children[#children + 1] = { comp = M.ThoughtEntry, key = entry, memo = true, props = { entry = entry } }
+        children[#children + 1] = { comp = M.ThoughtEntry, key = entry, memo = true, props = { entry = entry, store = store, record = store:transcript().records[i], mapped = state.transcript_sources } }
       end
     elseif entry.kind == "agent" then
       -- Only the timeline TAIL can still be streaming: an entry settles
@@ -451,12 +462,20 @@ function M.Transcript(ctx, props)
         memo = true,
         props = {
           entry = entry,
+          store = store, record = store:transcript().records[i], mapped = state.transcript_sources,
           live = live,
           conceal = prefs.conceal_markdown == true,
           cut = (live and stream.index == i) and stream.cut or nil,
         },
       }
     end
+  end
+
+  if window_end < #state.entries then
+    children[#children + 1] = { comp = ui.button, props = {
+      theme = false, label = ("Show newer messages (%d)"):format(#state.entries - window_end),
+      on_press = function() store:follow_window() end,
+    } }
   end
 
   -- Queued prompts no longer render here: they stack in the prompt block, above

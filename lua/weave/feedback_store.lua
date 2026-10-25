@@ -5,10 +5,9 @@
 -- sent to the agent as a single message. See weave.feedback for the public API
 -- users bind, and weave.feedback_sinks for where a sent item goes.
 --
--- One draft, editor-global, deliberately: "add to the currently open feedback"
--- has no useful meaning per-session, and a comment is attached to a FILE, which
--- no session owns. Which agent receives it is decided at send time, not at
--- comment time.
+-- File comments are editor-global and choose their destination at send time.
+-- Transcript comments share the draft UI but belong to their captured conversation.
+-- Delivery and discard select only the destination's comments.
 --
 -- Anchoring lives in weave.feedback_anchors; this module only caches each
 -- comment's last known position so an orphaned comment can still say where its
@@ -37,6 +36,9 @@ local M = {}
 --- @field body string the user's comment
 --- @field reply_to weave.feedback.ReplyTo|nil the agent annotation this answers
 --- @field created_at integer
+--- @field target? table Semantic transcript target; absent for file comments
+--- @field _owner? weave.store.SessionStore Owning conversation store, never serialized
+--- @field _history? weave.transcript.History Captured history identity, never serialized
 
 --- What a reply comment is answering. The message is a SNAPSHOT of the
 --- annotation as the user read it: annotations get updated and dismissed while
@@ -60,6 +62,8 @@ local subscribers = {}
 local autocmd_installed = false
 
 local function notify()
+  local transcript = package.loaded["weave.transcript_feedback"]
+  if transcript then transcript.refresh(M.comments()) end
   for _, fn in ipairs({ unpack(subscribers) }) do
     pcall(fn)
   end
@@ -92,6 +96,37 @@ function M.comments()
   return draft and draft.comments or {}
 end
 
+--- A view of the draft safe to deliver to this conversation. File comments keep
+--- their existing editor-global behavior; transcript comments never follow UI focus.
+function M.item_for(session)
+  local store = session and session.get_store and session:get_store()
+  local comments = {}
+  for _, comment in ipairs(M.comments()) do
+    if not comment.target or (comment._owner == store and comment._history == store:transcript()) then
+      comments[#comments + 1] = comment
+    end
+  end
+  if #comments > 0 then
+    return { id = draft.id, created_at = draft.created_at, comments = comments }
+  end
+end
+
+--- Capture what was queued, not mutable draft references.
+function M.snapshot(item)
+  local snapshot = {}
+  for _, comment in ipairs((item or {}).comments or {}) do snapshot[comment.id] = comment.body end
+  return snapshot
+end
+
+--- Delivery consumes only the version actually sent. Later edits stay pending.
+function M.consume(snapshot)
+  local ids = {}
+  for _, comment in ipairs(M.comments()) do
+    if snapshot[comment.id] == comment.body then ids[#ids + 1] = comment.id end
+  end
+  for _, id in ipairs(ids) do M.remove(id) end
+end
+
 --- @param id integer
 --- @return weave.feedback.Comment|nil
 function M.get(id)
@@ -108,7 +143,7 @@ end
 --- @return weave.feedback.Comment|nil comment, string|nil err
 function M.add(opts)
   opts = opts or {}
-  local bufnr = opts.bufnr
+  local bufnr = opts.bufnr == 0 and vim.api.nvim_get_current_buf() or opts.bufnr
   if type(bufnr) ~= "number" or not vim.api.nvim_buf_is_valid(bufnr) then
     return nil, "no valid buffer to comment on"
   end
@@ -117,6 +152,8 @@ function M.add(opts)
     return nil, "a comment needs a line range"
   end
   range.end_lnum = range.end_lnum or range.lnum
+  local capture, capture_err = require("weave.transcript_feedback").capture(bufnr, range)
+  if capture_err then return nil, capture_err end
 
   install_autocmd()
   if not draft then
@@ -130,18 +167,20 @@ function M.add(opts)
     source = opts.source or "weave",
     bufnr = bufnr,
     path = vim.api.nvim_buf_get_name(bufnr),
-    anchor = Anchors.set(bufnr, range),
-    quote = Anchors.quote(bufnr, range),
+    anchor = not capture and Anchors.set(bufnr, range) or nil,
+    quote = capture and capture.quote or Anchors.quote(bufnr, range),
+    target = capture and capture.target, _owner = capture and capture.owner, _history = capture and capture.history,
     lnum = range.lnum,
     end_lnum = range.end_lnum,
-    col = range.col,
-    end_col = range.end_col,
+    col = not capture and range.col or nil,
+    end_col = not capture and range.end_col or nil,
     body = opts.body or "",
     reply_to = opts.reply_to,
     created_at = os.time(),
   }
   next_comment_id = next_comment_id + 1
   draft.comments[#draft.comments + 1] = comment
+  if capture then require("weave.transcript_feedback").install(M.comments) end
   notify()
   return comment
 end
@@ -197,6 +236,7 @@ end
 --- @param comment weave.feedback.Comment
 --- @return { lnum: integer, end_lnum: integer, col: integer|nil, end_col: integer|nil, orphaned: boolean }
 function M.resolve(comment)
+  if comment.target then return require("weave.transcript_feedback").resolve(comment) end
   local live = comment.bufnr and comment.anchor and Anchors.range(comment.bufnr, comment.anchor) or nil
   if live then
     comment.lnum, comment.end_lnum = live.lnum, live.end_lnum
@@ -217,6 +257,13 @@ end
 --- @param lnum integer 1-based
 --- @return weave.feedback.Comment|nil
 function M.at_cursor(bufnr, lnum)
+  for _, comment in ipairs(M.comments()) do
+    if comment.target then
+      for _, loc in ipairs(M.resolve(comment).locations) do
+        if loc.bufnr == bufnr and loc.row + 1 == lnum then return comment end
+      end
+    end
+  end
   local ids = {}
   for _, id in ipairs(Anchors.at(bufnr, lnum)) do
     ids[id] = true
@@ -243,7 +290,7 @@ function M.reattach(bufnr)
   end
   local changed = false
   for _, c in ipairs(M.comments()) do
-    if c.path == path and not (c.anchor and Anchors.range(bufnr, c.anchor)) then
+    if not c.target and c.path == path and not (c.anchor and Anchors.range(bufnr, c.anchor)) then
       local at = Anchors.find(bufnr, c.quote)
       if at then
         c.bufnr = bufnr
@@ -277,6 +324,8 @@ end
 
 -- test hook
 function M._reset()
+  local transcript = package.loaded["weave.transcript_feedback"]
+  if transcript then transcript.refresh({}) end
   for _, c in ipairs(M.comments()) do
     if c.bufnr and c.anchor then
       Anchors.clear(c.bufnr, c.anchor)

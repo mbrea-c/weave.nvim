@@ -213,6 +213,7 @@ function M.goto_comment(id)
   if not comment then
     return false
   end
+  if comment.target then return require("weave.transcript_feedback").goto_comment(comment) end
   local at = Store.resolve(comment)
   local win = M._target_win(comment.bufnr)
   if not win then
@@ -240,7 +241,7 @@ end
 --- Format the open draft and hand it to a sink. The draft is cleared (and its
 --- highlights with it) only on a successful send, so a failure leaves the
 --- user's comments intact to retry.
---- @param opts { sink?: string }|nil
+--- @param opts { sink?: string, session?: table }|nil
 --- @return boolean|nil ok, string|nil err
 function M.send(opts)
   opts = opts or {}
@@ -250,12 +251,43 @@ function M.send(opts)
     return nil, "no code feedback to send"
   end
   local sink = opts.sink or Sinks.default().name
+  local owner
+  for _, comment in ipairs(item.comments) do
+    if comment.target then
+      if comment._owner:transcript() ~= comment._history then
+        return nil, "transcript conversation is no longer available; comments were retained"
+      end
+      if owner and owner ~= comment._owner then
+        return nil, "comments belong to multiple conversations; flush each session separately"
+      end
+      owner = comment._owner
+    end
+  end
+  if owner then
+    if sink ~= "weave" or not Sinks.default_is_builtin() then
+      return nil, "transcript comments must be flushed to their owning weave session"
+    end
+    local session = opts.session
+    if not session then
+      for _, entry in ipairs(require("weave.registry").list()) do
+        if entry.session:get_store() == owner then session = entry.session; break end
+      end
+    end
+    if not session or session:get_store() ~= owner then
+      return nil, "owning weave session is unavailable; comments were retained"
+    end
+    if not session:send_batch({ M.pending_message(session) }) then
+      return nil, "owning weave session is not ready; comments were retained"
+    end
+    return true
+  end
+  local snapshot = Store.snapshot(item)
   local ok, err = Sinks.dispatch(sink, Format.format(item), item)
   if not ok then
     vim.notify("weave: " .. tostring(err), vim.log.levels.WARN)
     return nil, err
   end
-  Store.clear()
+  Store.consume(snapshot)
   return true
 end
 
@@ -267,24 +299,30 @@ end
 --- behind an active turn can still be wiped (cancel, /new, restore), and
 --- comments the user typed must survive that — unlike send(), which has
 --- already reached its sink by the time it returns.
+--- @param session? table Destination conversation; without one, file comments only.
 --- @return weave.session.Message|nil
-function M.pending_message()
-  local item = Store.draft()
+function M.pending_message(session)
+  local item = Store.item_for(session)
   if not item or #item.comments == 0 then
     return nil
   end
+  local snapshot = Store.snapshot(item)
   return {
     kind = "user",
     text = Format.format(item),
     on_sent = function()
-      Store.clear()
+      Store.consume(snapshot)
     end,
   }
 end
 
 --- Drop the open draft and every highlight it placed.
-function M.discard()
-  Store.clear()
+function M.discard(opts)
+  if opts and opts.session then
+    Store.consume(Store.snapshot(Store.item_for(opts.session)))
+  else
+    Store.clear()
+  end
 end
 
 --- Register a destination for sent feedback. See weave.feedback_sinks.

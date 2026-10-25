@@ -198,7 +198,16 @@ function M.Pane(ctx, props)
   local chunks = props.chunks or {}
   if #chunks > 0 and not ref.current then ref.current = M.new(props.stream) end
   local stream = ref.current
-  if stream then stream:append(chunks) end
+  if stream then
+    stream:append(chunks)
+    local source = require("weave.transcript_feedback").source(props.store, props.record,
+      props.stream == "recorded result" and "tool.output" or "tool." .. props.stream,
+      function() return C.clean(table.concat(chunks), nil, true) end)
+    if source then
+      vim.b[stream.bufnr].weave_transcript = true
+      require("fibrous.sources").raw(stream.bufnr, source)
+    end
+  end
   ctx.use_effect(function()
     if stream then
       stream:schedule_sync()

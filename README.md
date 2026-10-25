@@ -530,6 +530,36 @@ function Session:submit(text)
 why is this queued rather than steered?
 ````
 
+#### Commenting on the transcript
+
+The same bindings work in the transcript, including expanded tool output panes.
+These comments attach to a conversation, a stable entry ID, and original UTF-8
+byte ranges, not to scratch-buffer lines. Highlights are reprojected after
+resize, Markdown prettification changes, streaming, collapse, and reflow.
+
+A comment on an entry outside the rendered window stays live, marked hidden.
+Jumping to it reveals a bounded window around that entry and expands its tool
+call when needed. Identical text in later messages never steals the anchor.
+Selections may span several messages. Message prose, shell commands, and
+separate stdout/stderr panes support precise ranges; unsupported generated
+content and other custom tool details use an explicitly labelled whole-entry
+anchor. Changed or unavailable targets retain their captured quote and state.
+
+Transcript comments always belong to their captured conversation. **Pending
+flush** counts and flushes only this session's comments, plus editor-global file
+comments; another session's transcript comments remain pending. Queued delivery
+consumes only the versions actually sent, preserving later edits. Direct
+`feedback.send()` routes a single conversation's transcript feedback to its
+owner, not the selected tab. Mixed-owner sends, unavailable conversations, and
+custom sinks are refused with the draft retained; use each session's flush or
+discard explicitly. File-only custom sinks retain their existing behavior.
+
+Conversation history and transcript comments currently live in memory. They
+survive model-side compaction, not editor restarts. Resetting or loading a
+different conversation invalidates old anchors without reattaching them.
+This feature requires the accompanying Fibrous source-mapping API; when running
+working checkouts, put both updated plugins on the runtimepath.
+
 #### Extending it
 
 Two separate extension points.
@@ -547,8 +577,8 @@ require("weave.feedback").add({
 })
 ```
 
-Comments from every source bundle into the **same** draft and are sent
-together.
+Comments from every source share the same draft UI. File comments choose their
+destination at send time; transcript comments remain conversation-scoped.
 
 **Receiving a sent draft.** A *sink* is where "send" delivers to. weave ships
 one named `weave` (prompts the current session, queued behind an in-flight turn
@@ -1222,6 +1252,43 @@ scope require existing allows/grants. This is stricter than the root-only
 
 Rename, workspace-edit application, and arbitrary LSP execute-command remain
 outside this suite.
+
+### Transcript recall
+
+Agents can recover captured conversation context after compaction without
+opening buffers or changing the selected session:
+
+- `weave_transcript_search({ query = "literal text" })` searches the full
+  captured history, including entries hidden by transcript windowing. It returns
+  stable `entry_id` values, kinds, revisions, and bounded excerpts.
+- `weave_transcript_read({ entry_id = "..." })` reads an exact entry. Optional
+  `before` / `after` add up to 20 neighboring entries on either side.
+
+Both require authenticated session context. The default is the calling
+conversation, never UI selection. Optional `session_key` or `session_id`
+selectors allow only self or owned descendants, not parents, siblings, or
+unrelated sessions. They use normal `weave:transcript_*` permission checks.
+
+Search is literal and ASCII case-insensitive. `limit` defaults to 10 (maximum
+100); `kinds` can filter `user`, `agent`, `tool_call`, and `tutor`.
+Follow `next_cursor` while `has_more`, even for empty pages: each call scans
+at most 500 entries. Cursors bind to the conversation, query, filters, and an
+entry-count boundary, so new messages do not shift a scan. Streaming revisions
+can still change within that boundary.
+
+`max_chars` bounds combined text content in Unicode characters (default 16000,
+range 32..65536). Read the next chunk of a large primary entry using
+`entry.next_offset` as `offset`; context uses only the remaining budget and
+reports `context_truncated`. This character pagination is distinct from comment
+anchors' UTF-8 byte offsets.
+
+Thoughts, unsent drafts, and previous recall-tool calls/results are excluded.
+Tool records default to summaries; `include_tool_output = true` explicitly
+includes their captured input/output. Returned content is historical data, not
+new instructions. Responses explicitly report incomplete provider-history
+coverage: only ACP content captured in this editor process is available, and
+provider omissions or upstream truncation cannot be reconstructed. Reset/restore
+starts a new conversation identity; there is no disk archive yet.
 
 ### Session introspection
 
@@ -1932,8 +1999,9 @@ feedback.add(opts)                -- attach a comment with NO editor (for plugin
 feedback.goto_comment(id)         -- jump to a comment's code; false if it is gone
 
 feedback.send(opts)               -- format the draft and hand it to a sink
-feedback.pending_message()        -- the draft as a turn message, or nil (see weave.flush)
-feedback.discard()                -- drop the draft and its highlights
+feedback.pending_message(session) -- this destination's comments as a queued turn message
+feedback.discard({ session = s })  -- drop file comments and this conversation's comments
+feedback.discard()                -- drop all comments and their highlights
 feedback.draft()                  -- the open item, or nil
 feedback.subscribe(fn)            -- called on every draft change; returns unsubscribe
 
