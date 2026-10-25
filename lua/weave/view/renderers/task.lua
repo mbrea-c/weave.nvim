@@ -114,7 +114,8 @@ function M.Recorded(_, props)
   local panes = {}
   for _, name in ipairs({ "stdout", "stderr", "recorded result" }) do
     if data[name] and data[name][1] ~= "" then
-      panes[#panes + 1] = { comp = TaskOutput.Pane, key = name, props = { stream = name, chunks = data[name], block = props.block } }
+      panes[#panes + 1] = { comp = TaskOutput.Pane, key = name,
+        props = { stream = name, chunks = data[name], block = props.block, store = props.store } }
     end
   end
   return { comp = ui.col, props = { gap = 1 }, children = panes }
@@ -143,7 +144,8 @@ function M.Body(ctx, props)
   local panes = {}
   for _, name in ipairs({ "stdout", "stderr" }) do
     if #(task[name] or {}) > 0 then
-      panes[#panes + 1] = { comp = TaskOutput.Pane, key = name, props = { stream = name, chunks = task[name], block = props.block } }
+      panes[#panes + 1] = { comp = TaskOutput.Pane, key = name,
+        props = { stream = name, chunks = task[name], block = props.block, store = props.store } }
     end
   end
   if #panes == 0 then rows[#rows + 1] = C.line("No output received yet.")

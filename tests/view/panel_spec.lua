@@ -206,7 +206,7 @@ describe("view.panel shell", function()
     vim.api.nvim_win_set_cursor(handle.transcript.winid, { row, 2 })
     press("<CR>")
     assert.is_true(store.state.expanded.t1)
-    -- za is the fold-flavoured alias for the same activation
+    -- The separate fold action also works while still on the control.
     press("za")
     assert.falsy(store.state.expanded.t1)
     handle.close()

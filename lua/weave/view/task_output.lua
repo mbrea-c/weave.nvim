@@ -2,6 +2,7 @@
 -- Fibrous owns the subwindows; each pane owns its buffer and follow state.
 local ui = require("fibrous.inline.components")
 local C = require("weave.view.renderers.common")
+local Keys = require("weave.keys")
 local M = { MAX_ROWS = 10, HL = "WeaveTaskOutput", BORDER_HL = "WeaveTaskOutputBorder" }
 
 local own_highlight
@@ -207,12 +208,17 @@ function M.Pane(ctx, props)
   ctx.use_effect(function()
     if stream and props.block then
       local block = props.block
-      require("weave.keys").map(stream.bufnr, "peek", function()
+      Keys.map(stream.bufnr, "peek", function()
         require("weave.view.peek").open(require("weave.utils.json").pretty(block),
           require("weave.view.tool_call").tool_tag(block), "json")
       end)
+      if props.store and block.tool_call_id then
+        Keys.map(stream.bufnr, "toggle_tool_call", function()
+          props.store:toggle_tool_call(block.tool_call_id)
+        end)
+      end
     end
-  end, { stream or false, props.block or false })
+  end, { stream or false, props.block or false, props.store or false })
   if not stream or #chunks == 0 then return nil end
   return { comp = ui.raw_buffer, props = {
     bufnr = stream.bufnr, render = "always", wrap = true, capture_cursor = true, insert_on_click = false,

@@ -248,14 +248,17 @@ end
 --- weave.view.tool_call — see its header for the subrenderer/override
 --- contract. This just forwards the store slice it was memo'd on.
 ---
---- The peek key rides on a wrapper col rather than on the rendering, so it
---- covers a REGISTERED renderer's entry too: whatever someone else chose to
---- draw, K still shows the call weave actually received.
+--- Entry keys ride on a wrapper col so they cover registered renderers too:
+--- K inspects the original call, and the fold action works anywhere in the
+--- entry without changing the disclosure's Enter/click activation.
 --- @param props { store: weave.store.SessionStore, block: table, expanded: boolean, awaiting: boolean, show_diff: boolean }
 function M.ToolCallEntry(_, props)
   return {
     comp = ui.col,
-    props = { on_key = tool_peek_keys(props.block) },
+    props = { on_key = vim.tbl_extend("force", tool_peek_keys(props.block),
+      Keys.on_key("toggle_tool_call", function()
+        props.store:toggle_tool_call(props.block.tool_call_id)
+      end)) },
     children = { { comp = ToolCall.Dispatch, props = props } },
   }
 end

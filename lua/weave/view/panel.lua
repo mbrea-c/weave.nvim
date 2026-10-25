@@ -172,10 +172,9 @@ function M.open(opts)
     -- relayouts the canvas instead of moving a float vim already redrew.
     render = "buffer",
     mode = "fixed",
-    -- Route the transcript's peek key(s) to components' on_key handlers: over
-    -- any entry it opens that entry's raw source in the peek modal (separate from
-    -- <CR>/tool-call activation, and no hover, since it keys off on_key not role).
-    keys = Keys.lhs_list("peek"),
+    -- Entry actions route independently of Enter/click activation: peek works
+    -- on every entry; folding works across the tool header and body.
+    keys = vim.list_extend(Keys.lhs_list("peek"), Keys.lhs_list("toggle_tool_call")),
   })
 
   local group = vim.api.nvim_create_augroup("WeavePanel_" .. app.host_winid, { clear = true })
@@ -298,9 +297,6 @@ function M.open(opts)
   apply_maps(app.bufnr)
   if transcript.bufnr then
     apply_maps(transcript.bufnr)
-    -- za on a tool-call disclosure = the familiar fold key, bound to the same
-    -- activation <CR> performs (tool-call folds are store state, not folds).
-    Keys.map(transcript.bufnr, "toggle_tool_call", "<CR>", { remap = true })
   end
   if input_bufnr then
     apply_maps(input_bufnr)

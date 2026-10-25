@@ -70,7 +70,7 @@ M.ACTIONS = {
 
   -- transcript entries (fibrous on_key routing, not buffer keymaps)
   { name = "peek", scope = "transcript", desc = "peek raw source" },
-  -- rebound to the activation <CR> performs (tool-call folds are store state)
+  -- Entry-wide folding, independent of disclosure activation (<CR>/click).
   { name = "toggle_tool_call", scope = "transcript", desc = "toggle tool call" },
 
   -- weave's floating windows (session modal/details, peek, full task list)
