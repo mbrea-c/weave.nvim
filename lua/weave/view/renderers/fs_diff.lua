@@ -31,8 +31,14 @@ local function render(_, props)
   local old, new, path = snap and snap.old, snap and snap.new, snap and snap.path or block.file_path or input.path
   local reported = not snap and type(block.diff) == "table"
     and type(block.diff.old) == "table" and type(block.diff.new) == "table"
-  local requested = not snap and not reported
-  if reported then old, new = block.diff.old, block.diff.new
+  local result = C.output.text(block)
+  local created = not snap and not reported and ToolCall.weave_tool(block) == "write"
+    and block.status == "completed" and not C.output.failed(block) and type(input.content) == "string"
+    and result and result:match("^wrote %d+ lines to ")
+    and result:match("\n%[weave write: created%]\n%[weave change: %x+%-%d+%]%s*$")
+  local requested = not snap and not reported and not created
+  if created then old, new = {}, input.content == "" and {} or split(input.content)
+  elseif reported then old, new = block.diff.old, block.diff.new
   elseif not snap and type(input.old_string) == "string" and type(input.new_string) == "string" then
     old, new = split(input.old_string), split(input.new_string)
   elseif not snap and not props.store and type(input.path) == "string" and type(input.content) == "string" then
@@ -42,11 +48,20 @@ local function render(_, props)
   return C.entry(props, function()
     if props.show_diff == false then return nil end
     if not old or not new then
+      if type(input.content) == "string" then
+        local waiting = block.status == "pending" or block.status == "in_progress"
+        local label = C.output.failed(block) and "Write failed; requested content only (previous content unavailable)."
+          or waiting and "Requested content (previous content unavailable)."
+          or "Written content (previous content unavailable; not a before/after diff)."
+        return C.column({ C.line(label), { comp = C.Code, props = { code = input.content, path = path,
+          max_lines = not props.expanded and ToolCall.DIFF_PREVIEW_MAX_LINES or nil } } })
+      end
       return C.column({ C.line((block.status == "pending" or block.status == "in_progress")
         and "Waiting for change result..." or "Diff unavailable: original content was not recorded; K for details.") })
     end
     local label = C.output.failed(block) and (snap and "Call reported failure; recorded filesystem change shown."
         or "Call reported failure; requested/reported change shown.")
+      or created and "Created file (recorded tool result)."
       or requested and "Requested change (fragment-relative lines; application not established by this preview)."
       or reported and "Provider-reported change (recorded ACP diff)."
       or "Applied change (recorded snapshot)."

@@ -6,6 +6,7 @@
 
 local TaskStore = require("weave.task_store")
 local Tools = require("weave.tools.tasks")
+local function text(result) return require("weave.tool_output").text({ output = result }) end
 
 --- Pump until the task leaves "running" (or ms elapse).
 local function wait_done(task, ms)
@@ -73,7 +74,7 @@ describe("bound task ownership", function()
     assert.has_error(function() Tools.kill.handler({ id = task.id }, cb) end)
     assert.has_error(function() Tools.wait.handler({ id = task.id }, function() end, cb) end)
     assert.is_nil(Tools.list.handler({ status = "all" }, cb):find("private-task-output", 1, true))
-    assert.truthy(Tools.status.handler({ id = task.id }, ca):find("private-task-output", 1, true))
+    assert.truthy(text(Tools.status.handler({ id = task.id }, ca)):find("private-task-output", 1, true))
   end)
 end)
 
@@ -254,7 +255,7 @@ describe("task tools", function()
   local function capture()
     local box = {}
     return function(ret)
-      box.ret = ret
+      box.result, box.ret = ret, text(ret)
     end, box
   end
 
@@ -335,7 +336,7 @@ describe("task tools", function()
     vim.wait(5000, function()
       return TaskStore.stdout_text(task) ~= ""
     end, 10)
-    local report = Tools.status.handler({ id = task.id })
+    local report = text(Tools.status.handler({ id = task.id }))
     assert.truthy(report:find("running", 1, true))
     assert.truthy(report:find("now", 1, true))
     TaskStore.kill(task.id)
@@ -362,7 +363,7 @@ describe("task tools", function()
 
   it("task_kill terminates and reports the escalation contract", function()
     local task = assert(TaskStore.start({ command = "sleep 5" }))
-    local ret = Tools.kill.handler({ id = task.id })
+    local ret = text(Tools.kill.handler({ id = task.id }))
     assert.truthy(ret:find("SIGTERM", 1, true))
     wait_done(task)
     assert.equal("killed", task.status)

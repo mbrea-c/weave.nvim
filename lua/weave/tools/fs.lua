@@ -331,14 +331,21 @@ M.write = {
       error("`content` must be a string", 0)
     end
     local target = resolve(args)
-    local old
+    local old, created
     if target.bufnr then
       old = vim.api.nvim_buf_get_lines(target.bufnr, 0, -1, false)
-    elseif not vim.uv.fs_stat(target.path) then
-      old = {}
+      local name = vim.api.nvim_buf_get_name(target.bufnr)
+      if name ~= "" and (#old == 0 or #old == 1 and old[1] == "") then
+        local stat, _, code = vim.uv.fs_stat(name)
+        created = not stat and code == "ENOENT"
+      end
     else
-      local ok, before = pcall(read_disk_lines, target.path)
-      if ok then old = before end
+      local stat, _, code = vim.uv.fs_stat(target.path)
+      if not stat and code == "ENOENT" then old, created = {}, true
+      else
+        local ok, before = pcall(read_disk_lines, target.path)
+        if ok then old = before end
+      end
     end
     -- Preserve the compatibility lookup for direct Lua users, not as the
     -- authoritative history for managed sessions.
@@ -347,6 +354,7 @@ M.write = {
     local where = land(target, lines, args.content)
     local path = target.path or (target.bufnr and vim.api.nvim_buf_get_name(target.bufnr))
     return ("wrote %d lines to %s"):format(#lines, where)
+      .. (created and "\n[weave write: created]" or "")
       .. Snapshots.record(ctx, old, lines, { path = path ~= "" and path or nil, bufnr = target.bufnr })
   end,
 }

@@ -1461,13 +1461,18 @@ paths, unsaved edits, and every occurrence of a replace-all edit. A short
 operation, even for identical repeated writes. Before/after source stays
 editor-side, retained with its owning conversation rather than in a global
 32-entry history. Reset/restore clears those captures; they are not persisted
-across editor restarts. Missing captures are reported as unavailable, never
-diffed against an invented empty file. Legacy edits can show their requested
-fragment, explicitly labeled as such, including failed/pending operations.
-The `show_diffs` preference hides both collapsed and expanded diffs.
+across editor restarts. Writes to confirmed new files also record a creation
+marker, allowing a creation diff after the capture is lost. Other writes with
+missing history show their content, explicitly labeled as not a before/after
+diff, rather than inventing an empty original file. Pending or failed writes
+show requested content only. Legacy edits can show their requested fragment,
+explicitly labeled as such, including failed/pending operations.
+The `show_diffs` preference hides both collapsed and expanded change previews.
 
-Managed task responses include an editor-qualified `[weave task: ...]`
-reference. Live previews require that reference, the reported task ID, and an
+Managed task responses retain their readable text and also return MCP
+`structuredContent` with explicit command, status, stdout, and stderr fields.
+They include an editor-qualified `[weave task: ...]` reference. Live previews
+require that reference, the reported task ID, and an
 owning conversation or descendant task. The renderer never joins by command:
 two identical commands, unrelated sessions, revoked contexts, or restored IDs
 must not cross-associate. Only expanded calls subscribe to live task output.
@@ -1490,9 +1495,12 @@ ANSI CSI escapes are removed and stdout/stderr are not interleaved.
 The `WeaveTaskOutput` highlight controls the pane background/foreground and
 `WeaveTaskOutputBorder` its border. Explicit user highlights take precedence;
 transparent themes without a background remain transparent. Theme changes update
-the derived background. Recorded results with explicit stdout/stderr fields use
-separate panes too. Unseparated historical text is labeled **recorded result**,
-without guessing stream boundaries or associating it with a live process.
+the derived background. Recorded results use separate panes without requiring
+a live task association: explicit stdout/stderr fields take precedence, and
+standard text-only task reports are split at their stream headings. Ambiguous
+reports, including duplicate headings in output, remain intact in a
+**recorded result** pane rather than guessing stream boundaries. Historical
+output never establishes an association with a live process.
 
 Open full output bypasses the ordinary task popup's 200-line-per-stream tail
 cap and provides all retained stdout/stderr in a scrollable view.

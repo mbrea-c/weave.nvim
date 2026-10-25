@@ -6,6 +6,7 @@ local TerminalTasks = require("weave.view.terminal_tasks")
 local ToolCall = require("weave.view.tool_call")
 local C = require("weave.view.renderers.common")
 local TaskOutput = require("weave.view.task_output")
+local TaskResult = require("weave.view.renderers.task_result")
 local M = { PREVIEW_LINES = 8 }
 local supported = { task_start = true, task_status = true, task_wait = true, task_kill = true, task_list = true }
 
@@ -108,18 +109,8 @@ local function runtime(task)
   return math.max(0, (task.finished_at or os.time()) - task.started_at) .. "s"
 end
 
-function M.Recorded(ctx, props)
-  local data = C.cached(ctx, props.block, function(block)
-    local explicit = C.output.json(block, function(value)
-      return type(value.stdout) == "string" or type(value.stderr) == "string"
-    end)
-    if explicit then
-      return { stdout = type(explicit.stdout) == "string" and { explicit.stdout } or nil,
-        stderr = type(explicit.stderr) == "string" and { explicit.stderr } or nil }
-    end
-    local text = C.output.text(block)
-    return text and { ["recorded result"] = { (text:gsub(" %[%s*weave task: [%w%-]+%]", "")) } } or {}
-  end)
+function M.Recorded(_, props)
+  local data = props.recorded_streams
   local panes = {}
   for _, name in ipairs({ "stdout", "stderr", "recorded result" }) do
     if data[name] and data[name][1] ~= "" then
@@ -132,6 +123,7 @@ end
 function M.Body(ctx, props)
   if ToolCall.weave_tool(props.block) == "task_list" then return M.List({}, props) end
   local task = use_task(ctx, props)
+  local recorded = C.cached(ctx, props.block, TaskResult.parse)
   if not task then
     local block = props.block
     local text, own = C.output.text(block), supported[ToolCall.weave_tool(block)]
@@ -139,7 +131,11 @@ function M.Body(ctx, props)
       or "Waiting for reported task ID; live output is not yet associated.")
       or "Recorded command output (no live task association).") }
     if C.output.failed(block) then rows[#rows + 1] = C.line("Command call failed.", "DiagnosticWarn") end
-    rows[#rows + 1] = { comp = M.Recorded, props = props }
+    if recorded.status_text then rows[#rows + 1] = C.line(C.clean(recorded.status_text, 2048)) end
+    if recorded.note then rows[#rows + 1] = C.line(C.clean(recorded.note, 2048), "DiagnosticWarn") end
+    local data = { stdout = recorded.stdout and { recorded.stdout }, stderr = recorded.stderr and { recorded.stderr },
+      ["recorded result"] = recorded.recorded and { recorded.recorded } }
+    rows[#rows + 1] = { comp = M.Recorded, props = vim.tbl_extend("force", {}, props, { recorded_streams = data }) }
     return C.column(rows)
   end
   local glyph, hl = TerminalTasks.flag(task)
@@ -167,10 +163,11 @@ function M.Details(_, props)
   if ToolCall.weave_tool(props.block) == "task_list" then return M.List({}, props) end
   local input = type(props.block.input) == "table" and props.block.input or {}
   local task = M.task_for(props.block, props.store)
-  local command = task and task.command or type(input.command) == "string" and input.command
+  local recorded = not task and TaskResult.parse(props.block) or {}
+  local command = task and task.command or recorded.command or type(input.command) == "string" and input.command
     or type(input.cmd) == "string" and input.cmd
   local rows = {}
-  local cwd = task and task.cwd or input.cwd
+  local cwd = task and task.cwd or recorded.cwd or input.cwd
   if command then
     rows[#rows + 1] = { comp = C.Code, props = {
       code = command, lang = "bash", title = "Shell command (bash)", line_numbers = false,

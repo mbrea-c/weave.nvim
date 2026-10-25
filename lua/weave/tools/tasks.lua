@@ -37,11 +37,27 @@ local function status_line(task)
   return stamp(task, ("task %d: exited (code %d)"):format(task.id, task.exit_code or 0))
 end
 
+-- Preserve the readable report while also exposing explicit stream boundaries.
+-- Providers may forward either rawOutput or only the report's text to ACP.
+local function result(task, text, note)
+  local out, err = TaskStore.stdout_text(task), TaskStore.stderr_text(task)
+  return {
+    content = { { type = "text", text = text } }, isError = false,
+    structuredContent = {
+      kind = "weave_task_result", version = 1, id = task.id, receipt = task.receipt,
+      command = task.command, cwd = task.cwd, status = task.status, status_text = status_line(task),
+      pid = task.pid, exit_code = task.exit_code, signal = task.signal,
+      stdout = tail(out), stderr = tail(err), stdout_truncated = #out > MAX_STREAM_BYTES,
+      stderr_truncated = #err > MAX_STREAM_BYTES, timed_out = note ~= nil, note = note,
+    },
+  }
+end
+
 --- The full report: status line, command, both streams (tail-truncated).
-local function render(task)
+local function render(task, note)
   local out = TaskStore.stdout_text(task)
   local err = TaskStore.stderr_text(task)
-  return table.concat({
+  local text = table.concat({
     status_line(task),
     "command: " .. task.command,
     "",
@@ -51,6 +67,8 @@ local function render(task)
     "--- stderr ---",
     err ~= "" and tail(err) or "(empty)",
   }, "\n")
+  if note then text = text .. "\n\n" .. note end
+  return result(task, text, note)
 end
 
 local function visible(task, ctx)
@@ -108,22 +126,17 @@ M.start = {
       error(err, 0)
     end
     if not args.blocking then
-      respond(stamp(task,
+      respond(result(task, stamp(task,
         ("task %d started (pid %d): %s\ncheck it with weave_task_status, block on it with weave_task_wait, stop it with weave_task_kill"):format(
           task.id, task.pid, task.command
-        )))
+        ))))
       return
     end
     local timeout = tonumber(args.timeout_ms) or DEFAULT_TIMEOUT_MS
     TaskStore.wait(task.id, timeout, function(t, timed_out)
       if timed_out then
-        respond(
-          render(t)
-            .. ("\n\n(still running after %dms; it continues in the background: weave_task_status / weave_task_wait / weave_task_kill with id %d)"):format(
-              timeout,
-              t.id
-            )
-        )
+        respond(render(t, ("(still running after %dms; it continues in the background: weave_task_status / weave_task_wait / weave_task_kill with id %d)"):format(
+          timeout, t.id)))
       else
         respond(render(t))
       end
@@ -166,7 +179,7 @@ M.wait = {
     local timeout = tonumber(args.timeout_ms) or DEFAULT_TIMEOUT_MS
     TaskStore.wait(task.id, timeout, function(t, timed_out)
       if timed_out then
-        respond(render(t) .. ("\n\n(still running after %dms; it continues in the background)"):format(timeout))
+        respond(render(t, ("(still running after %dms; it continues in the background)"):format(timeout)))
       else
         respond(render(t))
       end
@@ -187,9 +200,9 @@ M.kill = {
     if not ok then
       error(err, 0)
     end
-    return stamp(task, ("sent SIGTERM to task %d's process group; SIGKILL follows in %ds if it does not exit. Use weave_task_wait to confirm."):format(
+    return result(task, stamp(task, ("sent SIGTERM to task %d's process group; SIGKILL follows in %ds if it does not exit. Use weave_task_wait to confirm."):format(
       task.id, math.floor(TaskStore._sigkill_ms / 1000)
-    ))
+    )))
   end,
 }
 
