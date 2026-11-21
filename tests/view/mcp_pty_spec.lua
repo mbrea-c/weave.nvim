@@ -122,7 +122,7 @@ describe("MCP browser terminal rendering", function()
       assert.truthy(result.list:find("clankbox", 1, true))
       assert.truthy(result.catalogue:find("Tools (18)", 1, true))
       assert.equal(math.min(size[2] - 6, result.catalogue_rows), result.catalogue_height)
-      if size[1] == 201 then assert.equal(160, result.catalogue_width) end
+      if size[1] == 201 then assert.is_true(result.catalogue_width < 160) end
       assert.equal(1, result.tool_topline)
       assert.truthy(result.tool:find("weave_tool_18", 1, true))
       assert.truthy(result.schema:gsub("%s", ""):find("readable_tail", 1, true))

@@ -142,11 +142,11 @@ function M.width()
   return math.max(1, math.min(vim.o.columns - 6, math.max(80, math.floor(vim.o.columns * 0.8))))
 end
 
-local function geometry(rows)
+local function geometry(rows, fitted_width)
   local usable = vim.o.lines - vim.o.cmdheight
   local limit = math.max(1, math.min(vim.o.lines - 6, usable - 2))
   local height = math.max(1, math.min(rows or limit, limit))
-  local width = M.width()
+  local width = math.min(fitted_width or math.huge, M.width())
   return {
     width = width, height = height,
     row = math.max(0, math.floor((usable - height - 2) / 2)),
@@ -166,7 +166,7 @@ local function on_resize(win, callback)
 end
 
 ---@class weave.view.PopupPolicy
----@field stable? boolean Keep the viewport height steady when content changes.
+---@field stable? boolean Keep the full width and height when content changes.
 ---@field preferred_height? fun(props: table): integer Natural height for a fixed layout with a scrolling child.
 ---@field on_unmount? fun()
 
@@ -181,14 +181,17 @@ function M.mount(component, props, policy)
   local rect = geometry(preferred and preferred(props))
   local opts = vim.tbl_extend("force", rect, {
     mode = preferred and "fixed" or "scroll", border = "rounded", backdrop = true,
+    fit_width = not policy.stable,
     on_unmount = policy.on_unmount,
   })
+  if opts.fit_width then opts.col = nil end -- Fibrous centers the actual fitted window.
   local app = require("fibrous.inline.mount").floating(component, props, opts)
   local function apply(rows)
     local next_rect = geometry(rows)
     if vim.deep_equal(rect, next_rect) then return end
     rect = next_rect
     for key, value in pairs(rect) do opts[key] = value end
+    if opts.fit_width then opts.col = nil end
     app.relayout()
   end
   local function fit()
@@ -248,8 +251,21 @@ function M.open_buffer(buf, config, policy)
       apply(bounds)
       return
     end
-    if rect.width ~= bounds.width then apply(geometry(rect.height)) end
-    apply(geometry(vim.api.nvim_win_text_height(win, { max_height = bounds.height }).all))
+    -- Peek is read-only. Measure in its window so tabs use its tabstop, and
+    -- stop scanning as soon as a line needs the full width.
+    local width = vim.api.nvim_win_call(win, function()
+      local widest = math.max(1, vim.fn.strdisplaywidth(config.title or ""))
+      local count = vim.api.nvim_buf_line_count(buf)
+      for start = 0, count - 1, 128 do
+        for _, line in ipairs(vim.api.nvim_buf_get_lines(buf, start, math.min(start + 128, count), false)) do
+          widest = math.max(widest, vim.fn.strdisplaywidth(line))
+          if widest >= bounds.width then return bounds.width end
+        end
+      end
+      return math.min(widest, bounds.width)
+    end)
+    if rect.width ~= width then apply(geometry(rect.height, width)) end
+    apply(geometry(vim.api.nvim_win_text_height(win, { max_height = bounds.height }).all, width))
   end
   fit()
   on_resize(win, fit)

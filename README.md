@@ -159,16 +159,15 @@ This layout requires fibrous's inline `overflow = "hidden"` support.
 
 ### Popup sizing
 
-Weave sizes its popups against the whole editor. On wide screens they use 80%
-of the columns (160 in a 201-column editor). On narrow screens they use the
-available width with room for the border and margins. Lists, detail pages and
-Peek fit the height of the rendered content, including wrapped lines. Longer
-content scrolls. Navigating between MCP pages or changing the editor size
-refits the popup automatically.
+Lists, detail pages and Peek fit their width to the content and their height
+to the resulting rows, including wrapped lines. The width ceiling is 80% on
+wide screens (160 columns in a 201-column editor). Narrow screens use the
+available width with room for borders and margins. Changing pages or receiving
+new content refits the popup automatically. Tall content scrolls.
 
-Live task output, the feedback editor and the permission preset editor keep a
-steady viewport while output arrives or you type. They still resize with the
-editor.
+Live task output, the feedback editor and the permission preset editor always
+use the full width allowed by that same policy. Their width and height stay
+steady while output arrives or you type. They still resize with the editor.
 
 ### Keymaps (inside the panel)
 

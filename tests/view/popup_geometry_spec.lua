@@ -20,15 +20,17 @@ describe("popup geometry", function()
     local app = Sidebar.open_tasks_list(store)
     close = app.unmount
     local function height() return vim.api.nvim_win_get_height(app.winid) end
-    assert.equal(160, vim.api.nvim_win_get_width(app.winid))
+    local empty_width = vim.api.nvim_win_get_width(app.winid)
+    assert.is_true(empty_width < 160)
     assert.equal(vim.api.nvim_buf_line_count(app.bufnr), height())
     local empty = height()
     store:set_plan({ { content = ("a long plan item "):rep(90), status = "pending" } }, "acp")
     assert.is_true(vim.wait(500, function()
-      return height() > empty and height() == vim.api.nvim_buf_line_count(app.bufnr)
+      return vim.api.nvim_win_get_width(app.winid) == 160
+        and height() > empty and height() == vim.api.nvim_buf_line_count(app.bufnr)
     end))
     store:set_plan({}, "acp")
-    assert.is_true(vim.wait(500, function() return height() == empty end))
+    assert.is_true(vim.wait(500, function() return height() == empty and vim.api.nvim_win_get_width(app.winid) == empty_width end))
   end)
 
   it("uses the available width for feedback labels", function()
@@ -60,7 +62,7 @@ describe("popup geometry", function()
     vim.o.columns, vim.o.lines = 36, 14
     vim.api.nvim_exec_autocmds("VimResized", {})
     assert.is_true(vim.wait(500, function()
-      return vim.api.nvim_win_get_width(app.winid) <= 30 and height() <= 8
+      return vim.api.nvim_win_get_width(app.winid) == 30 and height() <= 8
     end))
   end)
 
@@ -73,6 +75,12 @@ describe("popup geometry", function()
     vim.api.nvim_win_call(win, function() vim.cmd("noautocmd close") end)
     vim.api.nvim_exec_autocmds("VimResized", {})
     assert.equal(before, listeners())
+  end)
+
+  it("fits a short native peek to its text and border title", function()
+    local win = Peek.open("界x", "raw source")
+    close = function() vim.api.nvim_win_close(win, true) end
+    assert.equal(vim.fn.strdisplaywidth(" raw source "), vim.api.nvim_win_get_width(win))
   end)
 
   it("measures wrapped screen rows in native peek and refits at a new width", function()
