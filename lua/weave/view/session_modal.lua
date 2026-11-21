@@ -1,67 +1,158 @@
 -- Live registry forest. Only the tree scrolls; new/load actions stay pinned.
 local Float = require("weave.view.float")
 local ui = require("fibrous.inline.components")
+local Width = require("fibrous.inline.width")
 local Keys = require("weave.keys")
-local M = {}
 
-local function row_label(entry)
+local M = {}
+local CURRENT = "●"
+local FOLD_WIDTH = 3
+local STATUS = {
+  idle = { "Idle", "Comment" },
+  thinking = { "Thinking", "DiagnosticInfo" },
+  generating = { "Replying", "DiagnosticInfo" },
+  busy = { "Working", "DiagnosticInfo" },
+  running = { "Running", "DiagnosticInfo" },
+  queued = { "Queued", "Comment" },
+  provisioning = { "Starting", "DiagnosticInfo" },
+  waiting_for_approval = { "Approval", "DiagnosticWarn" },
+  completed = { "Done", "DiagnosticOk" },
+  failed = { "Failed", "DiagnosticError" },
+  cancelled = { "Cancelled", "Comment" },
+}
+
+local function one_line(text)
+  return vim.trim(text:gsub("%s+", " "))
+end
+
+local function row_content(entry)
   local state = entry.session:get_store().state
-  local title = entry.name or state.meta.title
-  if not title or title == "" then
-    title = "(no messages yet)"
+  local title = one_line(entry.name or state.meta.title or "")
+  if title == "" then
     for _, item in ipairs(state.entries) do
-      if item.kind == "user" then title = item.text:gsub("%s+", " "); break end
+      if item.kind == "user" then
+        title = one_line(item.text)
+        if title ~= "" then break end
+      end
     end
   end
-  if vim.fn.strchars(title) > 32 then title = vim.fn.strcharpart(title, 0, 31) .. "…" end
   local status = require("weave.subagents").status(entry.session) or state.status
-  if state.permission_count > 0 then status = "waiting for approval" end
-  return ("%s · %s · %s"):format(state.meta.provider or entry.provider, title, status:gsub("_", " "))
+  if state.permission_count > 0 then status = "waiting_for_approval" end
+  local display = STATUS[status] or { status:gsub("_", " "), "Comment" }
+  return title ~= "" and title or "(no messages yet)",
+    one_line(state.meta.provider or entry.provider), display[1], display[2]
+end
+
+local function ellipsis(text, cells)
+  if Width.str(text) <= cells then return text end
+  local room = cells - Width.str("…")
+  if room < 0 then return "" end
+  local bytes = 0
+  for cluster in Width.clusters(text) do
+    room = room - Width.char(cluster)
+    if room < 0 then break end
+    bytes = bytes + #cluster
+  end
+  return text:sub(1, bytes) .. "…"
+end
+
+local function label(text, hl, width)
+  return { comp = ui.label, props = { text = text, width = width, style = hl and { text_hl = hl } or nil } }
+end
+
+local function button(text, press, hl, width, primary)
+  return { comp = ui.button, props = {
+    label = text, on_press = press, width = width, theme = false,
+    style = {
+      text_hl = hl,
+      padding = primary and { x = 1 } or nil,
+      hl = primary and "Pmenu" or nil,
+      _hover = { hl = "FibrousButtonHover" },
+    },
+  } }
+end
+
+local function line(children, props)
+  return { comp = ui.row, props = props or { gap = 1 }, children = children }
+end
+
+local function title_column()
+  return Width.str(CURRENT) + FOLD_WIDTH + 2 -- marker, fold, and their gaps
+end
+
+local function columns(rows, cap, details)
+  local title, provider = Width.str("Title"), Width.str("Provider")
+  for _, row in ipairs(rows) do
+    title = math.max(title, Width.str(row.guide) + Width.str(row.title))
+    provider = math.max(provider, Width.str(row.provider))
+  end
+  -- Keep the title and actions visible when the editor is narrow. The full
+  -- provider name and status remain available in Session details.
+  provider = cap >= 54 and math.min(provider, 18) or 0
+  local status = cap >= 35 and 9 or 0
+  local actions = Width.str("✕") + (details and Width.str("ⓘ") + 1 or 0)
+  local occupied = title_column() + actions + 1
+    + (provider > 0 and provider + 1 or 0) + (status > 0 and status + 1 or 0)
+  title = math.max(1, math.min(title, cap - occupied))
+  return title, provider, status
 end
 
 local function Modal(_, props)
+  local cap = Float.width() - 2 -- one cell of inset on each side
+  local title_w, provider_w, status_w = columns(props.rows, cap, props.on_details ~= nil)
   local rows = {}
+  local marker_w = Width.str(CURRENT)
+  local function row_fields(marker, fold, title, provider, status, hl)
+    local cells = { marker, fold, title }
+    if provider_w > 0 then cells[#cells + 1] = label(ellipsis(provider, provider_w), "Comment", provider_w) end
+    if status_w > 0 then cells[#cells + 1] = label(ellipsis(status, status_w), hl, status_w) end
+    return cells
+  end
   for _, row in ipairs(props.rows) do
     local entry = row.entry
-    rows[#rows + 1] = {
-      comp = ui.row, key = entry.key, props = {},
-      children = {
-        { comp = ui.label, props = { text = string.rep("  ", row.depth)
-          .. (entry.key == props.selected_key and "● " or "  ") } },
-        row.branch and {
-          comp = ui.button,
-          props = { label = row.collapsed and "[+]" or "[-]",
-            on_press = function() props.on_toggle(entry.key) end },
-        } or { comp = ui.label, props = { text = "   " } },
-        { comp = ui.label, props = { text = " " } },
-        { comp = ui.button, props = { label = row_label(entry),
-          on_press = function() props.on_select(entry) end } },
-        { comp = ui.label, props = { text = " " } },
-        props.on_details and { comp = ui.button, props = { label = "ⓘ",
-          on_press = function() props.on_details(entry) end } }
-          or { comp = ui.label, props = { text = "" } },
-        { comp = ui.button, props = { label = "✕",
-          on_press = function() props.on_close_session(entry) end } },
-      },
-    }
+    local current = entry.key == props.selected_key
+    local guide = Width.str(row.guide) <= math.floor(title_w / 2) and row.guide or "… "
+    local children = row_fields(
+      label(current and CURRENT or "", "Special", marker_w),
+      row.branch and button(row.collapsed and "[+]" or "[-]", function() props.on_toggle(entry.key) end, "Special")
+        or label("", nil, FOLD_WIDTH),
+      button(ellipsis(guide .. row.title, title_w), function() props.on_select(entry) end,
+        current and "Title" or nil, title_w),
+      row.provider, row.status, row.status_hl)
+    if props.on_details then
+      children[#children + 1] = button("ⓘ", function() props.on_details(entry) end, "Comment")
+    end
+    children[#children + 1] = button("✕", function() props.on_close_session(entry) end, "Comment")
+    local item = line(children)
+    item.key = entry.key
+    rows[#rows + 1] = item
   end
+
+  local headings = label("")
   if #rows == 0 then
-    rows[1] = { comp = ui.label, props = { text = { { "  (no active sessions)", hl = "Comment" } } } }
+    rows[1] = label("No active sessions", "Comment")
+  else
+    headings = line(row_fields(
+      label("", nil, marker_w), label("", nil, FOLD_WIDTH), label("Title", "Comment", title_w),
+      "Provider", "Status", "Comment"))
   end
-  return { comp = ui.col, props = {}, children = {
-    { comp = ui.label, props = { text = { { "Sessions", hl = "Title" } } } },
-    { comp = ui.label, props = { text = "" } },
+  local actions = line({
+    button(cap >= 32 and "a  New session" or "a  New", props.on_new, nil, nil, true),
+    button(cap >= 23 and "o  Load saved" or "o  Load", props.on_load_saved, nil, nil, true),
+  })
+  local footer = { actions }
+  if cap >= 41 then footer[2] = label("q close", "Comment") end
+  return { comp = ui.col, props = { style = { padding = { x = 1 } } }, children = {
+    line({ label("Sessions", "Title"), label(("%d active"):format(props.count), "Comment") },
+      { justify = "space-between", gap = 2 }),
+    headings,
     { comp = ui.container, props = { grow = 1, scroll_x = false, on_create = props.on_tree_create },
       children = rows },
-    { comp = ui.label, props = { text = "" } },
-    { comp = ui.row, props = {}, children = {
-      { comp = ui.button, props = { label = "+ new session", on_press = props.on_new } },
-      { comp = ui.label, props = { text = "  " } },
-      { comp = ui.button, props = { label = "↺ load saved…", on_press = props.on_load_saved } },
-    } },
-    { comp = ui.label, props = { text = { { "<CR> select · [+]/[-] fold · ✕ close · q dismiss", hl = "Comment" } } } },
+    { comp = ui.label, props = { fill = function(width) return ("─"):rep(width) end, style = { text_hl = "FloatBorder" } } },
+    line(footer, { justify = "space-between", gap = 2 }),
   } }
 end
+
 
 --- Open a live, collapsible session tree for the current tab.
 --- Closing a parent requires confirmation and closes its entire subtree.
@@ -84,6 +175,19 @@ function M.open(opts)
     if app then app.unmount() end
   end
 
+  local function new_session()
+    close()
+    if opts.on_new then opts.on_new() end
+  end
+  local function load_saved()
+    close()
+    if opts.on_load_saved then opts.on_load_saved() end
+  end
+  local function map_footer(bufnr)
+    vim.keymap.set("n", "a", new_session, { buffer = bufnr, nowait = true, desc = "weave: new session" })
+    vim.keymap.set("n", "o", load_saved, { buffer = bufnr, nowait = true, desc = "weave: load saved session" })
+  end
+
   local function rows()
     local entries, by_parent, result = registry.list(), {}, {}
     for _, entry in ipairs(entries) do
@@ -91,15 +195,23 @@ function M.open(opts)
       by_parent[parent] = by_parent[parent] or {}
       table.insert(by_parent[parent], entry)
     end
-    local function visit(parent, depth)
-      for _, entry in ipairs(by_parent[parent] or {}) do
-        result[#result + 1] = { entry = entry, depth = depth,
-          branch = by_parent[entry.key] ~= nil, collapsed = collapsed[entry.key] == true }
-        if not collapsed[entry.key] then visit(entry.key, depth + 1) end
+    local function visit(parent, indent)
+      local siblings = by_parent[parent] or {}
+      for i, entry in ipairs(siblings) do
+        local last = i == #siblings
+        local title, provider, status, status_hl = row_content(entry)
+        result[#result + 1] = {
+          entry = entry, title = title, provider = provider, status = status, status_hl = status_hl,
+          guide = parent == 0 and "" or indent .. (last and "└─ " or "├─ "),
+          branch = by_parent[entry.key] ~= nil, collapsed = collapsed[entry.key] == true,
+        }
+        if not collapsed[entry.key] then
+          visit(entry.key, parent == 0 and "" or indent .. (last and "   " or "│  "))
+        end
       end
     end
-    visit(0, 0)
-    return result
+    visit(0, "")
+    return result, #entries
   end
 
   local function build_props()
@@ -112,10 +224,12 @@ function M.open(opts)
       end
     end
     last_selected = selected and selected.key
+    local visible, count = rows()
     return {
-      rows = rows(), selected_key = last_selected,
+      rows = visible, count = count, selected_key = last_selected,
       on_tree_create = function(bufnr, winid)
         tree.bufnr, tree.winid = bufnr, winid
+        map_footer(bufnr)
         Keys.map(bufnr, "close_float", close, { nowait = true, desc = "weave: close session tree" })
       end,
       on_toggle = function(key) collapsed[key] = not collapsed[key]; refresh() end,
@@ -135,13 +249,13 @@ function M.open(opts)
           end)
       end,
       on_details = opts.on_details and function(entry) close(); opts.on_details(entry) end or nil,
-      on_new = function() close(); if opts.on_new then opts.on_new() end end,
-      on_load_saved = function() close(); if opts.on_load_saved then opts.on_load_saved() end end,
+      on_new = new_session, on_load_saved = load_saved,
     }
   end
 
-  app = Float.mount(Modal, build_props(), {
-    preferred_height = function(props) return math.max(#props.rows, 1) + 5 end,
+  local initial = build_props()
+  app = Float.mount(Modal, initial, {
+    preferred_height = function(props) return math.max(#props.rows, 1) + 4 end,
     on_unmount = cleanup,
   })
   refresh = function()
@@ -157,6 +271,16 @@ function M.open(opts)
   Float.chrome(app, {
     close = close, desc = "weave: close session tree", keep_open = function() return confirming end,
   })
+  map_footer(app.bufnr)
+  if #initial.rows > 0 and tree.winid then
+    local index = 1
+    for i, row in ipairs(initial.rows) do
+      if row.entry.key == initial.selected_key then index = i; break end
+    end
+    local text = vim.api.nvim_buf_get_lines(tree.bufnr, index - 1, index, false)[1]
+    vim.api.nvim_set_current_win(tree.winid)
+    vim.api.nvim_win_set_cursor(tree.winid, { index, Width.cell_to_byte(text, title_column()) })
+  end
   return {
     bufnr = app.bufnr, winid = app.winid, tree = tree,
     close = close, refresh = refresh, is_open = function() return open end,

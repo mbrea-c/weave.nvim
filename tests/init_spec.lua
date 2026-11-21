@@ -208,6 +208,34 @@ describe("weave entrypoint", function()
     end
   end
 
+  it("opens from the global command and selects a session with no panel open", function()
+    local registry = require("weave.registry")
+    local entry = registry.add({
+      get_instance = function(_, ready)
+        local client = fake_client()
+        ready(client)
+        return client
+      end,
+    })
+    entry.session:get_store():set_meta({ title = "Pick me from the editor" })
+    pump()
+
+    assert.is_false(weave.is_open())
+    vim.cmd("Weave sessions")
+    local picker = vim.api.nvim_get_current_win()
+    local buf = vim.api.nvim_win_get_buf(picker)
+    local row, col = locate(buf, "Pick me from the editor")
+    assert.same({ row, col }, vim.api.nvim_win_get_cursor(picker))
+    press("<CR>")
+    pump()
+
+    assert.is_false(vim.api.nvim_win_is_valid(picker))
+    assert.rawequal(entry.session, weave.get_session())
+    assert.is_true(weave.is_open())
+    weave.stop()
+    pump()
+  end)
+
   it("the modal's ⓘ opens the details window; Open in panel swaps to that session", function()
     local Registry = require("weave.registry")
     local get = function(_n, on_ready)
@@ -329,7 +357,7 @@ describe("weave entrypoint", function()
     -- No injection here: sessions() must reuse the get_instance that open()
     -- was given (the demo relies on this — its agent is fully scripted).
     local modal = weave.sessions()
-    activate(modal, locate(modal.bufnr, "new session"))
+    activate(modal, locate(modal.bufnr, "New session"))
     pump()
     vim.ui.select = real_select
 
@@ -370,7 +398,7 @@ describe("weave entrypoint", function()
     end
 
     local modal = weave.sessions({ get_instance = get })
-    activate(modal, locate(modal.bufnr, "load saved"))
+    activate(modal, locate(modal.bufnr, "Load saved"))
     pump()
     vim.ui.select = real_select
 

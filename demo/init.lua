@@ -318,6 +318,7 @@ vim.cmd.edit(sample)
 -- weave binds nothing globally by design (see README), so the demo does it —
 -- which doubles as the copy-pasteable example.
 local feedback = require("weave.feedback")
+vim.keymap.set("n", ";;s", "<cmd>Weave sessions<CR>", { desc = "weave: pick a session" })
 vim.keymap.set("n", ";;cc", feedback.comment_line, { desc = "weave: comment this line" })
 vim.keymap.set("x", ";;cc", feedback.comment_selection, { desc = "weave: comment this selection" })
 vim.keymap.set("n", ";;ce", feedback.edit_comment, { desc = "weave: edit the comment here" })

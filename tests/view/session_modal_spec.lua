@@ -89,19 +89,51 @@ describe("view.session_modal", function()
     handle.close()
   end)
 
+  it("puts titles first, aligns metadata and actions, and focuses the current title", function()
+    local columns = vim.o.columns
+    vim.o.columns = 120
+    local a = Registry.add({ provider = "provider-a", get_instance = get_instance })
+    local b = Registry.add({ provider = "b", get_instance = get_instance })
+    a.session:get_store():set_meta({ title = "Explain the session picker and its keyboard navigation" })
+    b.session:get_store():set_meta({ title = "Review changes" })
+    Registry.select(b.key)
+
+    local handle = SessionModal.open({ on_select = function() end, on_details = function() end })
+    local body = vim.api.nvim_buf_get_lines(handle.tree.bufnr, 0, -1, false)
+    local focused = vim.api.nvim_get_current_win() == handle.tree.winid
+    local cursor = vim.api.nvim_win_get_cursor(handle.tree.winid)
+    local text = buffer_text(handle)
+    handle.close()
+    vim.o.columns = columns
+
+    local function column(line, token)
+      local pos = assert(line:find(token, 1, true), "missing " .. token)
+      return vim.fn.strdisplaywidth(line:sub(1, pos - 1))
+    end
+    assert.truthy(text:find("Provider", 1, true))
+    assert.truthy(body[1]:find("Explain the session picker and its keyboard navigation", 1, true))
+    assert.is_true(column(body[1], "Explain") < column(body[1], "provider-a"))
+    assert.equal(column(body[1], "provider-a"), column(body[2], "b"))
+    assert.equal(column(body[1], "ⓘ"), column(body[2], "ⓘ"))
+    assert.equal(column(body[1], "✕"), column(body[2], "✕"))
+    assert.is_true(focused)
+    assert.same({ 2, body[2]:find("Review changes", 1, true) - 1 }, cursor)
+  end)
+
   it("activating a row selects that session and closes the modal", function()
     local get = get_instance
     Registry.add({ provider = "prov-a", get_instance = get })
     local b = Registry.add({ provider = "prov-b", get_instance = get })
     pump()
 
+    b.session:get_store():set_meta({ title = "Release planner" })
     local picked
     local handle = SessionModal.open({
       on_select = function(entry)
         picked = entry
       end,
     })
-    activate(handle, locate(handle, "prov-b"))
+    activate(handle, locate(handle, "Release planner"))
     assert.rawequal(b, picked)
     assert.is_false(handle.is_open())
   end)
@@ -148,6 +180,26 @@ describe("view.session_modal", function()
     handle.close()
   end)
 
+  it("keeps footer actions accessible while the tree has focus", function()
+    Registry.add({ provider = "prov-a", get_instance = get_instance })
+    pump()
+    local called = {}
+    local opts = {
+      on_select = function() end,
+      on_new = function() called[#called + 1] = "new" end,
+      on_load_saved = function() called[#called + 1] = "load" end,
+    }
+    local new = SessionModal.open(opts)
+    vim.api.nvim_set_current_win(new.tree.winid)
+    vim.api.nvim_feedkeys("a", "xt", false)
+    new.close()
+    local load = SessionModal.open(opts)
+    vim.api.nvim_set_current_win(load.tree.winid)
+    vim.api.nvim_feedkeys("o", "xt", false)
+    load.close()
+    assert.same({ "new", "load" }, called)
+  end)
+
   it("new-session and load-saved actions reach their callbacks", function()
     Registry.add({ provider = "prov-a", get_instance = get_instance })
     pump()
@@ -162,7 +214,7 @@ describe("view.session_modal", function()
         called[#called + 1] = "load"
       end,
     })
-    activate(handle, locate(handle, "new session"))
+    activate(handle, locate(handle, "New session"))
     assert.same({ "new" }, called)
     assert.is_false(handle.is_open())
 
@@ -172,7 +224,7 @@ describe("view.session_modal", function()
         called[#called + 1] = "load"
       end,
     })
-    activate(handle, locate(handle, "load saved"))
+    activate(handle, locate(handle, "Load saved"))
     assert.same({ "new", "load" }, called)
     assert.is_false(handle.is_open())
   end)
@@ -201,7 +253,7 @@ describe("view.session_modal", function()
 
   it("q closes; an empty registry shows the placeholder", function()
     local handle = SessionModal.open({ on_select = function() end })
-    assert.truthy(buffer_text(handle):find("(no active sessions)", 1, true))
+    assert.truthy(buffer_text(handle):find("No active sessions", 1, true))
 
     vim.api.nvim_set_current_win(handle.winid)
     vim.api.nvim_feedkeys("q", "xt", false)

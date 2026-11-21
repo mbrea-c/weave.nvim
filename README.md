@@ -343,18 +343,26 @@ Sessions are **editor-global** (they keep running in the background) but
 **selected per tabpage** — each tab's panel shows that tab's selected session.
 Different sessions can run on different providers at the same time.
 
-Open the **session modal** with `;;s` or `:Weave sessions`:
+Open the **session picker** with `;;s` inside the panel or `:Weave sessions`
+from any buffer, even with the panel closed. To bind it globally, add this to
+your Neovim configuration:
 
-- Sessions form a live tree. `[+]` / `[-]` folds a branch; background children
-  appear without reopening the popup. The tree scrolls independently, with
-  new/load actions fixed beneath it.
-- Each row is a button: `<CR>` selects that session for the current tab.
-- `ⓘ` on a row opens that session's **details window** (below).
-- `✕` closes that session and all its descendants everywhere, deepest first.
-  Closing a parent asks for confirmation; unrelated roots keep running.
-- **+ new session** starts a fresh session on any configured provider.
-- **↺ load saved…** activates a previously saved session (from the provider's
-  history) into a new entry.
+```lua
+vim.keymap.set("n", "<leader><leader>s", "<cmd>Weave sessions<CR>", { desc = "Pick a Weave session" })
+```
+
+- The picker opens on this tab's current session, marked with `●`, or the first
+  session if none is selected. Use `j`/`k` to move through titles and `<CR>`
+  (or click) to open a session in the current tab.
+- Branch lines show parent-child relationships. `[+]` / `[-]` folds a branch.
+  New children appear live, and the tree scrolls independently of the footer.
+- Provider and status columns make it easier to scan the list. On narrow
+  screens the picker gives their space to the titles and row actions.
+- Use `<Tab>` / `<S-Tab>` or the mouse to reach row actions. `ⓘ` opens the
+  session's details. `✕` closes the session and its descendants everywhere,
+  asking for confirmation before closing a parent.
+- `a` opens **New session** and `o` opens **Load saved**. The same actions are
+  in the pinned footer. `q` or `<Esc>` dismisses the picker.
 
 `;;r` instead restores a saved session *in place*, over the current
 conversation in the panel.

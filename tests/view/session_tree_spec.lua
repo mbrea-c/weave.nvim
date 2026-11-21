@@ -82,7 +82,7 @@ describe("live session tree popup", function()
       request = { toolCall = { title = "Approval" }, options = {} }, respond = function() end,
     })
     pump()
-    assert.truthy(text(handle.tree.bufnr):find("waiting for approval", 1, true))
+    assert.truthy(text(handle.tree.bufnr):find("Approval", 1, true))
     handle.close()
   end)
 
@@ -90,7 +90,7 @@ describe("live session tree popup", function()
     for i = 1, 35 do add("root-" .. i) end
     pump()
     local handle = Modal.open({ on_select = function() end })
-    assert.truthy(text(handle.bufnr):find("+ new session", 1, true))
+    assert.truthy(text(handle.bufnr):find("New session", 1, true))
     assert.truthy(vim.api.nvim_buf_line_count(handle.tree.bufnr) > vim.api.nvim_win_get_height(handle.tree.winid))
     assert.truthy(vim.api.nvim_win_get_height(handle.winid) <= vim.o.lines - 4)
     handle.close()
