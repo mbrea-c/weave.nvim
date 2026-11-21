@@ -16,6 +16,7 @@
 -- follows the session store and speaks when the `brief` value actually
 -- changes.
 
+local Float = require("weave.view.float")
 local ui = require("fibrous.inline.components")
 local Logger = require("weave.utils.logger")
 local Settings = require("weave.settings")
@@ -207,17 +208,9 @@ end
 --- Open the settings window. Returns the fibrous app handle.
 --- @param opts { view?: weave.settings.Store, session?: weave.settings.Store }|nil
 function M.open(opts)
-  local mount = require("fibrous.inline.mount")
   local stores = M.resolve_stores(opts)
-  local size = #Settings.SPECS + #Settings.presets() + 12
-  local app = mount.floating(Window, { stores = stores }, {
-    width = 52,
-    height = math.min(size, math.max(vim.o.lines - 6, 8)),
-    mode = "scroll",
-    border = "rounded",
-    backdrop = true,
-  })
-  return require("weave.view.float").chrome(app, {
+  local app = Float.mount(Window, { stores = stores })
+  return Float.chrome(app, {
     close = function()
       app.unmount()
     end,

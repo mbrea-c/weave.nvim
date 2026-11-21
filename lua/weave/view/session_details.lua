@@ -9,7 +9,7 @@
 -- Metadata and config fields track the store live. Native dropdowns are keyed
 -- by their provider value and options so late fields and defaults are visible.
 
-local mount = require("fibrous.inline.mount")
+local Float = require("weave.view.float")
 local ui = require("fibrous.inline.components")
 local use_permissions = require("weave.view.use_permissions")
 local use_store = require("weave.view.use_store")
@@ -146,7 +146,6 @@ end
 function M.open(opts)
   local session = opts.session
   local store = session:get_store()
-  local kinds = session:config_kinds()
   local open = true
   local app
 
@@ -158,10 +157,7 @@ function M.open(opts)
     app.unmount()
   end
 
-  -- title + blank + ≤6 fact rows + blank + kinds + actions + hint, with two
-  -- rows of slack for facts (usage) that appear while the modal is up
-  local height = 8 + math.max(#kinds, 1) + (opts.on_open and 2 or 0) + 2
-  app = mount.floating(Details, {
+  app = Float.mount(Details, {
     store = store,
     get_kinds = function() return session:config_kinds() end,
     on_set = function(key, id)
@@ -171,15 +167,9 @@ function M.open(opts)
       close()
       opts.on_open()
     end or nil,
-  }, {
-    width = 56,
-    height = height,
-    mode = "fixed",
-    border = "rounded",
-    backdrop = true,
   })
 
-  require("weave.view.float").chrome(app, { close = close, desc = "weave: close session details" })
+  Float.chrome(app, { close = close, desc = "weave: close session details" })
 
   return {
     bufnr = app.bufnr,

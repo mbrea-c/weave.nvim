@@ -10,6 +10,7 @@
 -- weave.view.transcript): the rendered entry is a summary, and a summary is
 -- exactly where a long command or a big payload goes missing.
 
+local Float = require("weave.view.float")
 local M = {}
 
 --- Open the peek float over `text`. Plain nvim window (not a fibrous mount): it
@@ -30,23 +31,11 @@ function M.open(text, title, filetype)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = filetype or "markdown"
 
-  local width = math.min(math.floor(vim.o.columns * 0.8), 100)
-  local height = math.max(1, math.min(math.floor(vim.o.lines * 0.8), #lines))
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor",
-    width = width,
-    height = height,
-    row = math.floor((vim.o.lines - height) / 2),
-    col = math.floor((vim.o.columns - width) / 2),
+  local win = Float.open_buffer(buf, {
     style = "minimal",
-    border = "rounded",
     title = " " .. (title or "peek") .. " ",
     title_pos = "center",
-  })
-  -- wrap + linebreak so a long URL/line is fully readable without scrolling right
-  vim.wo[win].wrap = true
-  vim.wo[win].linebreak = true
-  vim.wo[win].breakindent = true
+  }, { window_options = { wrap = true, linebreak = true, breakindent = true } })
 
   local function close()
     if vim.api.nvim_win_is_valid(win) then
@@ -60,7 +49,7 @@ function M.open(text, title, filetype)
   -- entry is not a window you arrange things around: clicking back into the
   -- transcript to keep reading should not leave a stale copy of the old entry
   -- floating over the conversation.
-  require("weave.view.float").dismiss_on_unfocus(win, { on_unfocus = close })
+  Float.dismiss_on_unfocus(win, { on_unfocus = close })
   return win
 end
 

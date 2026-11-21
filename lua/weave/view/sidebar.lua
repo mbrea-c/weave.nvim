@@ -9,6 +9,7 @@
 -- no border labels); the settings rows come from the registry-shaped
 -- controls shared with weave.view.settings_window.
 
+local Float = require("weave.view.float")
 local ui = require("fibrous.inline.components")
 local SessionStore = require("weave.session_store")
 local Settings = require("weave.settings")
@@ -414,7 +415,6 @@ end
 --- every item, untruncated, live off the store; q/<Esc> closes.
 --- @param store weave.store.SessionStore
 function M.open_tasks_list(store)
-  local mount = require("fibrous.inline.mount")
   local function FullList(ctx)
     local state = use_store(ctx, store)
     local rows = { header(("Tasks (%d)"):format(#state.plan)) }
@@ -426,14 +426,8 @@ function M.open_tasks_list(store)
     end
     return { comp = ui.col, props = {}, children = rows }
   end
-  local app = mount.floating(FullList, {}, {
-    width = 60,
-    height = math.min(math.max(#store.state.plan + 2, 4), math.max(vim.o.lines - 6, 8)),
-    mode = "scroll",
-    border = "rounded",
-    backdrop = true,
-  })
-  return require("weave.view.float").chrome(app, {
+  local app = Float.mount(FullList, {})
+  return Float.chrome(app, {
     close = function()
       app.unmount()
     end,
@@ -592,25 +586,18 @@ end
 --- @param props table The same stores and callbacks as Sidebar.
 --- @return table app
 function M.open_overview(props)
-  local width = math.min(80, math.max(1, vim.o.columns - 6))
   local function Overview()
     return {
       comp = ui.col,
       props = { gap = 1, style = { padding = { x = 1 } } },
       children = {
         header("Overview"),
-        { comp = M.Sections, props = vim.tbl_extend("force", props, { sidebar_width = width }) },
+        { comp = M.Sections, props = vim.tbl_extend("force", props, { sidebar_width = Float.width() - 2 }) },
       },
     }
   end
-  local app = require("fibrous.inline.mount").floating(Overview, {}, {
-    width = width,
-    height = math.min(32, math.max(1, vim.o.lines - 6)),
-    mode = "scroll",
-    border = "rounded",
-    backdrop = true,
-  })
-  return require("weave.view.float").chrome(app, {
+  local app = Float.mount(Overview, {})
+  return Float.chrome(app, {
     close = app.unmount,
     desc = "weave: close overview",
   })

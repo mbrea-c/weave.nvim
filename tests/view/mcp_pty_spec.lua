@@ -1,7 +1,7 @@
 local termdraw = require("fibrous.bench.termdraw")
 
 describe("MCP browser terminal rendering", function()
-  for _, size in ipairs({ { 80, 24 }, { 36, 14 } }) do
+  for _, size in ipairs({ { 80, 24 }, { 36, 14 }, { 201, 51 } }) do
     it(("renders and navigates long catalogues at %dx%d"):format(size[1], size[2]), function()
       local source = debug.getinfo(require("fibrous.inline.mount").floating, "S").source:sub(2)
       local fibrous_root = vim.fn.fnamemodify(source, ":p:h:h:h:h")
@@ -70,6 +70,8 @@ describe("MCP browser terminal rendering", function()
               vim.defer_fn(function()
                 result.catalogue = screen()
                 result.catalogue_height = vim.api.nvim_win_get_height(app.winid)
+                result.catalogue_width = vim.api.nvim_win_get_width(app.winid)
+                result.catalogue_rows = vim.api.nvim_buf_line_count(app.bufnr)
                 save()
               end, 40)
               return
@@ -119,7 +121,8 @@ describe("MCP browser terminal rendering", function()
       assert.truthy(result.list:find("MCP servers", 1, true))
       assert.truthy(result.list:find("clankbox", 1, true))
       assert.truthy(result.catalogue:find("Tools (18)", 1, true))
-      assert.equal(size[2] - 6, result.catalogue_height)
+      assert.equal(math.min(size[2] - 6, result.catalogue_rows), result.catalogue_height)
+      if size[1] == 201 then assert.equal(160, result.catalogue_width) end
       assert.equal(1, result.tool_topline)
       assert.truthy(result.tool:find("weave_tool_18", 1, true))
       assert.truthy(result.schema:gsub("%s", ""):find("readable_tail", 1, true))

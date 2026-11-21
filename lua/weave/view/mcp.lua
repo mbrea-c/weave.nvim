@@ -1,4 +1,5 @@
 -- MCP browser: compact sidebar status, server connections, then tool details.
+local Float = require("weave.view.float")
 local ui = require("fibrous.inline.components")
 local Proxy = require("weave.mcp_proxy")
 local Tools = require("weave.tools")
@@ -257,29 +258,7 @@ local function find_tool(server, page)
 end
 
 function M.open(name)
-  local app, go_back, resize_group
-  local closed, fit_pending = false, false
-  local options = {
-    width = math.min(88, math.max(1, vim.o.columns - 6)),
-    height = math.min(30, math.max(1, vim.o.lines - 6)),
-    mode = "scroll", border = "rounded", backdrop = true,
-    on_unmount = function()
-      closed = true
-      if resize_group then vim.api.nvim_del_augroup_by_id(resize_group) end
-    end,
-  }
-  local function fit()
-    if closed or not app or not vim.api.nvim_win_is_valid(app.winid) then return end
-    local width = math.min(88, math.max(1, vim.o.columns - 6))
-    if options.width ~= width then options.width = width; app.relayout() end
-    local height = math.min(30, math.max(1, vim.o.lines - 6), vim.api.nvim_buf_line_count(app.bufnr))
-    if options.height ~= height then options.height = height; app.relayout() end
-  end
-  local function schedule_fit()
-    if closed or fit_pending then return end
-    fit_pending = true
-    vim.schedule(function() fit_pending = false; fit() end)
-  end
+  local app, go_back
   local function Browser(ctx)
     local servers = use_servers(ctx, true)
     local selected = ctx.use_state({ server = name })
@@ -290,7 +269,6 @@ function M.open(name)
       end
       if not back then next_page.previous = page end
       selected.set(next_page)
-      fit()
       if app and vim.api.nvim_win_is_valid(app.winid) then
         vim.api.nvim_win_call(app.winid, function()
           vim.fn.winrestview(next_page.view or { lnum = 1, col = 0, topline = 1, leftcol = 0, skipcol = 0 })
@@ -354,21 +332,9 @@ function M.open(name)
       padding = { x = 2, y = vim.o.lines < 20 and 0 or 1 },
     } }, children = rows }
   end
-  app = require("fibrous.inline.mount").floating(Browser, {}, options)
-  fit()
-  -- Buffer changes include live discovery and expanding a full definition.
-  -- Defer resizing out of on_lines (textlock), and detach with the app.
-  vim.api.nvim_buf_attach(app.bufnr, false, { on_lines = function()
-    if closed then return true end
-    schedule_fit()
-  end })
-  resize_group = vim.api.nvim_create_augroup("WeaveMcpBrowser_" .. app.winid, { clear = true })
-  vim.api.nvim_create_autocmd("VimResized", { group = resize_group, callback = function()
-    app.set_props({}) -- Re-evaluate compact vertical padding as well as width.
-    schedule_fit()
-  end })
+  app = Float.mount(Browser, {})
   vim.keymap.set("n", "<BS>", function() go_back() end, { buffer = app.bufnr, nowait = true, desc = "weave: back in MCP browser" })
-  return require("weave.view.float").chrome(app, {
+  return Float.chrome(app, {
     close = app.unmount, desc = "weave: close MCP browser",
   })
 end

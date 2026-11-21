@@ -1,5 +1,5 @@
 -- Live registry forest. Only the tree scrolls; new/load actions stay pinned.
-local mount = require("fibrous.inline.mount")
+local Float = require("weave.view.float")
 local ui = require("fibrous.inline.components")
 local Keys = require("weave.keys")
 local M = {}
@@ -70,22 +70,19 @@ function M.open(opts)
   local registry = opts.registry or require("weave.registry")
   local tab = vim.api.nvim_get_current_tabpage()
   local open, scheduled, confirming = true, false, false
-  local app, refresh, unsubscribe, resize_group
+  local app, refresh, unsubscribe
   local tree, collapsed = {}, {}
   local last_selected
-  local geometry = { mode = "fixed", border = "rounded", backdrop = true }
 
   local function cleanup()
     open = false
     if unsubscribe then unsubscribe(); unsubscribe = nil end
-    if resize_group then pcall(vim.api.nvim_del_augroup_by_id, resize_group); resize_group = nil end
   end
   local function close()
     if not open then return end
     cleanup()
     if app then app.unmount() end
   end
-  geometry.on_unmount = cleanup
 
   local function rows()
     local entries, by_parent, result = registry.list(), {}, {}
@@ -143,17 +140,13 @@ function M.open(opts)
     }
   end
 
-  local function size()
-    geometry.width = math.max(1, math.min(86, vim.o.columns - 4))
-    geometry.height = math.max(1, math.min(math.max(#rows(), 1) + 5, vim.o.lines - 4))
-  end
-  size()
-  app = mount.floating(Modal, build_props(), geometry)
+  app = Float.mount(Modal, build_props(), {
+    preferred_height = function(props) return math.max(#props.rows, 1) + 5 end,
+    on_unmount = cleanup,
+  })
   refresh = function()
     if not open then return end
-    size()
     app.set_props(build_props())
-    app.relayout()
   end
   local function schedule_refresh()
     if not open or scheduled then return end
@@ -161,9 +154,7 @@ function M.open(opts)
     vim.schedule(function() scheduled = false; refresh() end)
   end
   if registry.subscribe then unsubscribe = registry.subscribe(schedule_refresh) end
-  resize_group = vim.api.nvim_create_augroup("WeaveSessionTree_" .. app.winid, { clear = true })
-  vim.api.nvim_create_autocmd("VimResized", { group = resize_group, callback = refresh })
-  require("weave.view.float").chrome(app, {
+  Float.chrome(app, {
     close = close, desc = "weave: close session tree", keep_open = function() return confirming end,
   })
   return {

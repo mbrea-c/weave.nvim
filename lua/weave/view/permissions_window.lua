@@ -9,6 +9,7 @@
 -- presets are in-memory for now (persistence is an open question in the
 -- design doc).
 
+local Float = require("weave.view.float")
 local ui = require("fibrous.inline.components")
 local Logger = require("weave.utils.logger")
 local Permissions = require("weave.permissions")
@@ -109,18 +110,7 @@ local function open_editor(preset, policy)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modified = false
 
-  local width = 72
-  local height = math.min(#lines + 4, math.max(vim.o.lines - 6, 8))
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor",
-    width = width,
-    height = height,
-    row = math.max(math.floor((vim.o.lines - height) / 2), 1),
-    col = math.max(math.floor((vim.o.columns - width) / 2), 0),
-    border = "rounded",
-    title = " permission preset ",
-    title_pos = "center",
-  })
+  local win = Float.open_buffer(buf, { title = " permission preset ", title_pos = "center" }, { stable = true })
 
   vim.api.nvim_create_autocmd("BufWriteCmd", {
     buffer = buf,
@@ -164,7 +154,7 @@ local function open_editor(preset, policy)
   -- every focus change, and a warning per window switch would be its own
   -- kind of broken.
   local warned = false
-  require("weave.view.float").dismiss_on_unfocus(win, {
+  Float.dismiss_on_unfocus(win, {
     on_unfocus = close,
     keep_open = function()
       if not vim.bo[buf].modified then
@@ -379,16 +369,8 @@ function M.open(opts)
     session = entry and entry.session
   end
   local Permissions = session and Permissions.for_session(session) or Permissions.for_store(opts.store)
-  local mount = require("fibrous.inline.mount")
-  local size = #Permissions.available() + #(Permissions.active().rules or {}) + 15
-  local app = mount.floating(Window, { permissions = Permissions, session = session }, {
-    width = 64,
-    height = math.min(math.max(size, 10), math.max(vim.o.lines - 6, 8)),
-    mode = "scroll",
-    border = "rounded",
-    backdrop = true,
-  })
-  return require("weave.view.float").chrome(app, {
+  local app = Float.mount(Window, { permissions = Permissions, session = session })
+  return Float.chrome(app, {
     close = function()
       app.unmount()
     end,

@@ -5,6 +5,7 @@
 -- flags), and a per-task live view streaming stdout/stderr with a kill
 -- button. All three re-render off one bridge hook over TaskStore.subscribe.
 
+local Float = require("weave.view.float")
 local ui = require("fibrous.inline.components")
 local TaskStore = require("weave.task_store")
 local Theme = require("weave.view.theme")
@@ -162,7 +163,6 @@ end
 --- running, exited, killed — each a live-view button over a dim status
 --- line, live off the store; q/<Esc> closes.
 function M.open_task_list()
-  local mount = require("fibrous.inline.mount")
   local function FullList(ctx)
     local tasks = use_tasks(ctx)
     local rows = { header(("Terminal tasks (%d)"):format(#tasks)) }
@@ -170,7 +170,7 @@ function M.open_task_list()
       rows[2] = dim("(no tasks yet)")
     end
     for _, t in ipairs(tasks) do
-      local row = task_row(t, 60)
+      local row = task_row(t, Float.width() - 2)
       row.children[2] = {
         comp = ui.col,
         props = {},
@@ -180,14 +180,8 @@ function M.open_task_list()
     end
     return { comp = ui.col, props = {}, children = rows }
   end
-  local app = mount.floating(FullList, {}, {
-    width = 70,
-    height = math.min(math.max(#TaskStore.list() * 2 + 2, 4), math.max(vim.o.lines - 6, 8)),
-    mode = "scroll",
-    border = "rounded",
-    backdrop = true,
-  })
-  return require("weave.view.float").chrome(app, {
+  local app = Float.mount(FullList, {})
+  return Float.chrome(app, {
     close = function()
       app.unmount()
     end,
@@ -202,7 +196,6 @@ end
 --- @param opts? { full?: boolean } Explicit full output bypasses the preview tail cap.
 function M.open_task_view(id, opts)
   opts = opts or {}
-  local mount = require("fibrous.inline.mount")
   local function TaskView(ctx)
     use_tasks(ctx)
     local task = TaskStore.get(id)
@@ -251,14 +244,8 @@ function M.open_task_view(id, opts)
     end
     return { comp = ui.col, props = {}, children = rows }
   end
-  local app = mount.floating(TaskView, {}, {
-    width = 80,
-    height = math.min(30, math.max(vim.o.lines - 6, 8)),
-    mode = "scroll",
-    border = "rounded",
-    backdrop = true,
-  })
-  return require("weave.view.float").chrome(app, {
+  local app = Float.mount(TaskView, {}, { stable = true })
+  return Float.chrome(app, {
     close = function()
       app.unmount()
     end,

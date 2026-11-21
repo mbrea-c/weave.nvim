@@ -12,6 +12,7 @@
 -- mounts anything. That keeps the layout and the button wiring testable without
 -- putting a window on the screen.
 
+local Float = require("weave.view.float")
 local ui = require("fibrous.inline.components")
 local Autosize = require("weave.view.autosize")
 local Store = require("weave.feedback_store")
@@ -289,10 +290,10 @@ end
 --- q/<Esc> closes. Activating a row closes the list, jumps to that comment's
 --- code and opens its editor.
 function M.open_list()
-  local mount = require("fibrous.inline.mount")
   local app
   local function Body(ctx)
     return M.List(ctx, {
+      width = Float.width() - 2, -- leave room for the marker and gap
       on_activate = function(id)
         if app then
           app.unmount()
@@ -301,15 +302,8 @@ function M.open_list()
       end,
     })
   end
-  app = mount.floating(Body, {}, {
-    width = 70,
-    height = math.min(math.max(#Store.comments() + 2, 4), math.max(vim.o.lines - 6, 8)),
-    mode = "scroll",
-    border = "rounded",
-    backdrop = true,
-    title = " code feedback ",
-  })
-  return require("weave.view.float").chrome(app, {
+  app = Float.mount(Body, {})
+  return Float.chrome(app, {
     close = function()
       app.unmount()
     end,
@@ -499,7 +493,6 @@ end
 --- **cancel** remains the explicit discard.
 --- @param id integer
 function M.open_editor(id)
-  local mount = require("fibrous.inline.mount")
   local app
   -- The component owns the live text; this is the last value it reported, so
   -- a close initiated from OUT here still knows what to save.
@@ -516,7 +509,7 @@ function M.open_editor(id)
     end
     close()
   end
-  app = mount.floating(function(ctx)
+  app = Float.mount(function(ctx)
     return M.Editor(ctx, {
       id = id,
       on_close = close,
@@ -524,15 +517,8 @@ function M.open_editor(id)
         typed = txt
       end,
     })
-  end, {}, {
-    width = 76,
-    height = math.min(20, math.max(vim.o.lines - 6, 8)),
-    mode = "scroll",
-    border = "rounded",
-    backdrop = true,
-    title = " code feedback ",
-  })
-  return require("weave.view.float").chrome(app, {
+  end, {}, { stable = true })
+  return Float.chrome(app, {
     close = save_and_close,
     desc = "weave: save and close the code feedback editor",
   })

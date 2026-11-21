@@ -157,6 +157,19 @@ The shortcut is the named action `open_overview`; rebind or disable it through
 `keys.open_overview`. Disabling the shortcut leaves the footer button available.
 This layout requires fibrous's inline `overflow = "hidden"` support.
 
+### Popup sizing
+
+Weave sizes its popups against the whole editor. On wide screens they use 80%
+of the columns (160 in a 201-column editor). On narrow screens they use the
+available width with room for the border and margins. Lists, detail pages and
+Peek fit the height of the rendered content, including wrapped lines. Longer
+content scrolls. Navigating between MCP pages or changing the editor size
+refits the popup automatically.
+
+Live task output, the feedback editor and the permission preset editor keep a
+steady viewport while output arrives or you type. They still resize with the
+editor.
+
 ### Keymaps (inside the panel)
 
 Every key below is a **named action** — the name in the second column is its
