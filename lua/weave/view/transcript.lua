@@ -331,7 +331,7 @@ end
 --- thought entries and diff previews (`prefs` is a required prop — the hook
 --- subscription must be unconditional).
 --- @param ctx table
---- @param props { store: weave.store.SessionStore, prefs: weave.view.Prefs }
+--- @param props { store: weave.store.SessionStore, prefs: weave.view.Prefs, visibility?: table }
 function M.Transcript(ctx, props)
   local store = props.store
   local state = use_store(ctx, store)
@@ -395,10 +395,16 @@ function M.Transcript(ctx, props)
   -- this on a huge session; the panel slides it while following). Older entries
   -- collapse behind an expander so relayout/resize cost stays bounded — see
   -- SessionStore.WINDOW / open_tasks_and_issues.md.
+  local visibility = props.visibility
   local window_start = state.window_start or 1
+  local window_end = math.min(state.window_end or #state.entries, #state.entries)
+  local sequences = {}
+  if visibility then
+    window_start, window_end = visibility:use_range(ctx, #state.entries, prefs.show_thoughts)
+  end
   local children = {}
 
-  if window_start > 1 then
+  if not visibility and window_start > 1 then
     local older = window_start - 1
     children[#children + 1] = {
       comp = ui.button,
@@ -412,8 +418,8 @@ function M.Transcript(ctx, props)
     }
   end
 
-  local window_end = math.min(state.window_end or #state.entries, #state.entries)
   for i = window_start, window_end do
+    local prior = #children
     local entry = state.entries[i]
     if entry.kind == "tool_call" then
       local tc = state.tool_calls[entry.tool_call_id]
@@ -469,9 +475,10 @@ function M.Transcript(ctx, props)
         },
       }
     end
+    if visibility and #children > prior then sequences[#children] = i end
   end
 
-  if window_end < #state.entries then
+  if not visibility and window_end < #state.entries then
     children[#children + 1] = { comp = ui.button, props = {
       theme = false, label = ("Show newer messages (%d)"):format(#state.entries - window_end),
       on_press = function() store:follow_window() end,
@@ -481,18 +488,22 @@ function M.Transcript(ctx, props)
   -- Queued prompts no longer render here: they stack in the prompt block, above
   -- the input box (view/prompt.lua), so you can edit/reorder/cancel them there.
 
-  if state.permission then
+  if state.permission and (not visibility or window_end == #state.entries) then
     children[#children + 1] = {
       comp = M.PermissionBlock,
       props = { store = store, permission = state.permission, count = state.permission_count },
     }
   end
 
-  if #children == 0 then
+  if #children == 0 and (not visibility or #state.entries == 0) then
     children[1] = { comp = ui.label, props = { text = "(no messages yet)", style = { text_hl = "@comment" } } }
   end
 
-  return { comp = ui.col, props = { gap = 1 }, children = children }
+  local column = {gap = 1}
+  if visibility then
+    column.content_visibility, column.visibility, column.sequences = "auto", visibility, sequences
+  end
+  return {comp = ui.col, props = column, children = children}
 end
 
 return M

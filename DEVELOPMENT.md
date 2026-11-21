@@ -155,6 +155,17 @@ TUI pushes at a real pty, the tmux + ssh bottleneck).
 `bench-panel-term` seeds a long session with `BENCH_TRANSCRIPT` so the per-turn
 cost is measured at scale.
 
+### Viewport rendering
+
+`view.content_visibility = "auto"` opts into Fibrous' matching viewport model;
+`"button"` remains the default. Both working trees must be available. Run
+`FIBROUS_PATH=/absolute/path/to/fibrous.nvim nix run .#bench-visibility -- --output /tmp/visibility.jsonl`
+on Linux (or `make bench-visibility ARGS="--output /tmp/visibility.jsonl"`)
+to compare fresh real-TUI processes, including terminal bytes and
+placeholder-frame checks. Add `--history-resize` for historical-entry reflow.
+The archived methodology and tradeoffs are in [bench/VISIBILITY.md](bench/VISIBILITY.md).
+The optional Rust package is independent and does not accelerate this transcript.
+
 ### The demo
 
 ```sh

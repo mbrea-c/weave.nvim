@@ -50,6 +50,7 @@ local History = require("weave.transcript_history")
 --- @field commands table[] Slash-command completion items (always includes /new)
 --- @field usage weave.store.Usage|nil Session usage (context tokens + cost) from usage_update; nil until first reported
 --- @field window_start integer First rendered entry
+--- @field reveal_request? {sequence: integer} Most recent explicit source navigation
 --- @field window_end? integer Last rendered entry when showing an older bounded window
 --- @field transcript_sources? boolean Enable per-byte render provenance after the first comment
 
@@ -299,6 +300,7 @@ function SessionStore:follow_window()
   self:_commit(function(draft)
     draft.window_start = target
     draft.window_end = nil
+    draft.reveal_request = nil
   end)
 end
 
@@ -306,6 +308,7 @@ end
 function SessionStore:reveal_entry(sequence)
   local first = math.max(1, sequence - 3)
   self:_commit(function(draft)
+    draft.reveal_request = {sequence = sequence}
     draft.window_start = first
     draft.window_end = math.min(#draft.entries, first + SessionStore.WINDOW - 1)
   end)
@@ -818,6 +821,7 @@ function SessionStore:reset()
     draft.usage = nil -- forget the previous conversation's token/cost tally
     draft.window_start = 1 -- fresh session starts at the top of an empty transcript
     draft.window_end = nil
+    draft.reveal_request = nil
     draft.transcript_sources = nil
   end)
   -- Cancel + clear pending permissions so the agent isn't left waiting; this

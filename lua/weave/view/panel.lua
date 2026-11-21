@@ -65,9 +65,12 @@ local function Panel(_, props)
             -- Vertical-only: the transcript wraps to its width and never scrolls
             -- sideways, so a stray horizontal scroll (visual mode reaching a
             -- padded line's trailing newline) can't drift the content right.
-            props = { grow = 1, scroll_x = false, on_create = props.on_transcript_create },
+            -- The visibility model restores logical item + row on remeasurement.
+            -- A second keyed reanchor would move the viewport again after paint.
+            props = { grow = 1, scroll_x = false, anchor = not props.visibility,
+              on_create = props.on_transcript_create },
             children = {
-              { comp = Transcript, props = { store = props.store, prefs = props.prefs } },
+              { comp = Transcript, props = { store = props.store, prefs = props.prefs, visibility = props.visibility } },
             },
           },
           {
@@ -106,12 +109,13 @@ end
 --- @field width integer         resolved panel width (opts, else Config.view)
 --- @field sidebar_width integer resolved sidebar width (post half-panel clamp)
 --- @field prompt_height integer resolved prompt height
+--- @field visibility? table  opt-in viewport model; nil in button mode
 --- @field focus_prompt fun()
 --- @field close fun()
 --- @field is_open fun(): boolean
 
 --- Open the panel.
---- @param opts { store: weave.store.SessionStore, prefs: weave.settings.Store, session?: table, session_settings?: weave.settings.Store, on_submit?: fun(text: string), on_steer?: fun(text: string), on_cancel?: fun(), on_permission?: fun(index: integer), on_cycle_permission_mode?: fun(), on_pick_model?: fun(), on_pick_mode?: fun(), on_restore_picker?: fun(), on_sessions?: fun(), on_session_details?: fun(), width?: integer, sidebar_width?: integer, prompt_height?: integer }
+--- @param opts { store: weave.store.SessionStore, prefs: weave.settings.Store, session?: table, session_settings?: weave.settings.Store, on_submit?: fun(text: string), on_steer?: fun(text: string), on_cancel?: fun(), on_permission?: fun(index: integer), on_cycle_permission_mode?: fun(), on_pick_model?: fun(), on_pick_mode?: fun(), on_restore_picker?: fun(), on_sessions?: fun(), on_session_details?: fun(), width?: integer, sidebar_width?: integer, prompt_height?: integer, content_visibility?: "button"|"auto" }
 --- @return weave.view.PanelHandle handle
 function M.open(opts)
   local store = opts.store
@@ -145,10 +149,14 @@ function M.open(opts)
 
   -- Filled by the on_create hooks during the mount's first (synchronous)
   -- flush; the buffers persist for the panel's lifetime.
+  local history_mode = opts.content_visibility or Config.view.content_visibility
+  local visibility = history_mode == "auto" and
+    require("fibrous.inline.visibility").new({estimate = 3, gap = 1, tail = prefs.state.follow})
   local transcript = {}
   local input_bufnr
 
   local app = mount.split(Panel, {
+    visibility = visibility,
     store = store,
     prefs = prefs,
     sidebar_width = sidebar_width,
@@ -162,6 +170,9 @@ function M.open(opts)
     on_transcript_create = function(bufnr, winid)
       transcript.bufnr, transcript.winid = bufnr, winid
       vim.b[bufnr].weave_transcript = true
+      if visibility then
+        visibility:bind(winid)
+      end
     end,
     on_prompt_create = function(bufnr)
       input_bufnr = bufnr
@@ -203,6 +214,7 @@ function M.open(opts)
       or cur_buf == input_bufnr
     unsubscribe_store()
     unsubscribe_prefs()
+    if visibility then visibility:close() end
     pcall(vim.api.nvim_del_augroup_by_id, group)
     -- One unmount tears the whole tree down, innermost first (fibrous walks
     -- any stranded focus out level by level).
@@ -239,7 +251,10 @@ function M.open(opts)
   local followed = store.state
   unsubscribe_store = store:subscribe(function(state)
     local content = state.entries ~= followed.entries or state.tool_calls ~= followed.tool_calls
+    local request = state.reveal_request
+    local jump = visibility and request and request ~= followed.reveal_request
     followed = state
+    if jump then visibility:reveal(request.sequence) end
     if content and prefs.state.follow then
       -- Slide the transcript's tail window forward as content arrives. Only
       -- while following (view pinned to the bottom): the entries that fall out
@@ -247,7 +262,7 @@ function M.open(opts)
       -- leave the window frozen so history under the reader never shifts.
       -- follow_window is a store mutation; its re-entrant notify sees no content
       -- change (same entries table) and is change-guarded, so it can't loop.
-      store:follow_window()
+      if not visibility then store:follow_window() end
       follow_to_bottom()
     end
   end)
@@ -259,6 +274,10 @@ function M.open(opts)
     end
     was_following = state.follow
   end)
+
+  if visibility and store.state.reveal_request and not prefs.state.follow then
+    visibility:reveal(store.state.reveal_request.sequence)
+  end
 
   -- ── Panel keymaps ───────────────────────────────────────────────────────
   -- Applied to every panel buffer — the root canvas, the transcript
@@ -354,6 +373,7 @@ function M.open(opts)
     winid = app.winid,
     host_winid = app.host_winid,
     transcript = transcript,
+    visibility = visibility,
     -- the resolved geometry the panel opened with (post config-fallback + clamp)
     width = width,
     sidebar_width = sidebar_width,

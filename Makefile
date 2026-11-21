@@ -44,6 +44,11 @@ bench-term:
 bench-panel-term:
 	$(NVIM_BIN) --headless -u NONE -i NONE -l bench/panel_term.lua
 
+# Real-TUI viewport comparison. Supply ARGS="--output /tmp/visibility.jsonl".
+.PHONY: bench-visibility
+bench-visibility:
+	NVIM_BIN=$(NVIM_BIN) python3 bench/visibility_compare.py $(ARGS)
+
 # The demo UI in a clean interactive Neovim (q to quit)
 .PHONY: demo
 demo:

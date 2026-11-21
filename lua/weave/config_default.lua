@@ -16,6 +16,7 @@
 --- @field width integer Total docked panel width (columns)
 --- @field sidebar_width integer Sidebar column width (clamped to at most half the panel)
 --- @field prompt_height integer Prompt input height (rows)
+--- @field content_visibility "button"|"auto" Transcript history navigation
 
 --- One keybinding entry: the lhs, optionally with its own mode(s). Without
 --- `mode` the action's default modes apply (see weave.keys SCOPES).
@@ -88,6 +89,7 @@ local ConfigDefault = {
     width = 100,
     sidebar_width = 30,
     prompt_height = 6,
+    content_visibility = "button",
   },
 
   -- Every key weave binds, by action name — the SINGLE source the view layer

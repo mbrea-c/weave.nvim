@@ -1,7 +1,5 @@
 # weave.nvim
 
-*(name TBD — placeholder)*
-
 A Neovim client for coding agents that speak the
 [Agent Client Protocol](https://agentclientprotocol.com) (ACP) — Claude,
 Gemini, Codex, Copilot, and others. It gives you a docked panel with a live
@@ -44,16 +42,28 @@ plugin.
 
 ### Nix flake (supported path)
 
-The flake exposes the plugin as `packages.weave`. Add both this repo and
-`github:mbrea-c/fibrous.nvim` as inputs and put both on the runtimepath in
-your Neovim configuration (e.g. via home-manager's `programs.neovim.plugins`,
-or your own `buildVimPlugin` wiring).
+The flake exposes the plugin as `packages.${system}.weave`. It declares
+Fibrous as a plugin dependency, so consumers such as Home Manager install it
+automatically.
 
 ```nix
 # flake inputs
-weave.url = "github:…/weave.nvim";  # repo URL TBD
-fibrous.url = "github:mbrea-c/fibrous.nvim";
+weave.url = "github:mbrea-c/weave.nvim";
+
+# Neovim configuration
+programs.neovim.plugins = [ weave.packages.${system}.weave ];
 ```
+
+To select Fibrous' optional Rust Markdown package through Weave, use
+`weave.packages.${system}.weave.override { withRustMarkdown = true; }`
+(or `weave-rust-markdown`). The default remains Lua-only. Do not also install
+a second, different Fibrous package. This option accelerates eligible standalone
+Markdown views, not the virtual transcript or arbitrary nested Markdown.
+
+While using these unreleased changes, override the flake's `fibrous` input
+to the matching checkout. The superproject already does this through `follows`.
+For example, build with
+`--override-input fibrous path:../fibrous.nvim` from the Weave checkout.
 
 The two optional runtime binaries are exposed as
 `packages.weave.passthru.runtimeDeps` (`ripgrep`, `bubblewrap` — the latter on
@@ -73,12 +83,11 @@ that option exists.
 
 ### lazy.nvim (or any plugin manager)
 
-Add both plugins and call `setup`. (Repo slug is a placeholder until the
-plugin is published.)
+Add both plugins and call `setup`.
 
 ```lua
 {
-  "your-org/weave.nvim",          -- placeholder URL
+  "mbrea-c/weave.nvim",
   dependencies = { "mbrea-c/fibrous.nvim" },
   config = function()
     require("weave").setup({})
@@ -847,6 +856,7 @@ overrides it for that panel.
 
 | `view` field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `content_visibility` | `string` | `"button"` | `"auto"` opts into viewport rendering; offscreen native buffer rows are blank |
 | `width` | `integer` | `100` | Total docked panel width (columns) |
 | `sidebar_width` | `integer` | `30` | Sidebar column width (clamped to at most half the panel) |
 | `prompt_height` | `integer` | `6` | Resting prompt height (rows, incl. the status row); the box auto-grows with its content, up to 8 text rows |
@@ -1252,6 +1262,15 @@ scope require existing allows/grants. This is stricter than the root-only
 
 Rename, workspace-edit application, and arbitrary LSP execute-command remain
 outside this suite.
+
+### Experimental viewport rendering
+
+With the matching Fibrous prototype, `require("weave").setup({ view = { content_visibility = "auto" } })`
+lets you scroll through the whole transcript with normal Neovim motions. The default
+`"button"` opens the latest 30 entries and reveals earlier entries on request.
+Auto mode keeps estimated blank rows for offscreen entries. Native buffer search and
+cross-page yanks see only the text currently materialized in the buffer. The
+[large transcript comparison](bench/VISIBILITY.md) describes the trade-offs.
 
 ### Transcript recall
 

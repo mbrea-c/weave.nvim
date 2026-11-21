@@ -66,16 +66,22 @@
         in
         rec {
           default = weave;
-          weave = pkgs.vimUtils.buildVimPlugin {
-            pname = "weave";
-            version = self.shortRev or self.dirtyShortRev or "dev";
-            src = self;
-            dependencies = [ fibrous.packages.${pkgs.stdenv.hostPlatform.system}.default ];
-            passthru = { inherit runtimeDeps; };
-            # the real gate is the test suite (`nix flake check`); the generic
-            # require-check chokes on modules that need a running UI
-            doCheck = false;
-          };
+          weave = pkgs.lib.makeOverridable (
+            { withRustMarkdown ? false }:
+            pkgs.vimUtils.buildVimPlugin {
+              pname = "weave";
+              version = self.shortRev or self.dirtyShortRev or "dev";
+              src = self;
+              dependencies = [
+                (if withRustMarkdown then
+                  fibrous.packages.${pkgs.stdenv.hostPlatform.system}.fibrous-rust-markdown
+                else fibrous.packages.${pkgs.stdenv.hostPlatform.system}.default)
+              ];
+              passthru = { inherit runtimeDeps withRustMarkdown; };
+              doCheck = false;
+            }
+          ) { };
+          weave-rust-markdown = weave.override { withRustMarkdown = true; };
         }
       );
 
@@ -138,6 +144,12 @@
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             cd ${self}
             exec nvim --headless -u NONE -i NONE -l bench/panel_term.lua "$@"
+          '';
+          bench-visibility = appWith [ pkgs.python3 pkgs.gnumake ] "weave-bench-visibility" ''
+            export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
+            export NVIM_BIN=${pkgs.lib.getExe pkgs.neovim}
+            cd ${self}
+            exec make bench-visibility ARGS="$*"
           '';
           demo = app "weave-demo" ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
