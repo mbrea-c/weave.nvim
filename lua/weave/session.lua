@@ -911,21 +911,29 @@ function Session:_send_messages(msgs)
   local prompt = {}
   local attached = false
   for _, msg in ipairs(msgs) do
+    -- Comments are the user's words. Build one body for both ACP and the
+    -- transcript; recall still uses just the text the user typed.
+    local body = msg.text
+    for _, part in ipairs(msg.bundle or {}) do
+      if part.kind == "user" then body = body .. "\n\n" .. part.text end
+    end
     if msg.kind == "tutor" then
       self._store:append_entry({ kind = "tutor", text = msg.label, payload = msg.text })
     else
       self._store:append_entry({
         kind = "user",
-        text = msg.text,
+        text = body,
         attachments = not attached and attachments or nil,
       })
       self._store:push_history(msg.text) -- a sent prompt joins the recall history
       attached = true
     end
-    prompt[#prompt + 1] = { type = "text", text = msg.text }
+    prompt[#prompt + 1] = { type = "text", text = body }
     for _, part in ipairs(msg.bundle or {}) do
-      prompt[#prompt + 1] = { type = "text", text = part.text }
-      self._store:append_entry({ kind = "tutor", text = part.label or "Attached comments", payload = part.text })
+      if part.kind == "tutor" then
+        prompt[#prompt + 1] = { type = "text", text = part.text }
+        self._store:append_entry({ kind = "tutor", text = part.label, payload = part.text })
+      end
     end
   end
 

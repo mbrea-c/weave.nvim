@@ -6,14 +6,15 @@ describe("prompt feedback in the terminal", function()
     local root = vim.fn.fnamemodify(source, ":p:h:h:h:h")
     local path = vim.fn.tempname()
     termdraw.drive({
-      cols = 80, rows = 20, rtp = { root, vim.fn.getcwd() },
+      cols = 80, rows = 32, rtp = { root, vim.fn.getcwd() },
       steps = { { lua = "FRAME(1)", wait_ms = 200 }, { lua = "FRAME(2)", wait_ms = 200 },
-        { lua = "FRAME(3)", wait_ms = 200 }, { lua = "FRAME(4)", wait_ms = 200 } },
+        { lua = "FRAME(3)", wait_ms = 200 }, { lua = "FRAME(4)", wait_ms = 200 },
+        { lua = "FRAME(5)", wait_ms = 200 }, { lua = "FRAME(6)", wait_ms = 200 }, { lua = "FRAME(7)", wait_ms = 200 } },
       init = ([[
         local mount = require("fibrous.inline.mount")
         local client = { state = "connected", cancels = 0 }
         function client:create_session(handlers, cb) self.handlers = handlers; cb({ sessionId = "pty" }) end
-        function client:send_prompt() end
+        function client:send_prompt(_, _, cb) self.finish = cb end
         function client:cancel_turn() self.cancels = self.cancels + 1 end
         local s = require("weave.session"):new({ get_instance = function(_, cb) cb(client); return client end })
         s:start()
@@ -28,7 +29,9 @@ describe("prompt feedback in the terminal", function()
           if i == 1 then
             s:submit("working")
             client.handlers.on_tool_call({ tool_call_id = "active", status = "pending" })
-            require("weave.feedback_store").add({ bufnr = vim.api.nvim_get_current_buf(), body = "my note", range = { lnum = 1 } })
+            local code = vim.api.nvim_create_buf(false, true)
+            vim.api.nvim_buf_set_lines(code, 0, -1, false, { "local answer = 42" })
+            require("weave.feedback_store").add({ bufnr = code, body = "my note", range = { lnum = 1 } })
             local props = s:view_handlers()
             props.store, props.session = s:get_store(), s
             local view = mount.floating(require("weave.view.prompt").Prompt, props, { width = 62, height = 12 })
@@ -37,7 +40,12 @@ describe("prompt feedback in the terminal", function()
             end
           elseif i == 2 then send("normal row", "<C-s>")
           elseif i == 3 then send("safe row", "<C-x>")
-          else send("urgent row", "<C-S-x>") end
+          elseif i == 4 then send("urgent row", "<C-S-x>")
+          elseif i == 5 or i == 6 then client.finish({})
+          else
+            mount.floating(require("weave.view.transcript").Transcript,
+              { store = s:get_store(), prefs = require("weave.view.prefs"):new() }, { width = 72, height = 28 })
+          end
           vim.defer_fn(function()
             vim.cmd("redraw")
             local lines = {}
@@ -59,8 +67,14 @@ describe("prompt feedback in the terminal", function()
     assert.truthy(queued:match("normal row[^\n]+1 comment"))
     assert.is_nil(queued:match("╰[^\n]+1 comment"))
     assert.equal(0, frames[3].cancels)
+    assert.truthy(table.concat(frames[3].lines, "\n"):match("⇈%s+safe row"), "priority marker on the steer row")
     assert.same({ "safe row", "normal row" }, frames[3].queued)
     assert.equal(1, frames[4].cancels)
     assert.same({ "safe row", "urgent row", "normal row" }, frames[4].queued)
+    local sent = table.concat(frames[7].lines, "\n")
+    for _, content in ipairs({ "normal row", "Inline code feedback", "local answer = 42", "my note" }) do
+      assert.truthy(sent:find(content, 1, true), "missing from visible transcript: " .. content)
+    end
+    assert.is_nil(sent:find("Attached comments", 1, true))
   end)
 end)

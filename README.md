@@ -178,7 +178,7 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | Key | Action name | Effect |
 | --- | --- | --- |
 | `<C-s>` | `submit` | Submit the prompt (send to the agent) — works from insert **and** normal |
-| `<C-x>` | `steer` | Steer after all known tool calls in the current turn finish. Steers are shown ahead of ordinary prompts and sent together |
+| `<C-x>` | `steer` | Interrupt thinking or text generation immediately unless a tool call or its approval is outstanding. Priority rows use the `⇈` marker and are sent together |
 | `<C-S-x>` | `interrupt_and_send` | Interrupt and send now, even during a tool call or permission request. Includes waiting steers, not ordinary queued prompts |
 | `<C-c>` | `cancel` | Cancel the running turn and its pending steers; keep ordinary queued prompts |
 | `<C-Up>` | `recall_older` | In the prompt: recall previous prompt. Walks up through queued prompts (edit them in place) then sent history (recalled as a fresh copy); your draft is preserved |
@@ -245,7 +245,10 @@ prompt border shows what your next human send will carry, for example
 `2 comments · 1 file`. Submitting reserves those exact comments and tracked
 edits for that row; its dim count moves with it, and deleting the row releases
 them. Later changes belong to later messages. Editing or promoting a queued
-row keeps its original feedback. Only the text you typed enters prompt recall.
+row keeps its original feedback. In the sent message, the complete formatted
+comments appear directly below your text, including the quoted selection, just
+as in a manual flush. This is the same text the agent receives. Tracked edit
+diffs keep their own inspectable entries. Prompt recall keeps only what you typed.
 Turn the setting off for manual flush only (independent of edit auto-send).
 It does not enable global edit tracking or redirect a custom feedback sink.
 

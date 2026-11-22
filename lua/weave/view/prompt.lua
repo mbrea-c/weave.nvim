@@ -127,7 +127,7 @@ function M.QueuedRow(_, props)
     comp = ui.row,
     props = { gap = 1 },
     children = {
-      { comp = ui.label, props = { text = props.mode == "steer" and "steer" or "⏳", style = { text_hl = "@comment" } } },
+      { comp = ui.label, props = { text = props.mode == "steer" and "⇈" or "⏳", style = { text_hl = "@comment" } } },
       {
         comp = ui.label,
         props = {

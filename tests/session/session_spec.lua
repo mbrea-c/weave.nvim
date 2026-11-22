@@ -814,6 +814,20 @@ end)
 -- It used to be one slot, which silently dropped one of them — and tutor mode
 -- steers on a timer, so the collision stops being hypothetical.
 describe("session steer queue", function()
+  for event, status in pairs({ agent_thought_chunk = "thinking", agent_message_chunk = "generating" }) do
+    it("steers immediately while " .. status .. " with no active tool", function()
+      local session, client, store = started()
+      session:submit("work")
+      client.handlers.on_session_update({ sessionUpdate = event, content = { type = "text", text = "streaming" } })
+      assert.equal(status, store.state.status)
+      session:view_handlers().on_steer("change course")
+      assert.equal(1, client.calls.cancel_turns)
+      assert.equal(1, #client.calls.prompts)
+      client:end_turn(); pump()
+      assert.equal("change course", client.calls.prompts[2])
+    end)
+  end
+
   it("waits for every live tool, then batches steers ahead of normal sends", function()
     local s, c, store = started()
     s:submit("working")
@@ -856,6 +870,7 @@ describe("session steer queue", function()
     local id = note("only on normal").id
     s:view_handlers().on_submit("normal")
     note("only on steer")
+    local formatted = require("weave.feedback_format").format(feedback.item_for(s))
     s:view_handlers().on_steer("steer first")
     c:end_turn(); pump()
     local wire = vim.inspect(c.calls.blocks[2])
@@ -866,6 +881,33 @@ describe("session steer queue", function()
     assert.equal(id, feedback.item_for(s).comments[1].id)
     assert.same({ "working", "steer first" }, store.state.history)
     feedback._reset()
+    local expected = "steer first\n\n" .. formatted
+    assert.same({ { type = "text", text = expected } }, c.calls.blocks[2])
+    assert.equal(2, #store.state.entries)
+    assert.equal("user", store.state.entries[2].kind)
+    assert.equal(expected, store.state.entries[2].text)
+  end)
+
+  it("keeps each comment with its own batched steer and edit diffs separate", function()
+    local session, client, store = started()
+    session:submit("working")
+    store:enqueue_prompt("first", "steer", {
+      { kind = "tutor", text = "a diff", label = "Changed files" },
+      { kind = "user", text = "first comment" },
+    })
+    store:enqueue_prompt("second", "steer", { { kind = "user", text = "second comment" } })
+    client:end_turn(); pump()
+    local entries, blocks = store.state.entries, client.calls.blocks[2]
+    assert.equal(3, #blocks)
+    assert.equal(4, #entries)
+    assert.equal("first\n\nfirst comment", blocks[1].text)
+    assert.equal("a diff", blocks[2].text)
+    assert.equal("second\n\nsecond comment", blocks[3].text)
+    assert.equal(blocks[1].text, entries[2].text)
+    assert.equal("tutor", entries[3].kind)
+    assert.equal(blocks[2].text, entries[3].payload)
+    assert.equal(blocks[3].text, entries[4].text)
+    assert.same({ "working", "first", "second" }, store.state.history)
   end)
 
   it("keeps an earlier system flush before a later steer in the same batch", function()
@@ -893,7 +935,8 @@ describe("session steer queue", function()
     s:view_handlers().on_submit("with")
     settings:set("flush_with_next_message", false)
     c:end_turn(); pump()
-    assert.truthy(c.calls.blocks[3][2].text:find("for later", 1, true))
+    assert.equal(1, #c.calls.blocks[3])
+    assert.truthy(c.calls.blocks[3][1].text:find("for later", 1, true))
     assert.is_nil(notes.item_for(s))
   end)
 
