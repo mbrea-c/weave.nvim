@@ -44,6 +44,26 @@ local function mount_prompt(store, callbacks)
 end
 
 describe("view.prompt", function()
+  it("puts the eligible feedback count on the lower input border only when enabled", function()
+    local store = SessionStore:new()
+    local s = { get_store = function() return store end }
+    local comments = require("weave.feedback_store")
+    local comment = comments.add({ bufnr = vim.api.nvim_get_current_buf(), range = { lnum = 1 }, body = "note" })
+    local handle = mount.floating(prompt.Prompt, { store = store, session = s }, { width = 48, height = 12 })
+    local function footer()
+      for _, line in ipairs(vim.api.nvim_buf_get_lines(handle.bufnr, 0, -1, false)) do
+        if line:find("╰", 1, true) and line:find("1 comment", 1, true) then return true end
+      end
+      return false
+    end
+    assert.is_true(footer())
+    require("weave.settings").for_session(s):set("flush_with_next_message", false)
+    vim.wait(200, function() return not footer() end)
+    assert.is_false(footer())
+    handle.unmount()
+    comments.remove(comment.id)
+  end)
+
   it("<CR> submits the typed text and clears the input", function()
     local store = SessionStore:new()
     local submitted = {}
@@ -367,6 +387,21 @@ describe("view.prompt queue + history", function()
     pump()
     assert.same({ "remove me" }, store:queued_texts())
     handle.unmount()
+  end)
+
+  it("deleting the text and submitting releases the queued row's feedback", function()
+    local store = SessionStore:new()
+    local released = false
+    store:enqueue_prompt("to delete", nil, { { on_dropped = function() released = true end } })
+    local h = mount_tall(store)
+    local sub = subwin_of(h)
+    vim.api.nvim_set_current_win(sub)
+    press("<C-Up>"); pump()
+    vim.api.nvim_buf_set_lines(vim.api.nvim_win_get_buf(sub), 0, -1, false, { "" })
+    press("<C-s>"); pump()
+    assert.same({}, store:queued_texts())
+    assert.is_true(released)
+    h.unmount()
   end)
 
   it("<C-Up> moves the box onto the last queued prompt; <C-s> saves the edit in place", function()

@@ -43,7 +43,8 @@ local Settings = require("weave.settings")
 local M = {}
 
 --- @class weave.edit_sync.State
---- @field cursor integer last revision id DELIVERED to this session
+--- @field cursor integer End of the contiguous delivered revision prefix
+--- @field claims table<integer, "held"|"sent"> Reserved or out-of-order delivered revisions after cursor
 --- @field first_pending_at integer|nil ms when the oldest unsent change landed
 --- @field timer uv.uv_timer_t|nil
 
@@ -186,7 +187,7 @@ end
 local function sync_state(session)
   if is_active() then
     if not states[session] then
-      states[session] = { cursor = Log.head_id() }
+      states[session] = { cursor = Log.head_id(), claims = {} }
       notify()
     end
   elseif states[session] then
@@ -301,10 +302,9 @@ local function send(session, text, label, interrupt, hooks)
   return accepted ~= false
 end
 
---- @param rev weave.revision.Revision
+--- @param s { files: integer, created: integer, deleted: integer }
 --- @return string
-local function label_for(rev)
-  local s = Revision.summary(rev)
+local function label_for(s)
   local noun = s.files == 1 and "1 file" or (s.files .. " files")
   local parts = {}
   if s.created > 0 then
@@ -315,6 +315,50 @@ local function label_for(rev)
   end
   local extra = #parts > 0 and (" (" .. table.concat(parts, ", ") .. ")") or ""
   return "sent " .. noun .. " you changed" .. extra
+end
+
+-- A steer can deliver later edits before an older FIFO item. Only advance the
+-- contiguous delivered prefix; leave holes owned by their original message.
+local function settle(state, ids, value)
+  for _, id in ipairs(ids) do
+    if id > state.cursor then state.claims[id] = value end
+  end
+  while state.claims[state.cursor + 1] == "sent" do
+    state.cursor = state.cursor + 1
+    state.claims[state.cursor] = nil
+  end
+end
+
+-- Do not squash across a reserved/delivered gap: that would reintroduce its
+-- changes into a different message. Count unique paths across the groups.
+local function window(state, render, include_reserved)
+  if state.cursor >= Log.head_id() then return {}, nil, nil end
+  local ids, group, ranges, paths = {}, {}, {}, {}
+  local created, deleted = {}, {}
+  local function finish()
+    local rev = Revision.squash(group)
+    group = {}
+    if Revision.is_empty(rev) then return end
+    for path, file in pairs(rev.files) do
+      paths[path] = true
+      if file.before == nil then created[path] = true end
+      if file.after == nil then deleted[path] = true end
+    end
+    if render then ranges[#ranges + 1] = rev end
+  end
+  for _, rev in ipairs(Log.since(state.cursor)) do
+    local claim = state.claims[rev.id]
+    if not claim or (include_reserved and claim ~= "sent") then
+      ids[#ids + 1], group[#group + 1] = rev.id, rev
+    elseif #group > 0 then
+      finish()
+    end
+  end
+  finish()
+  if not next(paths) then return ids, nil, nil end
+  local summary = { files = vim.tbl_count(paths), created = vim.tbl_count(created), deleted = vim.tbl_count(deleted) }
+  if not render then return ids, summary end
+  return ids, summary, Revision.render_ranges(ranges, { root = require("weave.permissions").project_root(), max_bytes = cfg().max_diff_bytes })
 end
 
 --- The current session, for the bindable entry points that take none. A
@@ -345,47 +389,37 @@ function M.pending_message(session)
   if not state then
     return nil
   end
+  Log.close_burst()
   disarm(state)
-
-  local head = Log.head_id()
-  local rev = Log.squash_since(state.cursor)
-  -- Step over a window that netted no change: it has nothing to say, but
-  -- leaving the cursor behind it means re-squashing the same dead revisions
-  -- on every flush, forever.
-  local conf = cfg()
-  local diff
-  if rev then
-    local ok, Permissions = pcall(require, "weave.permissions")
-    local root = ok and Permissions.project_root() or nil
-    diff = Revision.render(rev, { root = root, max_bytes = conf.max_diff_bytes })
-  end
+  local ids, summary, diff = window(state, true)
+  if #ids == 0 then return nil end
   if not diff then
-    state.cursor = head
-    state.first_pending_at = nil
+    settle(state, ids, "sent")
     notify()
     return nil
   end
 
+  settle(state, ids, "held")
   state.first_pending_at = nil
-  local preamble = conf.edits_prompt or Prompts.get("edits") or ""
+  local preamble = cfg().edits_prompt or Prompts.get("edits") or ""
+  local live = true
+  local function release(delivered)
+    if not live or states[session] ~= state then return end
+    live = false
+    settle(state, ids, delivered and "sent" or nil)
+    if not delivered and Settings.for_session(session):get("auto_send_edits") then
+      state.first_pending_at = state.first_pending_at or M._now()
+      arm(session, state)
+    end
+    notify()
+  end
+  notify()
   return {
-    kind = "tutor",
+    kind = "tutor", files = summary.files, revision = ids[#ids],
     text = preamble .. "\n\n" .. diff,
-    label = label_for(rev),
-    on_sent = function()
-      local st = states[session]
-      if st and head > st.cursor then
-        st.cursor = head
-      end
-      notify()
-    end,
-    on_dropped = function()
-      local st = states[session]
-      if st then
-        st.first_pending_at = st.first_pending_at or M._now()
-        arm(session, st)
-      end
-    end,
+    label = label_for(summary),
+    on_sent = function() release(true) end,
+    on_dropped = function() release(false) end,
   }
 end
 
@@ -454,17 +488,11 @@ function M.consume(session)
     return nil
   end
   Log.close_burst()
-  local head = Log.head_id()
-  local rev = Log.squash_since(state.cursor)
-  state.cursor = head
+  local ids, _, diff = window(state, true, true)
+  settle(state, ids, "sent")
   state.first_pending_at = nil
   notify()
-  if not rev then
-    return nil
-  end
-  local ok, Permissions = pcall(require, "weave.permissions")
-  local root = ok and Permissions.project_root() or nil
-  return Revision.render(rev, { root = root, max_bytes = cfg().max_diff_bytes })
+  return diff
 end
 
 --- The unsent window summarised for display — file counts, nothing taken: no
@@ -482,8 +510,8 @@ function M.pending_summary(session)
   if not state then
     return nil
   end
-  local rev = Log.squash_since(state.cursor)
-  return rev and Revision.summary(rev) or nil
+  local _, summary = window(state, false)
+  return summary
 end
 
 --- The unsent window rendered exactly as a flush would send it — for a peek.
@@ -496,13 +524,8 @@ function M.pending_preview(session)
   if not state then
     return nil
   end
-  local rev = Log.squash_since(state.cursor)
-  if not rev then
-    return nil
-  end
-  local ok, Permissions = pcall(require, "weave.permissions")
-  local root = ok and Permissions.project_root() or nil
-  return Revision.render(rev, { root = root, max_bytes = cfg().max_diff_bytes })
+  local _, _, diff = window(state, true)
+  return diff
 end
 
 --- Discard the unsent window: mark it seen without sending — the edits half
@@ -520,7 +543,8 @@ function M.mark_seen(session)
   end
   Log.close_burst()
   disarm(state)
-  state.cursor = Log.head_id()
+  local ids = window(state, false)
+  settle(state, ids, "sent")
   state.first_pending_at = nil
   notify()
   return true

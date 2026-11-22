@@ -80,6 +80,8 @@ local function Panel(_, props)
               height = props.prompt_height,
               on_submit = props.on_submit,
               on_steer = props.on_steer,
+              on_interrupt_and_send = props.on_interrupt_and_send,
+              session = props.session,
               on_create = props.on_prompt_create,
             },
           },
@@ -115,7 +117,7 @@ end
 --- @field is_open fun(): boolean
 
 --- Open the panel.
---- @param opts { store: weave.store.SessionStore, prefs: weave.settings.Store, session?: table, session_settings?: weave.settings.Store, on_submit?: fun(text: string), on_steer?: fun(text: string), on_cancel?: fun(), on_permission?: fun(index: integer), on_cycle_permission_mode?: fun(), on_pick_model?: fun(), on_pick_mode?: fun(), on_restore_picker?: fun(), on_sessions?: fun(), on_session_details?: fun(), width?: integer, sidebar_width?: integer, prompt_height?: integer, content_visibility?: "button"|"auto" }
+--- @param opts { store: weave.store.SessionStore, prefs: weave.settings.Store, session?: table, session_settings?: weave.settings.Store, on_submit?: fun(text: string), on_steer?: fun(text: string, entry?: table), on_interrupt_and_send?: fun(text: string, entry?: table), on_cancel?: fun(), on_permission?: fun(index: integer), on_cycle_permission_mode?: fun(), on_pick_model?: fun(), on_pick_mode?: fun(), on_restore_picker?: fun(), on_sessions?: fun(), on_session_details?: fun(), width?: integer, sidebar_width?: integer, prompt_height?: integer, content_visibility?: "button"|"auto" }
 --- @return weave.view.PanelHandle handle
 function M.open(opts)
   local store = opts.store
@@ -163,6 +165,7 @@ function M.open(opts)
     prompt_height = prompt_height,
     on_submit = on_submit,
     on_steer = on_steer,
+    on_interrupt_and_send = opts.on_interrupt_and_send,
     on_session_details = opts.on_session_details,
     on_overview = open_overview,
     session = opts.session,

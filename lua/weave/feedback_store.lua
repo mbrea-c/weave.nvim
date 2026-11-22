@@ -56,6 +56,7 @@ local M = {}
 
 --- @type weave.feedback.Item|nil
 local draft = nil
+local reservations = {} -- comment id -> versions attached to unsent messages
 local next_item_id = 1
 local next_comment_id = 1
 local subscribers = {}
@@ -102,12 +103,38 @@ function M.item_for(session)
   local store = session and session.get_store and session:get_store()
   local comments = {}
   for _, comment in ipairs(M.comments()) do
-    if not comment.target or (comment._owner == store and comment._history == store:transcript()) then
+    if not M.reserved(comment) and (not comment.target or (comment._owner == store and comment._history == store:transcript())) then
       comments[#comments + 1] = comment
     end
   end
   if #comments > 0 then
     return { id = draft.id, created_at = draft.created_at, comments = comments }
+  end
+end
+
+function M.reserved(comment)
+  return reservations[comment.id] and reservations[comment.id][comment.body]
+end
+
+-- Reserve a version, not the mutable comment: editing it creates new feedback.
+function M.reserve(snapshot)
+  for id, body in pairs(snapshot) do
+    reservations[id] = reservations[id] or {}
+    reservations[id][body] = true
+  end
+  notify()
+  local active = true
+  return function(delivered)
+    if not active then return end
+    active = false
+    for id, body in pairs(snapshot) do
+      if reservations[id] then
+        reservations[id][body] = nil
+        if not next(reservations[id]) then reservations[id] = nil end
+      end
+    end
+    if delivered then M.consume(snapshot) end
+    notify()
   end
 end
 
@@ -333,6 +360,7 @@ function M._reset()
   end
   draft = nil
   subscribers = {}
+  reservations = {}
   next_item_id, next_comment_id = 1, 1
 end
 

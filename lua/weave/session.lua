@@ -53,6 +53,8 @@ local SessionStore = require("weave.session_store")
 --- @field _get_instance fun(provider: string, on_ready: fun(client: table)): table|nil
 --- @field _turn_active boolean Whether a prompt turn is currently in flight
 --- @field _steer_queue weave.session.Message[] Messages to send once a steered turn ends as cancelled, in arrival order (never a scalar slot: two interruptions can land on one dying turn)
+--- @field _active_tools table<string, boolean> Outstanding ACP calls in this turn only
+--- @field _delivery_order integer Arrival order shared by priority prompts and internal sends
 --- @field _cancelling boolean A cancel is already in flight for the current turn
 --- @field _restoring boolean Whether a session/load history replay is in flight
 --- @field _steered_session? string ACP session id already given the mode-on steering note
@@ -79,6 +81,8 @@ function Session:new(opts)
     _agent_sandbox_mode = opts.agent_sandbox_mode,
     _turn_active = false,
     _steer_queue = {},
+    _active_tools = {},
+    _delivery_order = 0,
     _cancelling = false,
     _restoring = false,
     _config = {},
@@ -95,6 +99,7 @@ function Session:new(opts)
     if now ~= prev_editing then
       prev_editing = now
       vim.schedule(function()
+        session:_maybe_steer()
         session:_drain_queue()
       end)
     end
@@ -156,10 +161,13 @@ end
 function Session:view_handlers()
   return {
     on_submit = function(text)
-      self:submit(text)
+      return self:submit(text, true)
     end,
-    on_steer = function(text)
-      self:steer(text)
+    on_steer = function(text, entry)
+      return self:steer(text, true, entry)
+    end,
+    on_interrupt_and_send = function(text, entry)
+      return self:interrupt_and_send(text, true, entry)
     end,
     on_cancel = function()
       self:cancel()
@@ -494,6 +502,19 @@ function Session:_build_handlers()
   return AcpBridge.build_handlers(self._store, {
     is_restoring = function() return self._restoring end,
     permissions = self._permissions,
+    on_tool_activity = function(id, status)
+      if self._config_session ~= config or config.closed or self._restoring or not self._turn_active then return end
+      if status == "completed" or status == "failed" or status == "cancelled" then
+        self._active_tools[id] = nil
+        -- Sibling calls may already be in the same burst of ACP updates.
+        local turn = self._turn_messages
+        if self._store.state.queued[1] and self._store.state.queued[1].mode == "steer" then
+          vim.schedule(function() if self._turn_messages == turn then self:_maybe_steer() end end)
+        end
+      else
+        self._active_tools[id] = true
+      end
+    end,
     is_live = function() return self._config_session == config and not config.closed end,
     on_config_options_update = function(config_options)
       if self._config_session ~= config or config.closed then return end
@@ -619,36 +640,63 @@ end
 --- while a turn is in flight is QUEUED (shown in the transcript) and sent
 --- automatically when the current turn ends. To interrupt instead, steer().
 --- @param text string
-function Session:submit(text)
+function Session:submit(text, from_prompt)
   -- Intercept /new BEFORE the readiness/turn guards so the user can always
   -- start fresh, even mid-generation.
   if text:match("^/new%s*$") then
     self:new_conversation()
-    return
+    return true
   end
 
   if not self:is_ready() then
     Logger.notify("Session not ready yet — wait for the agent to connect.", vim.log.levels.WARN)
-    return
+    return false
   end
-
-  if self._turn_active then
-    self._store:enqueue_prompt(text)
-    return
+  local bundle = from_prompt and require("weave.prompt_feedback").capture(self) or nil
+  if not self._turn_active and #self._store.state.queued == 0 and #self._steer_queue == 0 then
+    self:_send_now(text, bundle)
+  else
+    self._store:enqueue_prompt(text, nil, bundle)
+    self:_drain_queue()
   end
-
-  self:_send_now(text)
+  return true
 end
 
---- Interrupt the in-flight turn and send `text` instead. Over ACP this is
---- cancel-then-resend: there is no mid-turn injection. With no turn active,
---- this is just a submit.
---- @param text string
-function Session:steer(text)
-  if not self:is_ready() then
-    return self:submit(text)
+function Session:_maybe_steer()
+  local queue = self._store.state.queued
+  if not self._turn_active or self._cancelling or not queue[1] or queue[1].mode ~= "steer" then return end
+  if next(self._active_tools) or self._store:get_permission() then return end
+  for _, entry in ipairs(queue) do
+    if entry.mode ~= "steer" then break end
+    if self._store.state.editing_queued == entry.id then return end
   end
-  return self:_steer_messages({ { kind = "user", text = text } })
+  self._cancelling = true
+  self:_cancel_turn()
+end
+
+local function next_order(self)
+  self._delivery_order = self._delivery_order + 1
+  return self._delivery_order
+end
+
+local function submit_priority(self, text, from_prompt, entry, force)
+  if not self:is_ready() then return self:submit(text) end
+  local bundle
+  if entry then bundle = entry.bundle
+  elseif from_prompt then bundle = require("weave.prompt_feedback").capture(self) end
+  self._store:enqueue_prompt(text, "steer", bundle, entry and entry.id, next_order(self))
+  if not self._turn_active then self:_drain_queue()
+  elseif force then self:_steer_messages({})
+  else self:_maybe_steer() end
+  return true
+end
+
+function Session:steer(text, from_prompt, entry)
+  return submit_priority(self, text, from_prompt, entry, false)
+end
+
+function Session:interrupt_and_send(text, from_prompt, entry)
+  return submit_priority(self, text, from_prompt, entry, true)
 end
 
 --- Interrupt with a list of messages. The cancel and the resend are separated
@@ -663,6 +711,7 @@ function Session:_steer_messages(msgs)
   if not self._turn_active then
     return self:_send_messages(msgs)
   end
+  for _, msg in ipairs(msgs) do msg.order = next_order(self) end
   vim.list_extend(self._steer_queue, msgs)
   -- Cancel once per turn: this turn is already on its way out, and a second
   -- cancel_turn for it is noise on the wire. The flag tracks THAT rather than
@@ -705,6 +754,7 @@ function Session:send_system(opts)
     return true
   end
   if self._turn_active then
+    msg.order = next_order(self)
     self._steer_queue[#self._steer_queue + 1] = msg
     return true
   end
@@ -752,8 +802,11 @@ function Session:cancel()
   self._cancel_requested = true
   self:_emit("cancel_requested")
   self:_drop_steered()
-  self._cancelling = false
-  if self._turn_active then
+  for _, entry in ipairs(self._store.state.queued) do
+    if entry.mode == "steer" then self._store:remove_queued(entry.id) end
+  end
+  if self._turn_active and not self._cancelling then
+    self._cancelling = true
     self:_cancel_turn()
   end
 end
@@ -824,11 +877,15 @@ end
 --- drains the queue or fires a pending steer.
 --- @private
 --- @param text string
-function Session:_send_now(text)
-  return self:_send_messages({ { kind = "user", text = text } })
+function Session:_send_now(text, bundle)
+  return self:_send_messages({ { kind = "user", text = text, bundle = bundle } })
 end
 
 --- @class weave.session.Message One prompt block and how the transcript shows it
+--- @field bundle? weave.session.Message[] Feedback reserved for this human prompt
+--- @field comments? integer
+--- @field files? integer
+--- @field order? integer
 --- @field kind "user"|"tutor"
 --- @field text string what the agent receives
 --- @field label? string what the transcript shows for a non-user message
@@ -866,9 +923,14 @@ function Session:_send_messages(msgs)
       attached = true
     end
     prompt[#prompt + 1] = { type = "text", text = msg.text }
+    for _, part in ipairs(msg.bundle or {}) do
+      prompt[#prompt + 1] = { type = "text", text = part.text }
+      self._store:append_entry({ kind = "tutor", text = part.label or "Attached comments", payload = part.text })
+    end
   end
 
   self._store:set_status("thinking")
+  self._active_tools = {}
   self._turn_active = true
   self._turn_messages, self._cancel_requested = msgs, false
   self:_emit("turn_started", { messages = msgs })
@@ -904,6 +966,7 @@ function Session:_send_messages(msgs)
   -- The prompt is on the wire: fire the delivery signal for owners that track
   -- it (tutor mode's revision cursor rides on this).
   for _, msg in ipairs(msgs) do
+    for _, part in ipairs(msg.bundle or {}) do if part.on_sent then part.on_sent() end end
     if msg.on_sent then
       pcall(msg.on_sent)
     end
@@ -928,40 +991,48 @@ function Session:_on_turn_end(err, response)
 
   local messages, cancelled = self._turn_messages, self._cancel_requested
   self._turn_messages, self._cancel_requested = nil, false
+  self._active_tools = {}
+  self._cancelling = false
   self:_emit("turn_finished", { messages = messages, error = err, response = response, cancelled = cancelled })
 
   -- Steered messages take priority over the queue: something interrupted to
   -- send THESE now. They go out as one turn, in arrival order, so a user steer
   -- and a tutor-mode flush racing for the same dying turn both land. Then fall
   -- through to draining queued prompts in order.
-  local steered = self._steer_queue
-  self._steer_queue = {}
-  self._cancelling = false
-  if #steered > 0 then
-    self:_send_messages(steered)
-    return
-  end
-
   self:_drain_queue()
 end
 
---- Send the next queued prompt, if there is one and nothing holds it back:
---- no turn in flight, no steer pending, the head not under edit
---- (dequeue_prompt returns nil for a held head). Called at turn end and when
---- an edit releases a held queue.
---- @private
+-- Steers are the FIFO prefix. Hold the batch if one of its rows is being
+-- edited, then send it in one ACP turn. Ordinary prompts drain individually.
 function Session:_drain_queue()
-  if self._turn_active or #self._steer_queue > 0 or not self:is_ready() then
-    return
+  if self._turn_active or not self:is_ready() then return end
+  local store, batch = self._store, {}
+  local queue = store.state.queued
+  for _, entry in ipairs(queue) do
+    if entry.mode ~= "steer" then break end
+    if entry.id == store.state.editing_queued then return end
+    batch[#batch + 1] = entry
   end
-  local next_prompt = self._store:dequeue_prompt()
-  if next_prompt then
-    self:_send_now(next_prompt)
+  if #batch == 0 and #self._steer_queue == 0 and queue[1] and queue[1].id ~= store.state.editing_queued then
+    batch[1] = queue[1]
   end
+  local messages = {}
+  for _, entry in ipairs(batch) do
+    store:take_queued(entry.id)
+    messages[#messages + 1] = { kind = "user", text = entry.text, bundle = entry.bundle, order = entry.order }
+  end
+  vim.list_extend(messages, self._steer_queue)
+  if #batch > 0 and #self._steer_queue > 0 then
+    table.sort(messages, function(a, b) return (a.order or 0) < (b.order or 0) end)
+  end
+  self._steer_queue = {}
+  if #messages > 0 then self:_send_messages(messages) end
 end
 
 --- Stop the conversation: cancel the ACP session. Does NOT touch views.
 function Session:stop()
+  self:_drop_steered()
+  self._store:clear_queue()
   require("weave.tool_context").revoke(self)
   if self._on_registry_reset then self._on_registry_reset() end
   if self._config_session then self._config_session:close() end

@@ -1,7 +1,7 @@
 -- The prompt: a text_input wired for chat, ported from agentic's
 -- reactive/view/components/prompt.lua onto fibrous. NORMAL-mode <CR> submits and
 -- insert-mode <CR> is a newline (compose multi-line); <C-s> submits and <C-x>
--- steers (cancel + send now) from BOTH modes. The input border colour tracks the
+-- steers after tools finish; <C-S-x> interrupts immediately in BOTH modes. The input border colour tracks the
 -- permission mode; a water status row above it shows turn activity.
 --
 -- Prompt queue + history (requests.md): queued prompts stack ABOVE the box,
@@ -27,6 +27,7 @@ local ui = require("fibrous.inline.components")
 local Autosize = require("weave.view.autosize")
 local Keys = require("weave.keys")
 local Theme = require("weave.view.theme")
+local Feedback = require("weave.prompt_feedback")
 local Water = require("weave.view.water")
 local use_permissions = require("weave.view.use_permissions")
 local use_store = require("weave.view.use_store")
@@ -120,19 +121,20 @@ end
 --- ellipsized to the row via a width-aware `fill` leaf — and a `✕` button
 --- that removes it from the queue (by its stable id).
 --- @param _ table
---- @param props { store: weave.store.SessionStore, id: integer, text: string }
+--- @param props { store: weave.store.SessionStore, id: integer, text: string, mode?: string, summary?: string }
 function M.QueuedRow(_, props)
   return {
     comp = ui.row,
     props = { gap = 1 },
     children = {
-      { comp = ui.label, props = { text = "⏳", style = { text_hl = "@comment" } } },
+      { comp = ui.label, props = { text = props.mode == "steer" and "steer" or "⏳", style = { text_hl = "@comment" } } },
       {
         comp = ui.label,
         props = {
           grow = 1,
           fill = function(w)
-            return ellipsize(props.text, w)
+            local suffix = props.summary and props.summary ~= "" and ("  · " .. props.summary) or ""
+            return ellipsize(props.text, math.max(0, w - vim.api.nvim_strwidth(suffix))) .. ellipsize(suffix, w)
           end,
           style = { text_hl = "@comment" },
         },
@@ -203,7 +205,7 @@ local function qindex_of(queued, id)
 end
 
 --- @param ctx table
---- @param props { store: weave.store.SessionStore, on_submit: fun(text: string), on_steer: fun(text: string), height?: integer, on_create?: fun(bufnr: integer) }
+--- @param props { store: weave.store.SessionStore, session?: weave.Session, on_submit: fun(text: string): boolean|nil, on_steer: fun(text: string, entry?: weave.store.QueuedPrompt): boolean|nil, on_interrupt_and_send?: fun(text: string, entry?: weave.store.QueuedPrompt): boolean|nil, height?: integer, on_create?: fun(bufnr: integer) }
 ---   `height` sizes the RESTING input box (the box grows with its content up
 ---   to Autosize.MAX_ROWS rows, and the block with queued rows, so the
 ---   transcript above shrinks); `on_create` receives the input buffer after
@@ -346,18 +348,19 @@ function M.Prompt(ctx, props)
       end
       local txt = buf_text(st.bufnr)
       if st.target.kind == "queued" then
-        st.store:update_queued(st.target.id, txt) -- save the edit in place…
+        if txt == "" then st.store:remove_queued(st.target.id)
+        else st.store:update_queued(st.target.id, txt) end
         st.nav.set({ kind = "compose" }) -- …and drop the box back to the bottom
       else
         if txt ~= "" then
-          st.props.on_submit(txt)
+          if st.props.on_submit(txt) == false then return end
         end
         st.draft = ""
         st.nav.set({ kind = "compose" })
         st.seed.set(st.seed.get() + 1) -- clear the box even though we stay at compose
       end
     end
-    st.do_steer = function()
+    st.do_steer = function(force)
       if not st.bufnr then
         return
       end
@@ -365,10 +368,15 @@ function M.Prompt(ctx, props)
       if txt == "" then
         return
       end
+      local send = st.props.on_steer
+      if force then send = st.props.on_interrupt_and_send end
+      if not send then return end
+      local entry
       if st.target.kind == "queued" then
-        st.store:remove_queued(st.target.id) -- sent directly, so it leaves the queue
+        if st.props.session and not st.props.session:is_ready() then return end
+        entry = st.store:take_queued(st.target.id)
       end
-      st.props.on_steer(txt) -- interrupt the turn + send now, skipping the queue
+      if send(txt, entry) == false then return end
       st.draft = ""
       st.nav.set({ kind = "compose" })
       st.seed.set(st.seed.get() + 1)
@@ -403,15 +411,42 @@ function M.Prompt(ctx, props)
   }
 
   local function queued_row(entry)
-    return { comp = M.QueuedRow, memo = true, props = { store = store, id = entry.id, text = entry.text } }
+    return { comp = M.QueuedRow, memo = true, props = { store = store, id = entry.id,
+      text = entry.text, mode = entry.mode, summary = Feedback.attached(entry.bundle) } }
   end
+
+  -- Recompute the pending label only when its sources change, not on streamed
+  -- transcript updates. Keeping this bottom edge separate preserves the
+  -- permission-preset title on the top edge and the same native input buffer.
+  local cached = ctx.use_ref()
+  if cached.label == nil or cached.session ~= props.session then
+    cached.session, cached.label = props.session, Feedback.pending(props.session)
+  end
+  local pending = ctx.use_state(cached.label)
+  ctx.use_effect(function()
+    local function refresh()
+      cached.label = Feedback.pending(props.session)
+      if pending.get() ~= cached.label then pending.set(cached.label) end
+    end
+    refresh()
+    return Feedback.subscribe(props.session, refresh)
+  end, { props.session })
+  local caption = pending.get()
+  if target.kind == "queued" then caption = Feedback.attached(queued[target.qindex].bundle) end
+  local footer = caption ~= "" and {
+    comp = ui.row, key = "prompt-feedback-footer",
+    props = { height = 1, style = {
+      border = { "rounded", top = false, title = { text = " " .. caption .. " ", pos = "bottom", align = "right", hl = "@comment" } },
+      border_hl = Theme.PROMPT_BORDER_HL.ask,
+    } },
+  }
 
   local box = {
     comp = ui.text_input,
     key = BOX_KEY,
     props = {
       value = "",
-      height = box_h.get(),
+      height = box_h.get() - (footer and 1 or 0),
       clear_on_submit = false, -- do_submit owns clearing / re-seeding
       on_change = function(txt)
         st.on_change(txt)
@@ -422,6 +457,7 @@ function M.Prompt(ctx, props)
       style = {
         border = {
           "rounded",
+          bottom = not footer,
           title = {
             -- builtin presets keep their shipped titles/colours; a custom
             -- preset shows its label over the neutral border
@@ -445,6 +481,7 @@ function M.Prompt(ctx, props)
         Keys.map(bufnr, "steer", function()
           st.do_steer()
         end)
+        Keys.map(bufnr, "interrupt_and_send", function() st.do_steer(true) end)
         Keys.map(bufnr, "recall_older", function()
           st.nav_move(1)
         end)
@@ -474,6 +511,7 @@ function M.Prompt(ctx, props)
     end
     vim.list_extend(children, attachment_rows)
     children[#children + 1] = box
+    if footer then children[#children + 1] = footer end
     for k = target.qindex + 1, #queued do
       children[#children + 1] = queued_row(queued[k])
     end
@@ -484,6 +522,7 @@ function M.Prompt(ctx, props)
     end
     vim.list_extend(children, attachment_rows)
     children[#children + 1] = box
+    if footer then children[#children + 1] = footer end
   end
 
   return { comp = ui.col, props = {}, children = children }

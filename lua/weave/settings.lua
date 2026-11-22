@@ -60,6 +60,7 @@ M.SPECS = {
   -- global: the revision log is editor-wide, so its switch is too
   { key = "track_edits", scope = "global", type = "boolean", default = false, label = "Track user edits" },
   -- session: how this conversation relates to the user's edits
+  { key = "flush_with_next_message", scope = "session", type = "boolean", default = true, label = "Flush with next message" },
   { key = "auto_send_edits", scope = "session", type = "boolean", default = false, label = "Auto-send edits" },
   { key = "debounce_ms", scope = "session", type = "integer", default = 7000, min = 0, label = "Edit debounce (ms)" },
   { key = "edit_gate", scope = "session", type = "boolean", default = false, label = "Gate writes on unseen edits" },

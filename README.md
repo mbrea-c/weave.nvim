@@ -178,8 +178,9 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | Key | Action name | Effect |
 | --- | --- | --- |
 | `<C-s>` | `submit` | Submit the prompt (send to the agent) — works from insert **and** normal |
-| `<C-x>` | `steer` | Steer — interrupt the running turn and send this instead (insert or normal). While editing a queued prompt, sends *that* now, skipping the rest of the queue |
-| `<C-c>` | `cancel` | Cancel the running turn — **keeps** the queue (moves straight on to the next queued prompt) |
+| `<C-x>` | `steer` | Steer after all known tool calls in the current turn finish. Steers are shown ahead of ordinary prompts and sent together |
+| `<C-S-x>` | `interrupt_and_send` | Interrupt and send now, even during a tool call or permission request. Includes waiting steers, not ordinary queued prompts |
+| `<C-c>` | `cancel` | Cancel the running turn and its pending steers; keep ordinary queued prompts |
 | `<C-Up>` | `recall_older` | In the prompt: recall previous prompt. Walks up through queued prompts (edit them in place) then sent history (recalled as a fresh copy); your draft is preserved |
 | `<C-Down>` | `recall_newer` | In the prompt: back down towards your draft |
 | `za` | `toggle_tool_call` | Anywhere in a tool call: expand/collapse it, including its header, body, and focused stdout/stderr panes |
@@ -230,9 +231,23 @@ order as the turn ends. The prompt box is a movable edit-cursor over that stack:
   in-progress draft is kept as you navigate.
 - `<C-s>`/`<CR>` while editing a queued prompt **saves the edit in place**;
   a `✕` on any queued row (or clearing it and submitting) removes it.
-- `<C-c>` cancels the running turn but **keeps** the queue (so it moves straight
-  to the next queued prompt); `<C-x>` sends the box's current text now, jumping
-  the queue.
+- `<C-s>` appends to the back. `<C-x>` joins the end of the steer group, ahead
+  of ordinary rows. Once no reported tool or approval is outstanding, Weave
+  cancels once and sends that whole group as a single turn. Natural turn end
+  also releases the group, even if a provider never closed a tool call.
+- `<C-S-x>` is **Interrupt and send**: same priority, without waiting for tools.
+  Neovim reads `<C-X>` as `<C-x>`; if your terminal cannot report Ctrl-Shift-X
+  separately, rebind `keys.interrupt_and_send` (for example to `<F8>`).
+  `<C-c>` cancels pending steers but keeps ordinary rows.
+
+**Flush with next message** is on by default per session. The lower-right
+prompt border shows what your next human send will carry, for example
+`2 comments · 1 file`. Submitting reserves those exact comments and tracked
+edits for that row; its dim count moves with it, and deleting the row releases
+them. Later changes belong to later messages. Editing or promoting a queued
+row keeps its original feedback. Only the text you typed enters prompt recall.
+Turn the setting off for manual flush only (independent of edit auto-send).
+It does not enable global edit tracking or redirect a custom feedback sink.
 
 ### Permissions
 
@@ -644,6 +659,7 @@ just three homes:
 | `conceal_markdown` | view | boolean | `true` | Prettify markdown (`;;c`) |
 | `follow` | view | boolean | `true` | Follow streaming (`;;f`) |
 | `track_edits` | global | boolean | `false` | Collect the USER's edits into the revision log (one log per editor, hence global) |
+| `flush_with_next_message` | session | boolean | `true` | Attach pending comments and tracked edits when you submit from the prompt |
 | `auto_send_edits` | session | boolean | `false` | Send this conversation debounced squashed diffs of your edits |
 | `debounce_ms` | session | integer | `7000` | Quiet time before a batch goes out |
 | `edit_gate` | session | boolean | `false` | Refuse the agent's `weave_write`/`weave_edit`/`weave_task_start` while you have edits it has not seen (it calls `weave_check_user_edits` to catch up) |
@@ -672,8 +688,8 @@ reviewing the agent's code, the agent reviews **yours**. Tutor mode is a
 `brief = "tutor"` in one press; the `[normal]` preset is the way back.
 
 The shipped preset does **not** turn `auto_send_edits` on. Everything you
-write is collected, and it reaches the agent when *you* send it — `flush`,
-below, which takes your inline comments along with it. The pieces are ordinary
+write is collected and reaches the agent with your next prompt or an explicit
+`flush`, which also takes your inline comments. The pieces are ordinary
 settings, so the other shapes are just other combinations: `auto_send_edits`
 for the tutor on a timer, or `edit_gate` for one that never interrupts (the
 agent pulls with `weave_check_user_edits` before it may write).
@@ -698,7 +714,7 @@ retyped five times arrives as whatever it finally says, and a change you made
 and then undid does not arrive at all. File creations and deletions are in
 there too.
 
-**Flush** is how a batch normally goes out — bind it, or use `:Weave flush`:
+To send a batch without typing a prompt, bind **Flush** or use `:Weave flush`:
 
 ```lua
 vim.keymap.set("n", ";;F", require("weave").flush, { desc = "weave: flush edits + comments" })
@@ -717,7 +733,7 @@ for the whole bundle.
 
 With `auto_send_edits` on, batches *also* go out on their own: after **7
 seconds of quiet** (`debounce_ms`), or after **60 seconds** regardless if you
-never stop typing, **interrupting** the turn in flight (the same thing `<C-x>`
+never stop typing, **interrupting** the turn in flight (the same thing `<C-S-x>`
 does). Either way the cursor only advances when a diff actually reaches the
 wire: a send that dies parked behind a cancelled turn is re-squashed into the
 next one instead of being lost.
@@ -887,7 +903,7 @@ the `track_edits`/`auto_send_edits` runtime [settings](#settings)):
 | `edits` field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `max_wait_ms` | `integer` | `60000` | Ceiling from the first unsent edit, so continuous typing still gets sent (the quiet window itself is the `debounce_ms` setting) |
-| `on_flush` | `string` | `"interrupt"` | `"interrupt"` cancels the turn in flight (like `<C-x>`); `"queue"` waits behind it. An explicit flush always interrupts |
+| `on_flush` | `string` | `"interrupt"` | `"interrupt"` cancels the turn in flight (like `<C-S-x>`); `"queue"` waits behind it. An explicit flush always interrupts |
 | `max_diff_bytes` | `integer` | `102400` | Cap on one batch's diff; truncation is announced, never silent |
 | `edits_prompt` | `string` | unset | Preamble ahead of each batch of edits, inline. Unset = [`prompts/edits.md`](prompts/edits.md) |
 
@@ -1970,8 +1986,9 @@ panel's keys do is a method on it, so all of it can be scripted:
 local session = require("weave").get_session()
 
 session:submit(text)             -- send (queued while a turn is running)
-session:steer(text)              -- interrupt the running turn and send NOW
-session:cancel()                 -- cancel the running turn (keeps the queue)
+session:steer(text)              -- steer after reported tool calls finish
+session:interrupt_and_send(text) -- interrupt without waiting for tool calls
+session:cancel()                 -- cancel the turn and steers; keep ordinary queued prompts
 session:respond_permission(n)    -- answer the pending permission, option n
 session:cycle_permission_mode()  -- next preset for this Session
 session:permissions()            -- this Session's policy engine and snapshot()

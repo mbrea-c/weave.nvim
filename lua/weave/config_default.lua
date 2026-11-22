@@ -116,6 +116,7 @@ local ConfigDefault = {
     -- the prompt input (insert + normal mode)
     submit = "<C-s>",
     steer = "<C-x>",
+    interrupt_and_send = "<C-S-x>",
     recall_older = "<C-Up>",
     recall_newer = "<C-Down>",
     -- transcript entries (fibrous on_key routing)

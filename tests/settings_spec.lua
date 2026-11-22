@@ -43,7 +43,7 @@ describe("weave.settings", function()
       for _, spec in ipairs(Settings.specs("session")) do
         keys[#keys + 1] = spec.key
       end
-      assert.same({ "auto_send_edits", "debounce_ms", "edit_gate", "brief" }, keys)
+      assert.same({ "flush_with_next_message", "auto_send_edits", "debounce_ms", "edit_gate", "brief" }, keys)
     end)
   end)
 

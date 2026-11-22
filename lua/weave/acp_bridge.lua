@@ -288,6 +288,7 @@ end
 --- @field is_live? fun(): boolean Whether the owning session context is still valid
 --- @field is_restoring? fun(): boolean
 --- @field on_config_options_update? fun(config_options: weave.acp.ConfigOption[])
+--- @field on_tool_activity? fun(id: string, status: string|nil)
 --- @field permissions? table Session-scoped permission engine
 
 --- Build the ACP client handlers backed by a session store.
@@ -312,6 +313,7 @@ function AcpBridge.build_handlers(store, opts)
 
     on_tool_call = function(tool_call)
       store:upsert_tool_call(tool_call)
+      if opts.on_tool_activity then opts.on_tool_activity(tool_call.tool_call_id, tool_call.status) end
       -- Mirror Kiro's stateful task-list tool into the plan store (Kiro
       -- doesn't use ACP's plan channel). create/complete/update are applied
       -- against remembered state — crucially the `complete` command carries
@@ -327,8 +329,9 @@ function AcpBridge.build_handlers(store, opts)
       local merged = store.state.tool_calls[tool_call_update.tool_call_id]
       store:apply_kiro_task_command((merged or tool_call_update).input)
 
+      if opts.on_tool_activity then opts.on_tool_activity(tool_call_update.tool_call_id, merged and merged.status) end
       local status = tool_call_update.status
-      if status == "completed" or status == "failed" then
+      if status == "completed" or status == "failed" or status == "cancelled" then
         -- A terminal tool status means its permission request (anywhere
         -- in the queue, not just the head) is moot. Remove it from the
         -- queue and answer it `cancelled` so the agent's request id isn't

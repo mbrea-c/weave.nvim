@@ -243,24 +243,32 @@ end
 --- @param opts { root?: string, max_bytes?: integer }|nil
 --- @return string|nil
 function M.render(rev, opts)
-  opts = opts or {}
   if M.is_empty(rev) then
     return nil
   end
+  return M.render_ranges({ rev }, opts)
+end
+
+--- Render disjoint revision ranges in order under one output budget.
+function M.render_ranges(ranges, opts)
+  if #ranges == 0 then return nil end
+  opts = opts or {}
   local max = opts.max_bytes or M.MAX_BYTES
 
   local out, used, omitted, cut = {}, 0, 0, false
-  for _, path in ipairs(M.paths(rev)) do
-    local text = section(path, rev.files[path], opts.root)
-    if used >= max then
-      omitted = omitted + 1
-    else
-      if used + #text > max then
-        text = clip(text, max - used)
-        cut = true
+  for _, rev in ipairs(ranges) do
+    for _, path in ipairs(M.paths(rev)) do
+      if used >= max then
+        omitted = omitted + 1
+      else
+        local text = section(path, rev.files[path], opts.root)
+        if used + #text > max then
+          text = clip(text, max - used)
+          cut = true
+        end
+        out[#out + 1] = text
+        used = used + #text
       end
-      out[#out + 1] = text
-      used = used + #text
     end
   end
 

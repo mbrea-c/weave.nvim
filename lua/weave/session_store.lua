@@ -32,6 +32,13 @@ local History = require("weave.transcript_history")
 --- @field attachments? weave.Attachment[] Files sent with a user entry
 --- @field tool_call_id? string Present for tool_call markers; key into tool_calls
 
+--- @class weave.store.QueuedPrompt
+--- @field id integer
+--- @field text string
+--- @field mode? "steer"
+--- @field order? integer
+--- @field bundle? weave.session.Message[]
+
 --- @class weave.store.State
 --- @field entries weave.store.ChatEntry[] Ordered chat transcript
 --- @field tool_calls table<string, table> Tool call blocks keyed by tool_call_id
@@ -42,7 +49,7 @@ local History = require("weave.transcript_history")
 --- @field permission weave.store.PendingPermission|nil HEAD of the permission queue (the one shown); nil when none pending
 --- @field permission_count integer Pending permission requests (head + waiting), for "1 of N" display
 --- @field attachments weave.Attachment[] Files staged for the NEXT prompt (cleared when it is sent)
---- @field queued { id: integer, text: string }[] Prompts queued while a turn is in flight (sent FIFO on turn end); each carries a stable id so the prompt box tracks the one it edits by identity
+--- @field queued weave.store.QueuedPrompt[] Editable human prompts; steers form a FIFO prefix.
 --- @field editing_queued integer|nil Id of the queued prompt the box is currently editing; the drain HOLDS while it is at the head (a prompt is never sent from under the user)
 --- @field history string[] Sent prompts, oldest -> newest, for prompt-box recall (consecutive dups collapsed)
 --- @field meta weave.store.SessionMeta Provider/agent/model/mode metadata
@@ -79,7 +86,7 @@ local History = require("weave.transcript_history")
 local HINTS = {
   "za toggles a tool call · zR expand all · zM collapse all",
   "<CR> on [+]/[-] toggles a tool call; za works anywhere in the entry",
-  "<C-s> submits · <C-x> steers (interrupts the current turn)",
+  "<C-s> queues · <C-x> steers after tools finish · <C-S-x> interrupts now",
   "<C-c> cancels the running turn",
   ";;t thinking · ;;d edit diffs · ;;c prettify markdown · ;;f follow",
   "Prompts sent mid-turn are queued and run when the turn ends",
@@ -671,12 +678,17 @@ end
 --- IDENTITY as earlier prompts drain — you never get bumped onto a different
 --- prompt mid-edit (requests.md).
 --- @param text string
-function SessionStore:enqueue_prompt(text)
+function SessionStore:enqueue_prompt(text, mode, bundle, existing_id, order)
   self._next_qid = (self._next_qid or 0) + 1
-  local id = self._next_qid
+  local id = existing_id or self._next_qid
   self:_commit(function(draft)
     local queued = vim.list_extend({}, draft.queued)
-    queued[#queued + 1] = { id = id, text = text }
+    local index = #queued + 1
+    if mode == "steer" then
+      index = 1
+      while queued[index] and queued[index].mode == "steer" do index = index + 1 end
+    end
+    table.insert(queued, index, { id = id, text = text, mode = mode, bundle = bundle, order = order })
     draft.queued = queued
   end)
 end
@@ -693,27 +705,36 @@ function SessionStore:update_queued(id, text)
   end
   self:_commit(function(draft)
     local queued = vim.list_extend({}, draft.queued)
-    queued[idx] = { id = id, text = text }
+    queued[idx] = vim.tbl_extend("force", queued[idx], { text = text })
     draft.queued = queued
   end)
 end
 
---- Remove and return the text of the queued prompt with `id` (the `✕` on a row,
---- or clearing the box while editing it). Returns nil for an unknown id.
+--- Transfer ownership of the row and its reserved feedback without dropping either.
 --- @param id integer
---- @return string|nil removed
-function SessionStore:remove_queued(id)
+--- @return weave.store.QueuedPrompt|nil
+function SessionStore:take_queued(id)
   local idx = self:_queued_index(id)
   if not idx then
     return nil
   end
-  local removed = self.state.queued[idx].text
+  local removed = self.state.queued[idx]
   self:_commit(function(draft)
     local queued = vim.list_extend({}, draft.queued)
     table.remove(queued, idx)
     draft.queued = queued
   end)
   return removed
+end
+
+function SessionStore:remove_queued(id)
+  local entry = self:take_queued(id)
+  if entry and entry.bundle then
+    for _, part in ipairs(entry.bundle) do
+      if part.on_dropped then part.on_dropped() end
+    end
+  end
+  return entry and entry.text
 end
 
 --- Mark the queued prompt with `id` as under edit (the movable prompt box sits
@@ -754,13 +775,7 @@ function SessionStore:dequeue_prompt()
   if #current == 0 or current[1].id == self.state.editing_queued then
     return nil
   end
-  local text = current[1].text
-  self:_commit(function(draft)
-    local queued = vim.list_extend({}, draft.queued)
-    table.remove(queued, 1)
-    draft.queued = queued
-  end)
-  return text
+  return self:remove_queued(current[1].id)
 end
 
 --- Pick a fresh random hint for the sidebar. Called on each turn end.
@@ -787,15 +802,14 @@ end
 
 --- Drop all queued prompts (e.g. on explicit cancel / reset).
 function SessionStore:clear_queue()
-  self:_commit(function(draft)
-    draft.queued = {}
-  end)
+  for _, entry in ipairs(self.state.queued) do self:remove_queued(entry.id) end
 end
 
 --- Clear all session state back to the initial snapshot (e.g. on /new).
 --- Provider/agent/config meta persists because it belongs to the client and is
 --- re-applied on session creation; title/timestamp belong to one conversation.
 function SessionStore:reset()
+  self:clear_queue()
   self._transcript = History.new()
   self._file_changes = nil
   self._plan_source = nil -- forget which source owned the plan

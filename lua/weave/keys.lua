@@ -64,7 +64,8 @@ M.ACTIONS = {
 
   -- the prompt input (insert AND normal mode by default)
   { name = "submit", scope = "prompt", desc = "submit" },
-  { name = "steer", scope = "prompt", desc = "steer (interrupt + send)" },
+  { name = "steer", scope = "prompt", desc = "steer after tools finish" },
+  { name = "interrupt_and_send", scope = "prompt", desc = "interrupt and send" },
   { name = "recall_older", scope = "prompt", desc = "recall previous prompt / edit queued" },
   { name = "recall_newer", scope = "prompt", desc = "recall next prompt" },
 

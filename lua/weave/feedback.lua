@@ -250,6 +250,8 @@ function M.send(opts)
     vim.notify("weave: no code feedback to send", vim.log.levels.INFO)
     return nil, "no code feedback to send"
   end
+  item = vim.tbl_extend("force", item, { comments = vim.tbl_filter(function(c) return not Store.reserved(c) end, item.comments) })
+  if #item.comments == 0 then return nil, "feedback is already queued" end
   local sink = opts.sink or Sinks.default().name
   local owner
   for _, comment in ipairs(item.comments) do
@@ -276,7 +278,10 @@ function M.send(opts)
     if not session or session:get_store() ~= owner then
       return nil, "owning weave session is unavailable; comments were retained"
     end
-    if not session:send_batch({ M.pending_message(session) }) then
+    local msg = M.pending_message(session)
+    if not msg then return nil, "no pending feedback" end
+    if not session:send_batch({ msg }) then
+      msg.on_dropped()
       return nil, "owning weave session is not ready; comments were retained"
     end
     return true
@@ -307,12 +312,13 @@ function M.pending_message(session)
     return nil
   end
   local snapshot = Store.snapshot(item)
+  local payload = Format.format(item)
+  local release = Store.reserve(snapshot)
   return {
     kind = "user",
-    text = Format.format(item),
-    on_sent = function()
-      Store.consume(snapshot)
-    end,
+    text = payload, comments = #item.comments,
+    on_sent = function() release(true) end,
+    on_dropped = function() release(false) end,
   }
 end
 
