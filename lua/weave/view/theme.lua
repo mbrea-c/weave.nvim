@@ -25,7 +25,8 @@ function M.apply_surface(win, group)
   for _, name in ipairs({ "Normal", "NormalNC", "NormalFloat" }) do
     pairs[#pairs + 1] = name .. ":" .. group
   end
-  vim.wo[win].winhighlight = table.concat(pairs, ",")
+  -- Set the local value only. Neovim copies window defaults into new popups.
+  vim.wo[win][0].winhighlight = table.concat(pairs, ",")
 end
 
 --- Glyphs for tool-call status. `awaiting_permission` is not an ACP status —
@@ -132,13 +133,27 @@ M.USER_MARKER_HL = "WeaveUserMarker"
 -- ColorScheme reapplies defaults and preserves colorscheme overrides.
 M.USER_BUBBLE_HL = "WeaveUserBubble"
 M.USER_BUBBLE_BORDER_HL = "WeaveUserBubbleBorder"
+
+-- A resolved lookup can pick up the current window's winhighlight remaps.
+-- Follow the global links when deriving shared colors from inside the panel.
+local function global_highlight(name)
+  local seen = {}
+  while not seen[name] do
+    seen[name] = true
+    local hl = vim.api.nvim_get_hl(0, { name = name })
+    if not hl.link then return hl end
+    name = hl.link
+  end
+  return {}
+end
+
 local function define_panel_highlights()
   vim.api.nvim_set_hl(0, M.PANEL_HL, { link = "NormalFloat", default = true })
   vim.api.nvim_set_hl(0, M.PROMPT_HL, { link = "Pmenu", default = true })
   vim.api.nvim_set_hl(0, M.DIVIDER_HL, { link = "FibrousBorder", default = true })
   vim.api.nvim_set_hl(0, M.USER_MARKER_HL, { link = "FibrousTitle", default = true })
-  local normal = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
-  local panel = vim.api.nvim_get_hl(0, { name = M.PANEL_HL, link = false })
+  local normal = global_highlight("Normal")
+  local panel = global_highlight(M.PANEL_HL)
   normal.bg, normal.fg = panel.bg or normal.bg, panel.fg or normal.fg
   vim.api.nvim_set_hl(0, M.USER_MSG_HL, { fg = normal.fg, default = true })
   vim.api.nvim_set_hl(0, M.PROMPT_TITLE_HL, { fg = normal.fg, default = true })
@@ -150,7 +165,13 @@ local function define_panel_highlights()
       mixed = bit.bor(mixed, bit.lshift(math.floor(b + (f - b) * 0.1 + 0.5), shift))
     end
     vim.api.nvim_set_hl(0, M.USER_BUBBLE_HL, { bg = mixed, default = true })
-    vim.api.nvim_set_hl(0, M.USER_BUBBLE_BORDER_HL, { fg = mixed, bg = mixed, default = true })
+  end
+  local bubble = global_highlight(M.USER_BUBBLE_HL)
+  if bubble.bg or bubble.ctermbg then
+    vim.api.nvim_set_hl(0, M.USER_BUBBLE_BORDER_HL, {
+      fg = bubble.bg, bg = bubble.bg,
+      ctermfg = bubble.ctermbg, ctermbg = bubble.ctermbg, default = true,
+    })
   end
 end
 define_panel_highlights()

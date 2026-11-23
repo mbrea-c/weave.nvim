@@ -153,6 +153,27 @@ describe("view.transcript entries", function()
     handle.unmount()
   end)
 
+  it("matches the default border to the colorscheme's bubble fill", function()
+    local bubble, border = Theme.USER_BUBBLE_HL, Theme.USER_BUBBLE_BORDER_HL
+    local saved_fill = vim.api.nvim_get_hl(0, { name = bubble })
+    local saved_border = vim.api.nvim_get_hl(0, { name = border })
+    vim.api.nvim_set_hl(0, bubble, { bg = 0x113355, ctermbg = 24 })
+    vim.api.nvim_set_hl(0, border, {})
+    vim.api.nvim_exec_autocmds("ColorScheme", { group = "WeavePanelHighlights" })
+    local derived = vim.api.nvim_get_hl(0, { name = border, link = false })
+    vim.api.nvim_set_hl(0, border, { fg = 0xabcdef })
+    vim.api.nvim_exec_autocmds("ColorScheme", { group = "WeavePanelHighlights" })
+    local explicit = vim.api.nvim_get_hl(0, { name = border, link = false })
+    vim.api.nvim_set_hl(0, bubble, saved_fill)
+    vim.api.nvim_set_hl(0, border, saved_border)
+
+    assert.equal(0x113355, derived.fg)
+    assert.equal(0x113355, derived.bg)
+    assert.equal(24, derived.ctermfg)
+    assert.equal(24, derived.ctermbg)
+    assert.equal(0xabcdef, explicit.fg)
+  end)
+
   -- User prompts render as markdown under the same "Prettify markdown" pref
   -- as agent prose: prettified, a single newline is a soft break (one wrapping
   -- paragraph); with the pref off the raw source shows, continuation lines

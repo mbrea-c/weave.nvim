@@ -10,6 +10,7 @@ local Permissions = require("weave.permissions")
 local SessionStore = require("weave.session_store")
 local prompt = require("weave.view.prompt")
 local Theme = require("weave.view.theme")
+local highlight_at = require("tests.view.highlight_at")
 
 local function subwin_of(handle)
   for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -22,16 +23,6 @@ end
 
 local function press(key)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), "xt", false)
-end
-
-local function marks_with(bufnr, hl)
-  local out = {}
-  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, -1, 0, -1, { details = true })) do
-    if m[4].hl_group == hl then
-      out[#out + 1] = m
-    end
-  end
-  return out
 end
 
 local function mount_prompt(store, callbacks)
@@ -244,23 +235,18 @@ describe("view.prompt", function()
   it("the prompt title colour + label track the permission mode", function()
     local store = SessionStore:new()
     local handle = mount_prompt(store)
-    local function text()
-      return table.concat(vim.api.nvim_buf_get_lines(handle.bufnr, 0, -1, false), "\n")
-    end
-
-    -- The active permission preset tints the TITLE and names the preset in
-    -- it; the border edge itself stays the constant neutral hl. So on the
-    -- default `ask` preset the title reads "(ask)" and there's no auto tint
-    -- anywhere.
     Permissions.set_mode("on")
-    assert.truthy(text():find("(ask)", 1, true))
-    assert.equal(0, #marks_with(handle.bufnr, Theme.PROMPT_BORDER_HL.auto))
+    local ask = highlight_at(handle.bufnr, "Prompt %(ask%)")
+    local edge = highlight_at(handle.bufnr, "╭.-Prompt ").fg
+    local auto_fg = vim.api.nvim_get_hl(0, { name = Theme.PROMPT_BORDER_HL.auto, link = false }).fg
+    assert.is_not_nil(ask.fg)
+    assert.is_not_nil(auto_fg)
+    assert.is_not_nil(edge)
+    assert.is_true(ask.fg ~= auto_fg)
 
-    Permissions.set_active("auto") -- the engine, not the store
-    -- the title gains the preset's colour + label; the border_hl is
-    -- unchanged, so an auto mark can ONLY come from the title
-    assert.truthy(text():find("(auto", 1, true))
-    assert.is_true(#marks_with(handle.bufnr, Theme.PROMPT_BORDER_HL.auto) > 0)
+    Permissions.set_active("auto")
+    assert.equal(auto_fg, highlight_at(handle.bufnr, "Prompt %(auto").fg)
+    assert.equal(edge, highlight_at(handle.bufnr, "╭.-Prompt ").fg)
     handle.unmount()
     Permissions._reset()
   end)

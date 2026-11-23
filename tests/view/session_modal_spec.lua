@@ -66,6 +66,34 @@ describe("view.session_modal", function()
     pump()
   end)
 
+  it("uses the same popup surface from the editor, transcript and prompt", function()
+    local function popup_surfaces()
+      local popup = SessionModal.open({ on_select = function() end })
+      local surfaces = {}
+      for _, target in ipairs(buffers(popup)) do
+        local remaps = {}
+        for name, group in vim.wo[target.winid].winhighlight:gmatch("(%w+):(%w+)") do
+          if name == "Normal" or name == "NormalNC" or name == "NormalFloat" then remaps[name] = group end
+        end
+        surfaces[#surfaces + 1] = remaps
+      end
+      popup.close()
+      return surfaces
+    end
+    local editor = popup_surfaces()
+    local panel = require("weave.view.panel").open({
+      store = require("weave.session_store"):new(), prefs = require("weave.view.prefs"):new(),
+    })
+    vim.api.nvim_set_current_win(panel.transcript.winid)
+    local transcript = popup_surfaces()
+    panel.focus_prompt()
+    local prompt = popup_surfaces()
+    panel.close()
+
+    assert.same(editor, transcript)
+    assert.same(editor, prompt)
+  end)
+
   it("shows every active session; the tab's selection is marked", function()
     local a = Registry.add({ provider = "prov-a", get_instance = get_instance })
     local b = Registry.add({ provider = "prov-b", get_instance = get_instance })

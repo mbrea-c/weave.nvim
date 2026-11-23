@@ -127,6 +127,17 @@ describe("incremental task output buffers", function()
     return value
   end
 
+  it("keeps the output's colors out of native popups opened from it", function()
+    local stream = new()
+    local win = vim.api.nvim_open_win(stream.bufnr, true, { relative = "editor", row = 0, col = 0, width = 12, height = 3 })
+    stream:sync()
+    local peek = require("weave.view.float").open_buffer(vim.api.nvim_create_buf(false, true), {}, {})
+    local highlights = vim.wo[peek].winhighlight
+    vim.api.nvim_win_close(peek, true)
+    vim.api.nvim_win_close(win, true)
+    assert.falsy(highlights:find("WeaveTaskOutput", 1, true))
+  end)
+
   it("retains history beyond the old preview tail and joins partial chunks", function()
     local value, chunks = new(), {}
     for i = 1, 120 do chunks[i] = "line " .. i .. "\n" end

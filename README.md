@@ -133,8 +133,8 @@ The panel is **one docked pane** with three regions:
 - **Sidebar** — session metadata, view toggles, the active permission preset,
   the task list, running terminal tasks, MCP servers, your pending
   flush (unsent comments and edits), and any pending permission request.
-- **Prompt** — the input box. Its border colour reflects the active permission
-  preset; an animated indicator shows when the agent is working.
+- **Prompt** shows the active permission preset in its title. The border marks
+  keyboard focus, and an animated indicator shows when the agent is working.
 
 Closing the pane (`:q` / `<C-w>q`) closes the panel but **leaves the session
 running** — reopen with `:Weave`.
@@ -159,13 +159,19 @@ This layout requires fibrous's inline `overflow = "hidden"` support.
 
 ### Panel colors
 
-A colorscheme can set `WeavePanelSurface` for the dock and transcript,
-`WeavePromptSurface` for the composer, and `WeavePanelDivider` for the sidebar
-divider. The user-message fill and marker use `WeaveUserBubble` and
-`WeaveUserMarker`. The prompt title shows the permission preset, and
-`FibrousBorderFocus` marks the focused input.
+A colorscheme can set `WeavePanelSurface` for the dock and transcript and
+`WeavePanelDivider` for the sidebar divider. The draft keeps its
+`WeavePromptSurface` background when focus moves away. `FibrousBorderFocus`
+marks the focused input.
+
+Set `WeaveUserBubble` to color user messages and `WeaveUserMarker` for the
+leading marker. The border follows the bubble background by default. Set
+`WeaveUserBubbleBorder` to give it a visible outline.
 
 ### Popup sizing
+
+Popups use the colorscheme's `NormalFloat` and `FloatBorder` groups, including
+when opened from the transcript, prompt, or task output.
 
 Lists, detail pages and Peek fit their width to the content and their height
 to the resulting rows, including wrapped lines. The width ceiling is 80% on

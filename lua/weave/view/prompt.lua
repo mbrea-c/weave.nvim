@@ -436,6 +436,7 @@ function M.Prompt(ctx, props)
   local footer = caption ~= "" and {
     comp = ui.row, key = "prompt-feedback-footer",
     props = { height = 1, style = {
+      hl = Theme.PROMPT_HL,
       border = { "rounded", top = false, title = { text = " " .. caption .. " ", pos = "bottom", align = "right", hl = "@comment" } },
       border_hl = Theme.PROMPT_BORDER_HL.ask,
     } },
@@ -457,6 +458,7 @@ function M.Prompt(ctx, props)
         st.do_submit()
       end,
       style = {
+        hl = Theme.PROMPT_HL,
         border = {
           "rounded",
           bottom = not footer,

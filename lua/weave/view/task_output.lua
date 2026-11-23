@@ -62,7 +62,7 @@ function Stream:sync()
       end
       for _, name in ipairs({ "Normal", "NormalFloat", "EndOfBuffer" }) do mappings[#mappings + 1] = name .. ":" .. M.HL end
       local highlight = table.concat(mappings, ",")
-      if vim.wo[win].winhighlight ~= highlight then vim.wo[win].winhighlight = highlight end
+      if vim.wo[win].winhighlight ~= highlight then vim.wo[win][0].winhighlight = highlight end
       -- Native scrolling must also work within a single long wrapped line.
       if not vim.wo[win].smoothscroll then vim.wo[win].smoothscroll = true end
       if self.follow and not vim.api.nvim_win_get_config(win).hide then

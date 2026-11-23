@@ -9,6 +9,7 @@ local Permissions = require("weave.permissions")
 local SessionStore = require("weave.session_store")
 local Prefs = require("weave.view.prefs")
 local panel = require("weave.view.panel")
+local highlight_at = require("tests.view.highlight_at")
 
 local function press(key)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), "xt", false)
@@ -56,6 +57,24 @@ describe("view.panel shell", function()
     assert.is_nil(transcript:find("NormalFloat:Normal", 1, true))
     assert.truthy(prompt and prompt:find("NormalFloat:WeavePromptSurface", 1, true))
     assert.truthy(prompt and prompt:find("EndOfBuffer:", 1, true))
+  end)
+
+  it("keeps the draft on the prompt surface after focus returns to the editor", function()
+    local editor = vim.api.nvim_get_current_win()
+    local handle = open_panel()
+    handle.focus_prompt()
+    local input = vim.api.nvim_get_current_win()
+    vim.api.nvim_buf_set_lines(vim.api.nvim_win_get_buf(input), 0, -1, false, { "draft text" })
+    vim.api.nvim_set_current_win(editor)
+    local mirrored = vim.wait(300, function()
+      return vim.api.nvim_win_get_config(input).hide and buf_text(handle.bufnr):find("draft text", 1, true)
+    end)
+    local fill = highlight_at(handle.bufnr, "draft text").bg
+    handle.close()
+    assert.is_true(mirrored, "the unfocused draft must be visible in the panel")
+    local prompt_bg = vim.api.nvim_get_hl(0, { name = "WeavePromptSurface", link = false }).bg
+    assert.is_not_nil(prompt_bg)
+    assert.equal(prompt_bg, fill, "the mirrored draft lost the prompt background")
   end)
 
   it("opens ONE docked pane; the transcript is a container, the sidebar inline", function()
@@ -135,7 +154,9 @@ describe("view.panel shell", function()
     local init_file = vim.fn.tempname() .. ".lua"
     local init = ([==[
       vim.opt.rtp:prepend(%q)
-      vim.opt.rtp:prepend(%q)
+      local weave_root = %q
+      vim.opt.rtp:prepend(weave_root)
+      local highlight_at = dofile(weave_root .. "/tests/view/highlight_at.lua")
       local handle = require("weave.view.panel").open({
         store = require("weave.session_store"):new(),
         prefs = require("weave.view.prefs"):new(),
@@ -145,15 +166,13 @@ describe("view.panel shell", function()
         callback = function()
           vim.schedule(function()
             local cur_buf = vim.api.nvim_win_get_buf(vim.api.nvim_get_current_win())
-            local marks = 0
-            for _, m in ipairs(vim.api.nvim_buf_get_extmarks(handle.bufnr, -1, 0, -1, { details = true })) do
-              if m[4].hl_group == "FibrousBorderFocus" then marks = marks + 1 end
-            end
+            local focus = vim.api.nvim_get_hl(0, { name = "FibrousBorderFocus", link = false }).fg
+            local edge = highlight_at(handle.bufnr, "╭.-Prompt ").fg
             local fd = assert(io.open(%q, "w"))
             fd:write(vim.json.encode({
               cur_is_prompt = vim.bo[cur_buf].completefunc
                 == "v:lua.require'weave.view.prompt'.slash_complete",
-              focus_marks = marks,
+              focused_border = focus ~= nil and edge == focus,
             }))
             fd:close()
             vim.cmd("qa!")
@@ -179,7 +198,7 @@ describe("view.panel shell", function()
 
     -- the prompt holds the cursor, and the focus accent it shows is honest
     assert.is_true(result.cur_is_prompt)
-    assert.is_true(result.focus_marks > 0)
+    assert.is_true(result.focused_border)
   end)
 
   it("closing the dock pane tears the whole panel down", function()
