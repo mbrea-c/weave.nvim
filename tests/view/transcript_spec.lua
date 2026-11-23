@@ -147,7 +147,9 @@ describe("view.transcript entries", function()
       return nil
     end
     assert.is_not_nil(mark_resolving({ bg = bubble_bg, fg = border_fg }), "border lost the bubble bg")
-    assert.is_not_nil(mark_resolving({ bg = bubble_bg, italic = true }), "the ❯ marker lost the bubble bg")
+    local marker_fg = vim.api.nvim_get_hl(0, { name = Theme.USER_MARKER_HL, link = false }).fg
+    assert.is_not_nil(marker_fg, "the marker needs a foreground color")
+    assert.is_not_nil(mark_resolving({ bg = bubble_bg, fg = marker_fg }), "the ❯ marker lost the bubble bg")
     handle.unmount()
   end)
 

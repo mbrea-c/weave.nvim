@@ -610,7 +610,7 @@ function M.Sidebar(_, props)
     comp = ui.col,
     props = {
       width = props.sidebar_width,
-      style = { padding = { x = 1 }, border = { left = true } },
+      style = { padding = { x = 1 }, border = { left = true }, border_hl = Theme.DIVIDER_HL },
     },
     children = {
       {

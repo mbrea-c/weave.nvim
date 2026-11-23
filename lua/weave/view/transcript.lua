@@ -131,7 +131,7 @@ function M.UserEntry(_, props)
       comp = ui.row,
       props = {},
       children = {
-        { comp = ui.label, props = { text = "❯ ", style = { text_hl = Theme.USER_MSG_HL } } },
+        { comp = ui.label, props = { text = "❯ ", style = { text_hl = Theme.USER_MARKER_HL } } },
         body,
       },
     },
@@ -144,8 +144,7 @@ function M.UserEntry(_, props)
       props = { text = "  📎 " .. att.name, style = { text_hl = "@comment" } },
     }
   end
-  -- The bubble: user-tinted rounded border over a bg one step off Normal's,
-  -- so the user's own words are findable at a glance while scrolling.
+  -- A raised fill and leading marker distinguish user messages in the transcript.
   return {
     comp = ui.col,
     props = {

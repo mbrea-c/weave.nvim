@@ -6,6 +6,28 @@
 
 local M = {}
 
+M.PANEL_HL = "WeavePanelSurface"
+M.PROMPT_HL = "WeavePromptSurface"
+M.PROMPT_TITLE_HL = "WeavePromptTitle"
+M.DIVIDER_HL = "WeavePanelDivider"
+
+--- Set the window's surface while preserving unrelated window highlights.
+--- @param win integer
+--- @param group string
+function M.apply_surface(win, group)
+  local remap = { Normal = true, NormalNC = true, NormalFloat = true }
+  local pairs = {}
+  for pair in vim.wo[win].winhighlight:gmatch("[^,]+") do
+    if not remap[pair:match("^([^:]+):")] then
+      pairs[#pairs + 1] = pair
+    end
+  end
+  for _, name in ipairs({ "Normal", "NormalNC", "NormalFloat" }) do
+    pairs[#pairs + 1] = name .. ":" .. group
+  end
+  vim.wo[win].winhighlight = table.concat(pairs, ",")
+end
+
 --- Glyphs for tool-call status. `awaiting_permission` is not an ACP status —
 --- it's derived in the view when a pending permission request targets the
 --- tool call. ACP has no "cancelled" status; the protocol enum is pending /
@@ -101,24 +123,25 @@ vim.api.nvim_set_hl(0, M.USAGE_TRACK_HL, { bg = USAGE_TRACK_BG, default = true }
 M.THINKING_TAG_HL = "WeaveThinkingTag"
 vim.api.nvim_set_hl(0, M.THINKING_TAG_HL, { link = "@comment", default = true })
 
--- User-message highlight: blue italic so the user's own prompts stand out
--- from the agent's replies. Standalone user-owned group.
+-- User text stays neutral. The leading marker identifies the speaker.
 M.USER_MSG_HL = "WeaveUserMessage"
-vim.api.nvim_set_hl(0, M.USER_MSG_HL, { fg = "#7aa2f7", italic = true, default = true })
+M.USER_MARKER_HL = "WeaveUserMarker"
 
--- User prompt bubble: the transcript surrounds each user message with a
--- user-tinted rounded border over a background one step off Normal's —
--- enough to lift the message from the page, not enough to read as a block.
--- The bg is DERIVED: Normal bg blended 10% toward Normal fg, which is
--- "slightly lighter" on a dark theme and slightly darker on a light one
--- (blending toward white would clip there). Re-derived on ColorScheme so it
--- tracks the active theme; default = true keeps a user override authoritative.
--- On a theme with no resolvable Normal bg/fg (transparent terminals) the
--- group stays undefined and the bubble is just its border.
+-- Raise user messages by blending the panel background toward its foreground.
+-- Match the border to the fill, with a separate highlight for the marker.
+-- ColorScheme reapplies defaults and preserves colorscheme overrides.
 M.USER_BUBBLE_HL = "WeaveUserBubble"
 M.USER_BUBBLE_BORDER_HL = "WeaveUserBubbleBorder"
-local function define_user_bubble_hl()
+local function define_panel_highlights()
+  vim.api.nvim_set_hl(0, M.PANEL_HL, { link = "NormalFloat", default = true })
+  vim.api.nvim_set_hl(0, M.PROMPT_HL, { link = "Pmenu", default = true })
+  vim.api.nvim_set_hl(0, M.DIVIDER_HL, { link = "FibrousBorder", default = true })
+  vim.api.nvim_set_hl(0, M.USER_MARKER_HL, { link = "FibrousTitle", default = true })
   local normal = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+  local panel = vim.api.nvim_get_hl(0, { name = M.PANEL_HL, link = false })
+  normal.bg, normal.fg = panel.bg or normal.bg, panel.fg or normal.fg
+  vim.api.nvim_set_hl(0, M.USER_MSG_HL, { fg = normal.fg, default = true })
+  vim.api.nvim_set_hl(0, M.PROMPT_TITLE_HL, { fg = normal.fg, default = true })
   if normal.bg and normal.fg then
     local mixed = 0
     for _, shift in ipairs({ 16, 8, 0 }) do
@@ -127,13 +150,13 @@ local function define_user_bubble_hl()
       mixed = bit.bor(mixed, bit.lshift(math.floor(b + (f - b) * 0.1 + 0.5), shift))
     end
     vim.api.nvim_set_hl(0, M.USER_BUBBLE_HL, { bg = mixed, default = true })
+    vim.api.nvim_set_hl(0, M.USER_BUBBLE_BORDER_HL, { fg = mixed, bg = mixed, default = true })
   end
-  vim.api.nvim_set_hl(0, M.USER_BUBBLE_BORDER_HL, { fg = "#7aa2f7", default = true })
 end
-define_user_bubble_hl()
+define_panel_highlights()
 vim.api.nvim_create_autocmd("ColorScheme", {
-  group = vim.api.nvim_create_augroup("WeaveUserBubbleHl", { clear = true }),
-  callback = define_user_bubble_hl,
+  group = vim.api.nvim_create_augroup("WeavePanelHighlights", { clear = true }),
+  callback = define_panel_highlights,
 })
 
 --- Plan-task glyphs, one per status. The sidebar's task list uses these (NOT

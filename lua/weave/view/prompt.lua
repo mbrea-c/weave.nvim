@@ -441,6 +441,8 @@ function M.Prompt(ctx, props)
     } },
   }
 
+  local preset_hl = Theme.PROMPT_BORDER_HL[preset.name]
+  local title_hl = preset_hl ~= Theme.PROMPT_BORDER_HL.ask and preset_hl or Theme.PROMPT_TITLE_HL
   local box = {
     comp = ui.text_input,
     key = BOX_KEY,
@@ -462,7 +464,7 @@ function M.Prompt(ctx, props)
             -- builtin presets keep their shipped titles/colours; a custom
             -- preset shows its label over the neutral border
             text = "Prompt (" .. (Theme.PROMPT_TITLE_EXTRA[preset.name] or preset.label or preset.name) .. ")",
-            hl = Theme.PROMPT_BORDER_HL[preset.name] or Theme.PROMPT_BORDER_HL.ask,
+            hl = title_hl,
             align = "left",
           },
         },
@@ -470,6 +472,10 @@ function M.Prompt(ctx, props)
       },
       on_create = function(bufnr)
         st.bufnr = bufnr
+        local winid = vim.fn.win_findbuf(bufnr)[1]
+        if winid then
+          Theme.apply_surface(winid, Theme.PROMPT_HL)
+        end
         -- prompts are markdown; set it BEFORE the completion wiring so the
         -- ftplugin can't clobber completefunc/iskeyword
         vim.bo[bufnr].filetype = "markdown"

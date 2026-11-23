@@ -157,6 +157,14 @@ The shortcut is the named action `open_overview`; rebind or disable it through
 `keys.open_overview`. Disabling the shortcut leaves the footer button available.
 This layout requires fibrous's inline `overflow = "hidden"` support.
 
+### Panel colors
+
+A colorscheme can set `WeavePanelSurface` for the dock and transcript,
+`WeavePromptSurface` for the composer, and `WeavePanelDivider` for the sidebar
+divider. The user-message fill and marker use `WeaveUserBubble` and
+`WeaveUserMarker`. The prompt title shows the permission preset, and
+`FibrousBorderFocus` marks the focused input.
+
 ### Popup sizing
 
 Lists, detail pages and Peek fit their width to the content and their height

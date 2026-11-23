@@ -25,6 +25,7 @@ local SidebarView = require("weave.view.sidebar")
 local Sidebar = SidebarView.Sidebar
 local Config = require("weave.config")
 local Keys = require("weave.keys")
+local Theme = require("weave.view.theme")
 
 local M = {}
 
@@ -172,6 +173,7 @@ function M.open(opts)
     session_settings = opts.session_settings,
     on_transcript_create = function(bufnr, winid)
       transcript.bufnr, transcript.winid = bufnr, winid
+      Theme.apply_surface(winid, Theme.PANEL_HL)
       vim.b[bufnr].weave_transcript = true
       if visibility then
         visibility:bind(winid)
@@ -191,6 +193,8 @@ function M.open(opts)
     -- on every entry; folding works across the tool header and body.
     keys = vim.list_extend(Keys.lhs_list("peek"), Keys.lhs_list("toggle_tool_call")),
   })
+
+  Theme.apply_surface(app.host_winid, Theme.PANEL_HL)
 
   local group = vim.api.nvim_create_augroup("WeavePanel_" .. app.host_winid, { clear = true })
   local closing = false

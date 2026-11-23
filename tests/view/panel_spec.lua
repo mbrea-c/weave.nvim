@@ -37,6 +37,27 @@ local function open_panel(opts)
 end
 
 describe("view.panel shell", function()
+  it("uses one panel surface behind the transcript and a raised prompt surface", function()
+    local handle = open_panel()
+    local host = vim.wo[handle.winid].winhighlight
+    local transcript = vim.wo[handle.transcript.winid].winhighlight
+    local prompt
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local buf = vim.api.nvim_win_get_buf(win)
+      if vim.bo[buf].completefunc == "v:lua.require'weave.view.prompt'.slash_complete" then
+        prompt = vim.wo[win].winhighlight
+        break
+      end
+    end
+    handle.close()
+
+    assert.truthy(host:find("Normal:WeavePanelSurface", 1, true))
+    assert.truthy(transcript:find("NormalFloat:WeavePanelSurface", 1, true))
+    assert.is_nil(transcript:find("NormalFloat:Normal", 1, true))
+    assert.truthy(prompt and prompt:find("NormalFloat:WeavePromptSurface", 1, true))
+    assert.truthy(prompt and prompt:find("EndOfBuffer:", 1, true))
+  end)
+
   it("opens ONE docked pane; the transcript is a container, the sidebar inline", function()
     local before_panes = pane_count()
     local before_wins = #vim.api.nvim_list_wins()
