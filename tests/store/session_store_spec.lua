@@ -50,6 +50,31 @@ describe("session_store initial state", function()
 end)
 
 describe("session_store prompt queue + history", function()
+  it("tracks the latest sent text independently of transcript windowing", function()
+    local store = SessionStore:new()
+    assert.is_nil(store.state.last_prompt)
+    local sent = { kind = "user", text = "My ask\n\nAppended feedback" }
+    store:append_entry(sent, "My ask")
+    assert.equal("My ask", store.state.last_prompt)
+    assert.equal(sent.text, store.state.entries[1].text)
+    store:enqueue_prompt("not sent yet")
+    store:append_entry({ kind = "tutor", text = "system note" })
+    store:append_streaming_text("agent", "reply")
+    store:upsert_tool_call({ tool_call_id = "call", status = "completed" })
+    store:append_entry({ kind = "user", text = " \n\t " })
+    for _ = 1, SessionStore.WINDOW do
+      store:append_entry({ kind = "agent", text = "another reply" })
+    end
+    store:follow_window()
+    assert.is_true(store.state.window_start > 1)
+    assert.equal("My ask", store.state.last_prompt)
+    store:reset()
+    assert.is_nil(store.state.last_prompt)
+    -- Restored user entries don't have a separately available typed body.
+    store:append_entry({ kind = "user", text = "Restored ask" })
+    assert.equal("Restored ask", store.state.last_prompt)
+  end)
+
   it("enqueues FIFO; remove_queued and update_queued edit by identity", function()
     local store = SessionStore:new()
     store:enqueue_prompt("one")

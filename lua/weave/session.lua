@@ -924,7 +924,7 @@ function Session:_send_messages(msgs)
         kind = "user",
         text = body,
         attachments = not attached and attachments or nil,
-      })
+      }, msg.text)
       self._store:push_history(msg.text) -- a sent prompt joins the recall history
       attached = true
     end

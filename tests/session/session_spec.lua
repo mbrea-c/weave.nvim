@@ -886,6 +886,7 @@ describe("session steer queue", function()
     assert.equal(2, #store.state.entries)
     assert.equal("user", store.state.entries[2].kind)
     assert.equal(expected, store.state.entries[2].text)
+    assert.equal("steer first", store.state.last_prompt)
   end)
 
   it("keeps each comment with its own batched steer and edit diffs separate", function()

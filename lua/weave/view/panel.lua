@@ -5,6 +5,7 @@
 --
 --   row
 --   ├── col (grow)
+--   │   ├── LastPrompt (fixed strip above the scroller)
 --   │   ├── container (grow, scroll)  ← the transcript, in its OWN buffer
 --   │   └── Prompt (status row + text_input subwin)
 --   └── col (sidebar_width) — Sidebar, inline in the root canvas
@@ -20,6 +21,7 @@ local ui = require("fibrous.inline.components")
 
 local TranscriptView = require("weave.view.transcript")
 local Transcript = TranscriptView.Transcript
+local LastPrompt = require("weave.view.last_prompt")
 local Prompt = require("weave.view.prompt").Prompt
 local SidebarView = require("weave.view.sidebar")
 local Sidebar = SidebarView.Sidebar
@@ -61,6 +63,7 @@ local function Panel(_, props)
         comp = ui.col,
         props = { grow = 1 },
         children = {
+          { comp = LastPrompt, memo = true, props = { store = props.store } },
           {
             comp = ui.container,
             -- Vertical-only: the transcript wraps to its width and never scrolls

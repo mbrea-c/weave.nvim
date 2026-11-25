@@ -41,6 +41,7 @@ local History = require("weave.transcript_history")
 
 --- @class weave.store.State
 --- @field entries weave.store.ChatEntry[] Ordered chat transcript
+--- @field last_prompt? string Latest sent or restored user text, independent of the rendered transcript window
 --- @field tool_calls table<string, table> Tool call blocks keyed by tool_call_id
 --- @field tool_call_order string[] Insertion order for stable rendering
 --- @field expanded table<string, boolean> Per-tool-call expansion, keyed by tool_call_id (absent/false = collapsed)
@@ -334,12 +335,17 @@ end
 
 --- Append a chat entry (reassigning the list — see the discipline note).
 --- @param entry weave.store.ChatEntry
-function SessionStore:append_entry(entry)
+--- @param prompt_text? string Original user text when entry.text also includes bundled feedback
+function SessionStore:append_entry(entry, prompt_text)
   self:_commit(function(draft)
     local entries = vim.list_extend({}, draft.entries)
     entries[#entries + 1] = entry
     self._transcript:append(entry)
     draft.entries = entries
+    local text = prompt_text or entry.text
+    if entry.kind == "user" and type(text) == "string" and text:find("%S") then
+      draft.last_prompt = text
+    end
   end)
 end
 
@@ -816,6 +822,7 @@ function SessionStore:reset()
   self._kiro_tasks = nil -- forget remembered Kiro task-list state
   self:_commit(function(draft)
     draft.entries = {}
+    draft.last_prompt = nil
     draft.tool_calls = {}
     draft.tool_call_order = {}
     draft.expanded = {}
