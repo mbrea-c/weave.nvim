@@ -130,11 +130,13 @@ The panel is **one docked pane** with three regions:
   under the add/delete colours, language inferred from the file, an old│new
   line-number gutter), and permission requests. It scrolls independently. It's a fibrous *container*: `<CR>` steps
   into it, `h/j/k/l` at its edges step back out, `<C-d>/<C-u>` page inside.
-  A **Last prompt** strip above it keeps your most recent sent message in view,
-  even when you scroll back or the transcript hides older entries. The preview
-  fits in two rows and ends in an ellipsis if clipped. It shows what you typed,
-  not draft text, queued prompts, or automatically attached feedback. The
-  original message is unchanged.
+  The **Last prompt** strip shows the prompt for the part of the conversation
+  you are reading. It appears once the entire prompt scrolls past the top,
+  even if older entries are hidden. While the top row is inside a prompt,
+  including a long one, the strip stays hidden. Scrolling back follows the
+  same rule in reverse. The preview fits in two rows and ends in an ellipsis
+  if clipped. It shows what you typed, without automatically attached feedback;
+  drafts and queued prompts never appear here.
 - **Sidebar** — session metadata, view toggles, the active permission preset,
   the task list, running terminal tasks, MCP servers, your pending
   flush (unsent comments and edits), and any pending permission request.

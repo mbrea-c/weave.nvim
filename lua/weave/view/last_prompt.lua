@@ -34,18 +34,77 @@ local function preview(text, columns)
   return { { title, hl = Theme.USER_MARKER_HL }, first:gsub(" +$", "") .. "\n" .. rest }
 end
 
--- Only the sent prompt invalidates this strip, not streamed transcript updates.
--- It is painted into the panel canvas, outside the scrolling transcript.
-return function(ctx, props)
+-- Use entry ownership, not the text in a rendered row: borders, wrapped
+-- Markdown and identical messages must all have the same boundary semantics.
+local has_sources, Sources = pcall(require, "fibrous.sources")
+local function reading_prompt(props, buf, top)
   local store = props.store
-  local prompt = ctx.use_state(store.state.last_prompt)
-  ctx.use_effect(function()
-    local function sync(state)
-      prompt.set(state.last_prompt)
+  local history = store:transcript()
+  if #history.prompts == 0 then return nil end
+  -- One gap and at most one history control can precede the next entry.
+  for row = top, math.min(top + 2, vim.api.nvim_buf_line_count(buf)) do
+    for _, match in ipairs(Sources.resolve(buf, { lnum = row, col = 1, end_col = 1 })) do
+      local data = match.source.data
+      local record = data and data.history == history and history:get(data.entry_id)
+      if record then
+        if row == top and record.prompt then return nil end
+        return history:prompt_before(record.sequence)
+      end
     end
-    sync(store.state)
-    return store:subscribe(sync)
-  end, { store })
+  end
+  if props.visibility and top <= props.visibility:offset(#history.records) then
+    -- The viewport just jumped to an unpainted band. Its next paint will
+    -- supply the actual boundary; never guess with a newer prompt.
+    return nil
+  end
+  -- Trailing controls have no entry owner. In button mode the visible
+  -- slice can end before the newest entry in the canonical transcript.
+  local last = not props.visibility and store.state.window_end or #history.records
+  return history:prompt_before(last + 1)
+end
+
+return function(ctx, props)
+  local transcript = props.transcript
+  local prompt = ctx.use_state(nil)
+  ctx.use_effect(function()
+    if not has_sources then return end
+    local alive, pending = true, false
+    local function refresh()
+      pending = false
+      local win, buf = transcript.winid, transcript.bufnr
+      if not alive or not win or not vim.api.nvim_win_is_valid(win) then return end
+      vim.api.nvim_win_call(win, function()
+        local view = vim.fn.winsaveview()
+        local text = reading_prompt(props, buf, view.topline)
+        local previous = prompt.get()
+        if previous == text then return end
+        prompt.set(text)
+        if (not previous) ~= (not text) and vim.fn.winsaveview().topline ~= view.topline then
+          view.lnum = math.min(view.lnum, view.topline + vim.api.nvim_win_get_height(win) - 1)
+          vim.fn.winrestview(view)
+        end
+      end)
+    end
+    local function schedule()
+      if alive and not pending then
+        pending = true
+        vim.schedule(refresh)
+      end
+    end
+    local scroll = vim.api.nvim_create_autocmd("WinScrolled", { callback = function(ev)
+      local id = tostring(transcript.winid)
+      if ev.match == id or vim.v.event[id] then schedule() end
+    end })
+    local unsubscribe = Sources.subscribe(function(buf)
+      if buf == transcript.bufnr then schedule() end
+    end)
+    schedule()
+    return function()
+      alive = false
+      unsubscribe()
+      vim.api.nvim_del_autocmd(scroll)
+    end
+  end, { transcript })
   local text = prompt.get()
   if not text then return nil end
   text = vim.trim((text:gsub("[%c%s]+", " ")))

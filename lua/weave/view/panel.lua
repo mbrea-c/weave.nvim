@@ -63,7 +63,9 @@ local function Panel(_, props)
         comp = ui.col,
         props = { grow = 1 },
         children = {
-          { comp = LastPrompt, memo = true, props = { store = props.store } },
+          { comp = LastPrompt, memo = true, props = {
+            store = props.store, transcript = props.transcript, visibility = props.visibility,
+          } },
           {
             comp = ui.container,
             -- Vertical-only: the transcript wraps to its width and never scrolls
@@ -163,6 +165,7 @@ function M.open(opts)
 
   local app = mount.split(Panel, {
     visibility = visibility,
+    transcript = transcript,
     store = store,
     prefs = prefs,
     sidebar_width = sidebar_width,
