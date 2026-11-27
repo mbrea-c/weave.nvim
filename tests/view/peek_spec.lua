@@ -1,5 +1,5 @@
 -- The peek float (weave.view.peek): an entry's RAW source, wrapped and
--- read-only, dismissed with q / <Esc> — or by focusing anything else, since it
+-- read-only, dismissed with q — or by focusing anything else, since it
 -- is a glance and not a window to arrange things around.
 
 local Peek = require("weave.view.peek")

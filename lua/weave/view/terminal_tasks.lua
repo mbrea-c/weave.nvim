@@ -161,7 +161,7 @@ end
 
 --- The FULL task list in its own floating mount: every task ever started —
 --- running, exited, killed — each a live-view button over a dim status
---- line, live off the store; q/<Esc> closes.
+--- line, live off the store; q closes.
 function M.open_task_list()
   local function FullList(ctx)
     local tasks = use_tasks(ctx)
@@ -191,7 +191,7 @@ end
 
 --- One task's LIVE view: flag + status header, the command and cwd, then the
 --- stdout and stderr streams re-rendered as chunks arrive (each capped to the
---- last _tail_lines lines), with a kill button while it runs; q/<Esc> closes.
+--- last _tail_lines lines), with a kill button while it runs; q closes.
 --- @param id integer
 --- @param opts? { full?: boolean } Explicit full output bypasses the preview tail cap.
 function M.open_task_view(id, opts)

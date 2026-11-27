@@ -158,7 +158,7 @@ Activate the button or press **`;;o`** in normal mode anywhere in the panel
 (including the transcript and prompt input) to open a scrollable popup containing
 every sidebar section. Its controls use the same live session and settings
 stores, including the MCP browser links. Long plans retain their full-list link.
-Scroll normally; `q`/`<Esc>` closes, and moving focus outside dismisses it.
+Scroll normally; `q` closes, and moving focus outside dismisses it.
 
 The shortcut is the named action `open_overview`; rebind or disable it through
 `keys.open_overview`. Disabling the shortcut leaves the footer button available.
@@ -206,7 +206,7 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | `<C-Down>` | `recall_newer` | In the prompt: back down towards your draft |
 | `za` | `toggle_tool_call` | Anywhere in a tool call: expand/collapse it, including its header, body, and focused stdout/stderr panes |
 | `zR` / `zM` | `expand_all` / `collapse_all` | Expand / collapse all tool calls |
-| `K` | `peek` | Over a transcript entry: its raw source in a scrollable float (yank/search-friendly). Over a **tool call**: the whole call as indented JSON. Dismissed with `q`/`<Esc>` — or by focusing anything else |
+| `K` | `peek` | Over a transcript entry: its raw source in a scrollable float (yank/search-friendly). Over a **tool call**: the whole call as indented JSON. Dismissed with `q` — or by focusing anything else |
 | `;;t` | `toggle_thoughts` | Toggle thinking blocks |
 | `;;d` | `toggle_diffs` | Toggle edit diffs |
 | `;;c` | `toggle_conceal` | Toggle markdown prettifying (conceal) |
@@ -218,7 +218,8 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | `;;1` … `;;9` | `permission_prefix` + digit | Answer a permission request with option N |
 | `;;r` | `restore_session` | Restore a saved session in place |
 | `;;s` | `sessions` | Open the session modal (also `:Weave sessions`) |
-| `q` / `<Esc>` | `close_float` | Close a weave floating window (modals, peek, the full task list) |
+| `q` | `close_float` | Close a Weave floating window (modals, peek, the full task list) |
+| `<Esc>` | Fibrous widget mode | At a Fibrous view's root, toggle navigation between controls with `hjkl` |
 
 **Every weave popup also closes when it loses focus** — modals, peek, the
 settings and permission windows, the task and comment lists. They are floats
@@ -401,7 +402,7 @@ vim.keymap.set("n", "<leader><leader>s", "<cmd>Weave sessions<CR>", { desc = "Pi
   session's details. `✕` closes the session and its descendants everywhere,
   asking for confirmation before closing a parent.
 - `a` opens **New session** and `o` opens **Load saved**. The same actions are
-  in the pinned footer. `q` or `<Esc>` dismisses the picker.
+  in the pinned footer. `q` dismisses the picker.
 
 `;;r` instead restores a saved session *in place*, over the current
 conversation in the panel.
@@ -524,7 +525,7 @@ even when it provides no token totals.
 Dropdowns filter as you
 type; `<C-n>`/`<C-p>` move the selection, `<CR>`/`<C-y>` apply it. Opened
 from the modal for a session that is not the tab's current one, an **Open in
-panel** button makes it the tab's selection. `q`/`<Esc>` closes.
+panel** button makes it the tab's selection. `q` closes.
 
 ### Inline code feedback
 

@@ -123,7 +123,7 @@ local ConfigDefault = {
     peek = "K",
     toggle_tool_call = "za",
     -- weave's floating windows (modals, peek, the full task list)
-    close_float = { "q", "<Esc>" },
+    close_float = "q",
   },
 
   acp_providers = {

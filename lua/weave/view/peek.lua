@@ -3,7 +3,7 @@
 -- are clipped to the viewport width — so anything wide (a long URL in a fence, a
 -- table) can't be read or yanked in place. Peek (the `K` key over an entry, via
 -- fibrous's on_key routing) drops the raw text into a plain, wrapping, read-only
--- float you can scroll, search and yank from, then dismiss with q / <Esc> — or
+-- float you can scroll, search and yank from, then dismiss with q — or
 -- by simply focusing something else.
 --
 -- Over a TOOL CALL the raw source is the call itself, as indented JSON (see

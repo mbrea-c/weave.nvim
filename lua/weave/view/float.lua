@@ -1,7 +1,7 @@
 -- weave.view.float: the chrome every weave popup shares.
 --
 -- A popup here is a float over a conversation you are reading, not a window
--- you arrange things around — so they all behave the same way: `q`/`<Esc>`
+-- you arrange things around — so they all behave the same way: `q`
 -- closes, and moving focus anywhere else closes too. That second half used to
 -- be true of `peek` alone, which meant the settings window, the session
 -- modal, the task list and the rest could be left hanging over the panel

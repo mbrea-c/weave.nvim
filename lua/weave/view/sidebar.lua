@@ -412,7 +412,7 @@ local function task_row(e, text, wrap)
 end
 
 --- The FULL plan in its own floating mount (the "…see full list" button):
---- every item, untruncated, live off the store; q/<Esc> closes.
+--- every item, untruncated, live off the store; q closes.
 --- @param store weave.store.SessionStore
 function M.open_tasks_list(store)
   local function FullList(ctx)

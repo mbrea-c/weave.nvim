@@ -287,7 +287,7 @@ function M.activate(id)
 end
 
 --- The full comment list in its own floating mount, live off the store;
---- q/<Esc> closes. Activating a row closes the list, jumps to that comment's
+--- q closes. Activating a row closes the list, jumps to that comment's
 --- code and opens its editor.
 function M.open_list()
   local app

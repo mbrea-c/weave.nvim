@@ -1,4 +1,4 @@
--- weave.view.float: the chrome every popup shares — q/<Esc> closes, and so
+-- weave.view.float: the chrome every popup shares — q closes, and so
 -- does moving focus anywhere outside the float.
 --
 -- "Outside" is the whole point: a fibrous mount's own controls live in
@@ -235,6 +235,15 @@ describe("view.float", function()
       end
       return out
     end
+
+    it("leaves Escape to Fibrous and closes with q from widget mode", function()
+      local app = open_settings()
+      vim.api.nvim_set_current_win(app.winid)
+      vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "xt", false)
+      assert.is_true(vim.api.nvim_win_is_valid(app.winid))
+      vim.api.nvim_feedkeys("q", "xt", false)
+      assert.is_false(vim.api.nvim_win_is_valid(app.winid))
+    end)
 
     it("stays open while you use its own fields", function()
       local app = open_settings()
