@@ -236,7 +236,7 @@ describe("view.float", function()
       return out
     end
 
-    it("leaves Escape to Fibrous and closes with q from widget mode", function()
+    it("stays open on Escape and closes with q", function()
       local app = open_settings()
       vim.api.nvim_set_current_win(app.winid)
       vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "xt", false)

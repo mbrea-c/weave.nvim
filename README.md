@@ -219,7 +219,7 @@ field in the `keys` config table, so any of them can be rebound or disabled
 | `;;r` | `restore_session` | Restore a saved session in place |
 | `;;s` | `sessions` | Open the session modal (also `:Weave sessions`) |
 | `q` | `close_float` | Close a Weave floating window (modals, peek, the full task list) |
-| `<Esc>` | Fibrous widget mode | At a Fibrous view's root, toggle navigation between controls with `hjkl` |
+| `<leader>w` | Fibrous widget mode | Widget navigation starts on. Toggle it across Fibrous views from any focused Fibrous window. In the transcript, `hjkl` jumps between rendered controls. The prompt keeps its editing keys. |
 
 **Every weave popup also closes when it loses focus** — modals, peek, the
 settings and permission windows, the task and comment lists. They are floats

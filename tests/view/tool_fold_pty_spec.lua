@@ -8,6 +8,7 @@ describe("entry-wide tool folds in a real terminal", function()
       for i = 1, 6 do steps[i] = { lua = "FRAME(" .. i .. ")", wait_ms = 300 } end
       termdraw.drive({ cols = size[1], rows = size[2], rtp = { root, vim.fn.getcwd() }, steps = steps,
         init = ([[
+          dofile("tests/free_cursor.lua")()
           require("weave").setup({})
           local store, prefs = require("weave.session_store"):new(), require("weave.view.prefs"):new()
           prefs:set("follow", false)

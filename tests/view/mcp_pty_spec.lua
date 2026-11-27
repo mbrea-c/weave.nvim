@@ -86,6 +86,7 @@ describe("MCP browser terminal rendering", function()
                   vim.api.nvim_win_set_cursor(app.winid, { row, 2 }); break
                 end
               end
+              vim.api.nvim_exec_autocmds("CursorMoved", { buffer = app.bufnr })
               result.schema = screen()
               result.before_tick = view()
             elseif i == 4 then

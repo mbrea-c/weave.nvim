@@ -9,13 +9,15 @@ local function press(key)
 end
 
 describe("entry-wide tool fold keys", function()
-  local handles, saved_key, saved_lines
+  local handles, saved_key, saved_lines, restore_cursor
   before_each(function()
+    restore_cursor = require("tests.free_cursor")()
     handles, saved_key, saved_lines = {}, Config.keys.toggle_tool_call, vim.o.lines
     ToolCall.reset()
   end)
   after_each(function()
     for _, handle in ipairs(handles) do handle.close() end
+    restore_cursor()
     Config.keys.toggle_tool_call, vim.o.lines = saved_key, saved_lines
     ToolCall.reset()
   end)

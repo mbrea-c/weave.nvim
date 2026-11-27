@@ -42,13 +42,15 @@ local function highlighted(app, group, col, end_col)
 end
 
 describe("tool-call disclosure control", function()
-  local apps, saved_mouse
+  local apps, saved_mouse, restore_cursor
   before_each(function()
+    restore_cursor = require("tests.free_cursor")()
     apps, saved_mouse = {}, mousemove._getmousepos
     ToolCall.reset()
   end)
   after_each(function()
     for _, app in ipairs(apps) do app.unmount() end
+    restore_cursor()
     mousemove._getmousepos = saved_mouse
     ToolCall.reset()
   end)
