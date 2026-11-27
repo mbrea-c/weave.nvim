@@ -1,12 +1,12 @@
--- Live registry forest. Only the tree scrolls; new/load actions stay pinned.
+-- The live session tree and its actions share one scrolling popup.
 local Float = require("weave.view.float")
 local ui = require("fibrous.inline.components")
 local Width = require("fibrous.inline.width")
-local Keys = require("weave.keys")
 
 local M = {}
 local CURRENT = "●"
 local FOLD_WIDTH = 3
+local INSET = 1
 local STATUS = {
   idle = { "Idle", "Comment" },
   thinking = { "Thinking", "DiagnosticInfo" },
@@ -98,7 +98,7 @@ local function columns(rows, cap, details)
 end
 
 local function Modal(_, props)
-  local cap = Float.width() - 2 -- one cell of inset on each side
+  local cap = Float.width() - 2 * INSET
   local title_w, provider_w, status_w = columns(props.rows, cap, props.on_details ~= nil)
   local rows = {}
   local marker_w = Width.str(CURRENT)
@@ -142,12 +142,11 @@ local function Modal(_, props)
   })
   local footer = { actions }
   if cap >= 41 then footer[2] = label("q close", "Comment") end
-  return { comp = ui.col, props = { style = { padding = { x = 1 } } }, children = {
+  return { comp = ui.col, props = { style = { padding = { x = INSET } } }, children = {
     line({ label("Sessions", "Title"), label(("%d active"):format(props.count), "Comment") },
       { justify = "space-between", gap = 2 }),
     headings,
-    { comp = ui.container, props = { grow = 1, scroll_x = false, on_create = props.on_tree_create },
-      children = rows },
+    { comp = ui.col, children = rows },
     { comp = ui.label, props = { fill = function(width) return ("─"):rep(width) end, style = { text_hl = "FloatBorder" } } },
     line(footer, { justify = "space-between", gap = 2 }),
   } }
@@ -162,7 +161,7 @@ function M.open(opts)
   local tab = vim.api.nvim_get_current_tabpage()
   local open, scheduled, confirming = true, false, false
   local app, refresh, unsubscribe
-  local tree, collapsed = {}, {}
+  local collapsed = {}
   local last_selected
 
   local function cleanup()
@@ -182,10 +181,6 @@ function M.open(opts)
   local function load_saved()
     close()
     if opts.on_load_saved then opts.on_load_saved() end
-  end
-  local function map_footer(bufnr)
-    vim.keymap.set("n", "a", new_session, { buffer = bufnr, nowait = true, desc = "weave: new session" })
-    vim.keymap.set("n", "o", load_saved, { buffer = bufnr, nowait = true, desc = "weave: load saved session" })
   end
 
   local function rows()
@@ -227,11 +222,6 @@ function M.open(opts)
     local visible, count = rows()
     return {
       rows = visible, count = count, selected_key = last_selected,
-      on_tree_create = function(bufnr, winid)
-        tree.bufnr, tree.winid = bufnr, winid
-        map_footer(bufnr)
-        Keys.map(bufnr, "close_float", close, { nowait = true, desc = "weave: close session tree" })
-      end,
       on_toggle = function(key) collapsed[key] = not collapsed[key]; refresh() end,
       on_select = function(entry) close(); opts.on_select(entry) end,
       on_close_session = function(entry)
@@ -254,10 +244,7 @@ function M.open(opts)
   end
 
   local initial = build_props()
-  app = Float.mount(Modal, initial, {
-    preferred_height = function(props) return math.max(#props.rows, 1) + 4 end,
-    on_unmount = cleanup,
-  })
+  app = Float.mount(Modal, initial, { on_unmount = cleanup })
   refresh = function()
     if not open then return end
     app.set_props(build_props())
@@ -271,18 +258,20 @@ function M.open(opts)
   Float.chrome(app, {
     close = close, desc = "weave: close session tree", keep_open = function() return confirming end,
   })
-  map_footer(app.bufnr)
-  if #initial.rows > 0 and tree.winid then
+  vim.keymap.set("n", "a", new_session, { buffer = app.bufnr, nowait = true, desc = "weave: new session" })
+  vim.keymap.set("n", "o", load_saved, { buffer = app.bufnr, nowait = true, desc = "weave: load saved session" })
+  if #initial.rows > 0 then
     local index = 1
     for i, row in ipairs(initial.rows) do
       if row.entry.key == initial.selected_key then index = i; break end
     end
-    local text = vim.api.nvim_buf_get_lines(tree.bufnr, index - 1, index, false)[1]
-    vim.api.nvim_set_current_win(tree.winid)
-    vim.api.nvim_win_set_cursor(tree.winid, { index, Width.cell_to_byte(text, title_column()) })
+    local row = index + 2 -- the popup title and column headings precede the sessions
+    local text = vim.api.nvim_buf_get_lines(app.bufnr, row - 1, row, false)[1]
+    vim.api.nvim_win_set_cursor(app.winid, { row, Width.cell_to_byte(text, INSET + title_column()) })
   end
   return {
-    bufnr = app.bufnr, winid = app.winid, tree = tree,
+    bufnr = app.bufnr, winid = app.winid,
+    tree = { bufnr = app.bufnr, winid = app.winid }, -- existing session-tree handle
     close = close, refresh = refresh, is_open = function() return open end,
   }
 end

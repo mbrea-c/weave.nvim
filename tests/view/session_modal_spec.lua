@@ -31,32 +31,22 @@ local function get_instance(_name, on_ready)
   return client
 end
 
-local function buffers(handle)
-  return { { bufnr = handle.bufnr, winid = handle.winid },
-    { bufnr = handle.tree.bufnr, winid = handle.tree.winid } }
-end
 local function buffer_text(handle)
-  local chunks = {}
-  for _, target in ipairs(buffers(handle)) do
-    chunks[#chunks + 1] = table.concat(vim.api.nvim_buf_get_lines(target.bufnr, 0, -1, false), "\n")
-  end
-  return table.concat(chunks, "\n")
+  return table.concat(vim.api.nvim_buf_get_lines(handle.bufnr, 0, -1, false), "\n")
 end
 local function locate(handle, needle, from)
-  for _, target in ipairs(buffers(handle)) do
-    for row, line in ipairs(vim.api.nvim_buf_get_lines(target.bufnr, 0, -1, false)) do
-      if not from or target.bufnr == from.bufnr and row >= from.row then
-        local col = line:find(needle, 1, true)
-        if col then return { row = row, col = col - 1, bufnr = target.bufnr, winid = target.winid } end
-      end
+  for row, line in ipairs(vim.api.nvim_buf_get_lines(handle.bufnr, 0, -1, false)) do
+    if not from or row >= from.row then
+      local col = line:find(needle, 1, true)
+      if col then return { row = row, col = col - 1 } end
     end
   end
   error("not found in popup: " .. needle)
 end
-local function activate(_, target)
-  vim.api.nvim_set_current_win(target.winid)
-  vim.api.nvim_win_set_cursor(target.winid, { target.row, target.col })
-  vim.api.nvim_exec_autocmds("CursorMoved", { buffer = target.bufnr })
+local function activate(handle, target)
+  vim.api.nvim_set_current_win(handle.winid)
+  vim.api.nvim_win_set_cursor(handle.winid, { target.row, target.col })
+  vim.api.nvim_exec_autocmds("CursorMoved", { buffer = handle.bufnr })
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "xt", false)
 end
 
@@ -67,27 +57,23 @@ describe("view.session_modal", function()
   end)
 
   it("uses the same popup surface from the editor, transcript and prompt", function()
-    local function popup_surfaces()
+    local function popup_surface()
       local popup = SessionModal.open({ on_select = function() end })
-      local surfaces = {}
-      for _, target in ipairs(buffers(popup)) do
-        local remaps = {}
-        for name, group in vim.wo[target.winid].winhighlight:gmatch("(%w+):(%w+)") do
-          if name == "Normal" or name == "NormalNC" or name == "NormalFloat" then remaps[name] = group end
-        end
-        surfaces[#surfaces + 1] = remaps
+      local remaps = {}
+      for name, group in vim.wo[popup.winid].winhighlight:gmatch("(%w+):(%w+)") do
+        if name == "Normal" or name == "NormalNC" or name == "NormalFloat" then remaps[name] = group end
       end
       popup.close()
-      return surfaces
+      return remaps
     end
-    local editor = popup_surfaces()
+    local editor = popup_surface()
     local panel = require("weave.view.panel").open({
       store = require("weave.session_store"):new(), prefs = require("weave.view.prefs"):new(),
     })
     vim.api.nvim_set_current_win(panel.transcript.winid)
-    local transcript = popup_surfaces()
+    local transcript = popup_surface()
     panel.focus_prompt()
-    local prompt = popup_surfaces()
+    local prompt = popup_surface()
     panel.close()
 
     assert.same(editor, transcript)
@@ -127,9 +113,9 @@ describe("view.session_modal", function()
     Registry.select(b.key)
 
     local handle = SessionModal.open({ on_select = function() end, on_details = function() end })
-    local body = vim.api.nvim_buf_get_lines(handle.tree.bufnr, 0, -1, false)
-    local focused = vim.api.nvim_get_current_win() == handle.tree.winid
-    local cursor = vim.api.nvim_win_get_cursor(handle.tree.winid)
+    local body = vim.api.nvim_buf_get_lines(handle.bufnr, 2, 4, false)
+    local focused = vim.api.nvim_get_current_win() == handle.winid
+    local cursor = vim.api.nvim_win_get_cursor(handle.winid)
     local text = buffer_text(handle)
     handle.close()
     vim.o.columns = columns
@@ -145,7 +131,7 @@ describe("view.session_modal", function()
     assert.equal(column(body[1], "ⓘ"), column(body[2], "ⓘ"))
     assert.equal(column(body[1], "✕"), column(body[2], "✕"))
     assert.is_true(focused)
-    assert.same({ 2, body[2]:find("Review changes", 1, true) - 1 }, cursor)
+    assert.same({ 4, body[2]:find("Review changes", 1, true) - 1 }, cursor)
   end)
 
   it("activating a row selects that session and closes the modal", function()
@@ -208,7 +194,7 @@ describe("view.session_modal", function()
     handle.close()
   end)
 
-  it("keeps footer actions accessible while the tree has focus", function()
+  it("makes new and load shortcuts available on session rows", function()
     Registry.add({ provider = "prov-a", get_instance = get_instance })
     pump()
     local called = {}
@@ -218,11 +204,9 @@ describe("view.session_modal", function()
       on_load_saved = function() called[#called + 1] = "load" end,
     }
     local new = SessionModal.open(opts)
-    vim.api.nvim_set_current_win(new.tree.winid)
     vim.api.nvim_feedkeys("a", "xt", false)
     new.close()
     local load = SessionModal.open(opts)
-    vim.api.nvim_set_current_win(load.tree.winid)
     vim.api.nvim_feedkeys("o", "xt", false)
     load.close()
     assert.same({ "new", "load" }, called)

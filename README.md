@@ -395,14 +395,15 @@ vim.keymap.set("n", "<leader><leader>s", "<cmd>Weave sessions<CR>", { desc = "Pi
   session if none is selected. Use `j`/`k` to move through titles and `<CR>`
   (or click) to open a session in the current tab.
 - Branch lines show parent-child relationships. `[+]` / `[-]` folds a branch.
-  New children appear live, and the tree scrolls independently of the footer.
+  New children appear live. The headings, session rows, and footer share one
+  scrolling popup.
 - Provider and status columns make it easier to scan the list. On narrow
   screens the picker gives their space to the titles and row actions.
 - Use `<Tab>` / `<S-Tab>` or the mouse to reach row actions. `ⓘ` opens the
   session's details. `✕` closes the session and its descendants everywhere,
   asking for confirmation before closing a parent.
-- `a` opens **New session** and `o` opens **Load saved**. The same actions are
-  in the pinned footer. `q` dismisses the picker.
+- Press `a` for **New session** or `o` for **Load saved** from any row, even
+  when the footer is offscreen. `q` dismisses the picker.
 
 `;;r` instead restores a saved session *in place*, over the current
 conversation in the panel.

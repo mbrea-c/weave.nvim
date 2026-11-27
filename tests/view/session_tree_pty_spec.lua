@@ -2,7 +2,7 @@ local termdraw = require("fibrous.bench.termdraw")
 
 describe("session tree terminal rendering", function()
   for _, size in ipairs({ { 100, 18 }, { 36, 14 } }) do
-    it(("paints the tree and pinned actions at %dx%d"):format(size[1], size[2]), function()
+    it(("scrolls sessions and actions in one window at %dx%d"):format(size[1], size[2]), function()
       local source = debug.getinfo(require("fibrous.inline.mount").floating, "S").source:sub(2)
       local fibrous = vim.fn.fnamemodify(source, ":p:h:h:h:h")
       local path = vim.fn.tempname()
@@ -41,14 +41,11 @@ describe("session tree terminal rendering", function()
                 on_select = function() end, on_details = function() end,
               })
             elseif i == 2 then
-              vim.api.nvim_set_current_win(popup.tree.winid)
-              vim.api.nvim_win_set_cursor(popup.tree.winid, { vim.api.nvim_buf_line_count(popup.tree.bufnr), 0 })
               vim.cmd("normal! G")
             elseif i == 3 then
-              vim.api.nvim_set_current_win(popup.tree.winid)
-              local line = vim.api.nvim_buf_get_lines(popup.tree.bufnr, 0, 1, false)[1]
-              vim.api.nvim_win_set_cursor(popup.tree.winid, { 1, assert(line:find("[-]", 1, true)) - 1 })
-              vim.api.nvim_exec_autocmds("CursorMoved", { buffer = popup.tree.bufnr })
+              vim.cmd("normal! gg")
+              vim.fn.search("\\V[-]", "W")
+              vim.api.nvim_exec_autocmds("CursorMoved", { buffer = popup.bufnr })
               vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "xt", false)
             end
             vim.defer_fn(function()
@@ -60,7 +57,7 @@ describe("session tree terminal rendering", function()
                 shown[#shown + 1] = line
               end
               result[i] = { footer = footer, screen = table.concat(shown, "\n"),
-                tree = table.concat(vim.api.nvim_buf_get_lines(popup.tree.bufnr, 0, -1, false), "\n") }
+                tree = table.concat(vim.api.nvim_buf_get_lines(popup.bufnr, 0, -1, false), "\n") }
               vim.fn.writefile({ vim.json.encode(result) }, %q)
             end, 60)
           end
@@ -71,11 +68,10 @@ describe("session tree terminal rendering", function()
       if vim.env.WEAVE_SESSION_PICKER_CAPTURE then
         for _, frame in ipairs(result) do io.write("\n" .. frame.screen .. "\n") end
       end
-      for _, frame in ipairs(result) do
-        assert.truthy(frame.footer:find("a  New", 1, true))
-        assert.truthy(frame.footer:find("o  Load saved", 1, true))
-      assert.equal(size[1] >= 100, frame.footer:find("q close", 1, true) ~= nil)
-      end
+      assert.equal("", result[1].footer)
+      assert.truthy(result[2].footer:find("a  New", 1, true))
+      assert.truthy(result[2].footer:find("o  Load", 1, true))
+      assert.equal(size[1] >= 100, result[2].footer:find("q close", 1, true) ~= nil)
       assert.truthy(result[1].screen:find("● [-] parent", 1, true))
       assert.truthy(result[1].screen:find("├─ child-1", 1, true))
       assert.truthy(result[1].screen:find("ⓘ ✕", 1, true))
